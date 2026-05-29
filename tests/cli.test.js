@@ -446,3 +446,194 @@ test('export includes creator and lineage in kdna.json', (t) => {
   assert.ok(exportedManifest.lineage, 'must have lineage');
   assert.equal(exportedManifest.lineage.type, 'original');
 });
+
+// ── E2E: Blank workflow with runtime content_digest check ──────────
+
+test('E2E blank: create → approve → lock → export → runtime digest match', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  const projectDir = path.join(tmp, 'project');
+  let result = run(['create', projectDir, '--name', '@test/e2e-blank'], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+
+  // Add axiom with full fields
+  result = run([
+    'card', 'add', projectDir, 'axiom',
+    '--field', 'one_sentence=E2E blank axiom.',
+    '--field', 'full_statement=A complete testable explanation for the end-to-end blank workflow test.',
+    '--field', 'why=Without this axiom the end-to-end test would not validate blank creation.',
+    '--field', 'applies_when=["e2e testing"]',
+    '--field', 'does_not_apply_when=["production"]',
+    '--field', 'failure_risk=e2e test may incorrectly pass',
+  ], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+  const cardId = result.stdout.match(/Added card: (\S+)/)?.[1];
+
+  // Add a misunderstanding
+  result = run([
+    'card', 'add', projectDir, 'misunderstanding',
+    '--field', 'wrong=E2E tests are unnecessary.',
+    '--field', 'correct=E2E tests catch integration issues not visible in unit tests.',
+    '--field', 'key_distinction=E2E tests validate the full pipeline, not individual functions.',
+  ], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+
+  // Approve all cards
+  let cards = run(['card', 'list', projectDir], { tmp });
+  for (const line of cards.stdout.trim().split('\n')) {
+    const id = line.split(/\s+/)[0];
+    result = run(['card', 'approve', projectDir, id, '--by', 'tester', '--statement', 'Confirmed.'], { tmp });
+    assert.equal(result.status, 0, result.stderr);
+  }
+
+  // Lock and export
+  result = run(['lock', projectDir], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+
+  const outFile = path.join(tmp, 'blank.kdna');
+  fs.mkdirSync(path.dirname(outFile), { recursive: true });
+  result = run(['export', projectDir, '--out', outFile], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+
+  // ── Verify: source_mode, lineage, digest chain ────────────
+  const distDir = path.dirname(outFile);
+  const manifest = JSON.parse(fs.readFileSync(path.join(distDir, 'kdna.json'), 'utf8'));
+  const receipt = JSON.parse(fs.readFileSync(path.join(distDir, 'build-receipt.json'), 'utf8'));
+  const provenance = JSON.parse(fs.readFileSync(path.join(distDir, 'provenance-report.json'), 'utf8'));
+
+  assert.equal(manifest.authoring.source_mode, 'blank');
+  assert.equal(manifest.lineage.type, 'original');
+  assert.match(manifest.content_digest, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(manifest.content_digest, receipt.content_digest, 'manifest vs receipt digest mismatch');
+  assert.equal(manifest.content_digest, provenance.content_digest, 'manifest vs provenance digest mismatch');
+  assert.equal(manifest.authoring.compiler, '@aikdna/kdna-studio-core');
+  assert.equal(manifest.authoring.human_confirmed, true);
+});
+
+// ── E2E: Fork workflow ────────────────────────────────────────────
+
+test('E2E fork: parent → fork → approve → export → lineage check', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  // Step 1: Create and export a parent domain
+  const parentDir = path.join(tmp, 'parent');
+  let result = run(['create', parentDir, '--name', '@test/parent-domain'], { tmp });
+  result = run([
+    'card', 'add', parentDir, 'axiom',
+    '--field', 'one_sentence=Parent axiom for forking test.',
+    '--field', 'full_statement=A complete testable explanation from the parent domain for fork lineage verification.',
+    '--field', 'why=Without this parent axiom the fork test would have no source to verify lineage against.',
+    '--field', 'applies_when=["fork testing"]',
+    '--field', 'does_not_apply_when=["not forking"]',
+    '--field', 'failure_risk=forked content may lose lineage',
+  ], { tmp });
+  const pCards = run(['card', 'list', parentDir], { tmp });
+  for (const line of pCards.stdout.trim().split('\n')) {
+    const id = line.split(/\s+/)[0];
+    run(['card', 'approve', parentDir, id, '--by', 'tester', '--statement', 'Parent OK.'], { tmp });
+  }
+  run(['lock', parentDir], { tmp });
+  const parentKdna = path.join(tmp, 'parent.kdna');
+  fs.mkdirSync(path.dirname(parentKdna), { recursive: true });
+  result = run(['export', parentDir, '--out', parentKdna], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+
+  // Step 2: Fork from parent
+  const forkDir = path.join(tmp, 'forked');
+  result = run(['create', forkDir, '--from-kdna', parentKdna, '--name', '@test/forked-domain'], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+
+  const fProject = JSON.parse(fs.readFileSync(path.join(forkDir, 'studio.project.json'), 'utf8'));
+  assert.equal(fProject.source_mode, 'kdna_asset');
+  assert.equal(fProject.lineage.type, 'fork');
+  assert.equal(fProject.lineage.parent_name, '@test/parent-domain');
+
+  // Step 3: Approve and export fork
+  const fCards = run(['card', 'list', forkDir], { tmp });
+  for (const line of fCards.stdout.trim().split('\n')) {
+    const id = line.split(/\s+/)[0];
+    run(['card', 'approve', forkDir, id, '--by', 'tester', '--statement', 'Fork confirmed.'], { tmp });
+  }
+  run(['lock', forkDir], { tmp });
+  const forkKdna = path.join(tmp, 'forked.kdna');
+  fs.mkdirSync(path.dirname(forkKdna), { recursive: true });
+  result = run(['export', forkDir, '--out', forkKdna], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+
+  // Step 4: Verify lineage in exported fork
+  const fManifest = JSON.parse(fs.readFileSync(path.join(tmp, 'kdna.json'), 'utf8'));
+  assert.equal(fManifest.authoring.source_mode, 'kdna_asset');
+  assert.equal(fManifest.lineage.type, 'fork');
+  assert.equal(fManifest.lineage.parent_name, '@test/parent-domain');
+  assert.match(fManifest.content_digest, /^sha256:/);
+});
+
+// ── E2E: Migrate workflow ─────────────────────────────────────────
+
+test('E2E migrate: source folder → import → approve → export → verify', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  // Step 1: Create legacy source folder
+  const sourceDir = path.join(tmp, 'legacy');
+  fs.mkdirSync(sourceDir, { recursive: true });
+  fs.writeFileSync(path.join(sourceDir, 'KDNA_Core.json'), JSON.stringify({
+    meta: { domain: 'legacy_test', version: '0.3.0', created: '2026-01-01', purpose: 'Legacy migrate test', load_condition: 'always' },
+    axioms: [{
+      id: 'ax_mig', one_sentence: 'Migrated axiom for E2E test.',
+      full_statement: 'A complete testable explanation for the migrated legacy axiom in the end-to-end workflow.',
+      why: 'Without this migrated axiom the e2e test cannot verify legacy folder migration.',
+      applies_when: ['legacy migration testing'], does_not_apply_when: ['not migrating'],
+      failure_risk: 'migrated content may not be re-locked',
+    }],
+    ontology: [],
+    stances: [],
+  }));
+  fs.writeFileSync(path.join(sourceDir, 'KDNA_Patterns.json'), JSON.stringify({
+    meta: { domain: 'legacy_test', version: '0.3.0', created: '2026-01-01', purpose: 'legacy patterns', load_condition: 'always' },
+    misunderstandings: [{ id: 'ms_mig', wrong: 'Legacy wrong belief.', correct: 'Correct understanding.', key_distinction: 'The key difference between legacy wrong and correct behavior.' }],
+    self_check: ['Is the migrated content properly re-locked?'],
+  }));
+
+  // Step 2: Import via --from-folder
+  const projectDir = path.join(tmp, 'imported');
+  let result = run(['create', projectDir, '--from-folder', sourceDir, '--name', '@test/e2e-migrate'], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+  const audit = JSON.parse(result.stdout);
+  assert.ok(audit.imported > 0, `No cards imported: ${result.stdout}`);
+  assert.equal(audit.source_mode, 'source_folder');
+
+  // Verify project has source_folder mode
+  const project = JSON.parse(fs.readFileSync(path.join(projectDir, 'studio.project.json'), 'utf8'));
+  assert.equal(project.source_mode, 'source_folder');
+  assert.equal(project.lineage.type, 'migrated');
+
+  // Step 3: Approve and export
+  const cards = run(['card', 'list', projectDir], { tmp });
+  for (const line of cards.stdout.trim().split('\n')) {
+    const id = line.split(/\s+/)[0];
+    result = run(['card', 'approve', projectDir, id, '--by', 'tester', '--statement', 'Migrated content confirmed.'], { tmp });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  result = run(['lock', projectDir], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+
+  const outFile = path.join(tmp, 'migrated.kdna');
+  fs.mkdirSync(path.dirname(outFile), { recursive: true });
+  result = run(['export', projectDir, '--out', outFile], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+
+  // Verify exported manifest
+  const distDir = path.dirname(outFile);
+  const manifest = JSON.parse(fs.readFileSync(path.join(distDir, 'kdna.json'), 'utf8'));
+  assert.equal(manifest.authoring.source_mode, 'source_folder');
+  assert.equal(manifest.lineage.type, 'migrated');
+  assert.match(manifest.content_digest, /^sha256:/);
+  assert.equal(manifest.authoring.human_confirmed, true);
+
+  // Digest chain
+  const receipt = JSON.parse(fs.readFileSync(path.join(distDir, 'build-receipt.json'), 'utf8'));
+  assert.equal(manifest.content_digest, receipt.content_digest);
+});

@@ -20,6 +20,12 @@ jobs:
       - run: npm ci
       - run: npm run test:all
       - name: Publish @aikdna/kdna-studio-cli
-        run: npm publish --provenance --access public
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "@aikdna/kdna-studio-cli@$VERSION" version >/dev/null 2>&1; then
+            echo "@aikdna/kdna-studio-cli@$VERSION is already published; skipping."
+            exit 0
+          fi
+          npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

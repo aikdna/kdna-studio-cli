@@ -1,6 +1,6 @@
 {
   "name": "@aikdna/kdna-studio-cli",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "Official KDNA Studio command-line authoring entry for creating, locking, compiling, and exporting trusted .kdna assets.",
   "type": "commonjs",
   "bin": {
@@ -37,6 +37,6 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@aikdna/kdna-studio-core": "^1.3.3"
+    "@aikdna/kdna-studio-core": "^1.4.0"
   }
 }

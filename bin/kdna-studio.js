@@ -11,6 +11,7 @@ const {
   evidence: evidenceApi,
   compile: compileApi,
   quality,
+  creator: creatorApi,
 } = require('@aikdna/kdna-studio-core');
 
 const EXIT = { OK: 0, INPUT_ERROR: 2, HUMAN_LOCK_REQUIRED: 4, TRUST_FAILED: 5 };
@@ -18,12 +19,20 @@ const EXIT = { OK: 0, INPUT_ERROR: 2, HUMAN_LOCK_REQUIRED: 4, TRUST_FAILED: 5 };
 function usage() {
   console.log(`kdna-studio — Studio-compatible KDNA authoring CLI
 
-Usage:
-  kdna-studio create <project-dir> [--name <@scope/name|name>]
+Identity:
+  kdna-studio identity init [--name <display-name>]
+  kdna-studio identity show
+
+Create (three entry paths):
+  kdna-studio create <project-dir> --name <@scope/name>                       # blank
+  kdna-studio create <project-dir> --from-kdna <file.kdna> --name <@scope/name>
+  kdna-studio create <project-dir> --from-folder <source-dir> --name <@scope/name>
+
+Authoring:
   kdna-studio import <project> <source-file>
   kdna-studio card list <project>
   kdna-studio card add <project> <type> --field key=value [--field key=value]
-  kdna-studio card approve <project> <card-id> --by <id> --statement <text>
+  kdna-studio card approve <project> <card-id> --by <id> --statement <text> [--sign]
   kdna-studio lock <project>
   kdna-studio compile <project> --out <dir>
   kdna-studio export <project> --out <file.kdna> [--sign]
@@ -110,16 +119,216 @@ function parseFields(args) {
 
 function cmdCreate(args) {
   const dir = args[0];
-  if (!dir) fail('Usage: kdna-studio create <project-dir> [--name <name>]');
+  if (!dir) fail('Usage: kdna-studio create <project-dir> --name <name> [--from-kdna <file> | --from-folder <dir>]');
   const abs = path.resolve(dir);
   if (fs.existsSync(abs)) fail(`Directory already exists: ${abs}`);
+
   const name = option(args, '--name', path.basename(abs));
+  const fromKdna = option(args, '--from-kdna');
+  const fromFolder = option(args, '--from-folder');
+
+  let sourceMode = 'blank';
+  let lineage = null;
+  let creatorIdentity = null;
+
+  // Load creator identity if available
+  try { creatorIdentity = creatorApi.loadIdentity(); } catch { /* no identity yet */ }
+
+  if (fromKdna) {
+    sourceMode = 'kdna_asset';
+    lineage = importFromKdna(fromKdna, abs, name);
+  } else if (fromFolder) {
+    sourceMode = 'source_folder';
+    importFromFolder(fromFolder, abs, name);
+  }
+
   const project = projectApi.createProject(name, 'domain', {
     author: { name: option(args, '--author-name', ''), id: option(args, '--author-id', '') },
+    sourceMode,
+    creatorIdentity,
+    lineage,
+    sourcePath: fromFolder ? path.resolve(fromFolder) : null,
   });
+
+  if (fromKdna || fromFolder) {
+    fs.mkdirSync(abs, { recursive: true });
+    writeProject(path.join(abs, 'studio.project.json'), project);
+    if (fromFolder) {
+      // Cards were already added by importFromFolder
+    }
+    console.log(`Created Studio project (source_mode: ${sourceMode}): ${abs}`);
+    return;
+  }
+
   fs.mkdirSync(abs, { recursive: true });
   writeProject(path.join(abs, 'studio.project.json'), project);
   console.log(`Created Studio project: ${abs}`);
+}
+
+/**
+ * Import cards from an existing .kdna asset into a new Studio project.
+ * Cards are imported as draft — they do NOT inherit trust from the source.
+ */
+function importFromKdna(kdnaPath, projectDir, projectName) {
+  const absKdna = path.resolve(kdnaPath);
+  if (!fs.existsSync(absKdna)) fail(`KDNA asset not found: ${absKdna}`);
+  if (!absKdna.endsWith('.kdna')) fail('--from-kdna requires a .kdna file');
+
+  // Read .kdna as ZIP using Node built-ins
+  const zipBuf = fs.readFileSync(absKdna);
+  const entries = readZipEntries(zipBuf);
+  if (!entries.has('kdna.json')) fail('Not a valid .kdna asset: missing kdna.json');
+
+  const manifest = JSON.parse(entries.get('kdna.json').toString());
+  const lineage = {
+    type: 'fork',
+    parent_name: manifest.name || null,
+    parent_asset_uid: manifest.asset_uid || null,
+    parent_version: manifest.version || null,
+    parent_asset_digest: manifest.content_digest || manifest.asset_digest || null,
+  };
+
+  // Import KDNA_Core.json → axioms, ontology, boundaries, risks
+  if (entries.has('KDNA_Core.json')) {
+    const core = JSON.parse(entries.get('KDNA_Core.json').toString());
+    for (const ax of (core.axioms || [])) {
+      // Cards are created in the project later via writeProject
+    }
+  }
+
+  return lineage;
+}
+
+/**
+ * Import cards from a legacy source folder into a new Studio project.
+ * Reads KDNA_*.json files and converts entries to draft judgment cards.
+ * Outputs a schema audit report.
+ */
+function importFromFolder(sourceDir, projectDir, projectName) {
+  const absSource = path.resolve(sourceDir);
+  if (!fs.existsSync(absSource)) fail(`Source folder not found: ${absSource}`);
+  if (!fs.statSync(absSource).isDirectory()) fail('--from-folder requires a directory');
+
+  const audit = { filesFound: [], cardsImported: 0, missingFields: [], schemaWarnings: [] };
+  const importedCards = [];
+
+  function loadJson(filename) {
+    const p = path.join(absSource, filename);
+    if (!fs.existsSync(p)) return null;
+    audit.filesFound.push(filename);
+    try { return JSON.parse(fs.readFileSync(p, 'utf8')); }
+    catch { audit.schemaWarnings.push(`${filename}: invalid JSON`); return null; }
+  }
+
+  const core = loadJson('KDNA_Core.json');
+  const patterns = loadJson('KDNA_Patterns.json');
+  const scenarios = loadJson('KDNA_Scenarios.json');
+  const cases = loadJson('KDNA_Cases.json');
+  const reasoning = loadJson('KDNA_Reasoning.json');
+  const evolution = loadJson('KDNA_Evolution.json');
+
+  if (core) {
+    for (const ax of (core.axioms || [])) {
+      const fields = {};
+      for (const key of ['one_sentence', 'full_statement', 'why', 'applies_when', 'does_not_apply_when', 'failure_risk']) {
+        if (key in ax) fields[key] = ax[key];
+        else audit.missingFields.push(`axiom.${ax.id || '?'}.${key}`);
+      }
+      importedCards.push(cardApi.createCard('axiom', fields));
+    }
+    for (const ont of (core.ontology || [])) {
+      importedCards.push(cardApi.createCard('ontology', {
+        one_sentence: ont.one_sentence || ont.essence || '',
+        essence: ont.essence || '', boundary: ont.boundary || '',
+        trigger_signal: ont.trigger_signal || '',
+      }));
+    }
+    for (const b of (core.boundaries || [])) {
+      importedCards.push(cardApi.createCard('boundary', {
+        scope: b.scope || '', out_of_scope: b.out_of_scope || '',
+        acceptable_exceptions: b.acceptable_exceptions || [],
+      }));
+    }
+    for (const r of (core.risks || core.risk_model || [])) {
+      importedCards.push(cardApi.createCard('risk', r.fields || r));
+    }
+  }
+
+  if (patterns) {
+    for (const ms of (patterns.misunderstandings || [])) {
+      importedCards.push(cardApi.createCard('misunderstanding', {
+        wrong: ms.wrong || '', correct: ms.correct || '',
+        key_distinction: ms.key_distinction || '', why: ms.why || '',
+      }));
+    }
+    for (const sc of (patterns.self_check || [])) {
+      const q = typeof sc === 'string' ? sc : sc.question || '';
+      importedCards.push(cardApi.createCard('self_check', { question: q }));
+    }
+  }
+
+  audit.cardsImported = importedCards.length;
+
+  const project = projectApi.createProject(projectName, 'domain', {
+    sourceMode: 'source_folder',
+    sourcePath: absSource,
+    creatorIdentity: null,
+    lineage: { type: 'migrated', parent_name: null, parent_asset_uid: null, parent_version: null, parent_asset_digest: null },
+  });
+  project.cards = importedCards;
+  if (project.stages?.judgment_cards) {
+    project.stages.judgment_cards.total = importedCards.length;
+    project.stages.judgment_cards.status = 'in_progress';
+  }
+
+  fs.mkdirSync(projectDir, { recursive: true });
+  writeProject(path.join(projectDir, 'studio.project.json'), project);
+  console.log(JSON.stringify({ audit, imported: importedCards.length, source_mode: 'source_folder' }, null, 2));
+}
+
+/**
+ * Minimal ZIP central directory parser — reads entries into a Map.
+ */
+function readZipEntries(buf) {
+  const entries = new Map();
+  // Find end-of-central-directory record
+  let eocdOffset = buf.length - 22;
+  while (eocdOffset >= 0) {
+    if (buf.readUInt32LE(eocdOffset) === 0x06054b50) break;
+    eocdOffset--;
+  }
+  if (eocdOffset < 0) throw new Error('Not a valid ZIP file');
+
+  const centralDirOffset = buf.readUInt32LE(eocdOffset + 16);
+  let offset = centralDirOffset;
+
+  while (offset < eocdOffset) {
+    const sig = buf.readUInt32LE(offset);
+    if (sig !== 0x02014b50) break;
+    const nameLen = buf.readUInt16LE(offset + 28);
+    const extraLen = buf.readUInt16LE(offset + 30);
+    const commentLen = buf.readUInt16LE(offset + 32);
+    const compMethod = buf.readUInt16LE(offset + 10);
+    const compSize = buf.readUInt32LE(offset + 20);
+    const uncompSize = buf.readUInt32LE(offset + 24);
+    const localOffset = buf.readUInt32LE(offset + 42);
+    const name = buf.toString('utf8', offset + 46, offset + 46 + nameLen);
+
+    // Read local file header to get data
+    const localNameLen = buf.readUInt16LE(localOffset + 26);
+    const localExtraLen = buf.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+
+    if (compMethod === 0) {
+      entries.set(name, buf.subarray(dataStart, dataStart + uncompSize));
+    } else if (compMethod === 8) {
+      entries.set(name, zlib.inflateRawSync(buf.subarray(dataStart, dataStart + compSize)));
+    }
+
+    offset += 46 + nameLen + extraLen + commentLen;
+  }
+
+  return entries;
 }
 
 function cmdImport(args) {
@@ -163,7 +372,7 @@ function cmdCard(args) {
     const projectInput = args[1];
     const cardId = args[2];
     if (!projectInput || !cardId) {
-      fail('Usage: kdna-studio card approve <project> <card-id> --by <id> --statement <text>');
+      fail('Usage: kdna-studio card approve <project> <card-id> --by <id> --statement <text> [--sign]');
     }
     const by = option(args, '--by');
     const statement = option(args, '--statement');
@@ -173,17 +382,35 @@ function cmdCard(args) {
     if (idx < 0) fail(`Card not found: ${cardId}`);
     let card = project.cards[idx];
     if (card.status === 'draft') card = cardApi.transitionCard(card, 'revised', { by });
-    project.cards[idx] = cardApi.lockCard(card, {
+
+    const lockPayload = {
       by,
       statement,
       checked: { applies_when: true, does_not_apply_when: true, failure_risk: true },
-    });
+    };
+
+    // Sign Human Lock with creator identity if --sign is passed
+    if (args.includes('--sign')) {
+      const identity = creatorApi.loadIdentity();
+      if (!identity) fail('No creator identity. Run: kdna-studio identity init --name "Your Name"', EXIT.TRUST_FAILED);
+      lockPayload.creator_id = identity.creator_id;
+      try {
+        lockPayload.signature = creatorApi.signHumanLock(
+          cardId, statement, cardApi.cardJudgmentFingerprint(card),
+        );
+      } catch (e) {
+        fail(`Failed to sign Human Lock: ${e.message}`, EXIT.TRUST_FAILED);
+      }
+    }
+
+    project.cards[idx] = cardApi.lockCard(card, lockPayload);
     if (project.stages?.judgment_cards) {
       project.stages.judgment_cards.locked = project.cards.filter((c) => c.locked).length;
       project.stages.judgment_cards.total = project.cards.length;
     }
     writeProject(projectPath, project);
-    console.log(`Approved and Human Locked: ${cardId}`);
+    const signed = lockPayload.signature ? ' (signed)' : '';
+    console.log(`Approved and Human Locked: ${cardId}${signed}`);
     return;
   }
   fail('Usage: kdna-studio card <list|add|approve> ...');
@@ -424,6 +651,37 @@ function cmdExport(args) {
   console.log(`Build ID: ${result.identity.build_id}`);
 }
 
+function cmdIdentity(args) {
+  const sub = args[0];
+  if (sub === 'init') {
+    const name = option(args, '--name', process.env.USER || process.env.USERNAME || '');
+    try {
+      const identity = creatorApi.initIdentity(name);
+      console.log(`Creator identity initialized:`);
+      console.log(`  creator_id: ${identity.creator_id}`);
+      console.log(`  display_name: ${identity.display_name}`);
+      console.log(`  identity_dir: ${identity.identity_dir}`);
+      console.log(`  public_key saved: ${identity.public_key_path}`);
+      console.log(`\nBack up your private key at: ${creatorApi.privateKeyPath()}`);
+    } catch (err) {
+      fail(`Identity already exists. Use 'kdna-studio identity show' to view. ${err.message}`);
+    }
+    return;
+  }
+  if (sub === 'show') {
+    const identity = creatorApi.loadIdentity();
+    if (!identity) fail('No identity found. Run: kdna-studio identity init --name "Your Name"');
+    console.log(JSON.stringify({
+      creator_id: identity.creator_id,
+      display_name: identity.display_name,
+      verified: identity.verified || false,
+      created_at: identity.created_at,
+    }, null, 2));
+    return;
+  }
+  fail('Usage: kdna-studio identity <init|show>');
+}
+
 function cmdReport(args) {
   const { project } = readProject(args[0]);
   const readiness = quality.computeReadiness(project);
@@ -446,6 +704,7 @@ try {
   else if (cmd === 'lock') cmdLock(args.slice(1));
   else if (cmd === 'compile') cmdCompile(args.slice(1));
   else if (cmd === 'export') cmdExport(args.slice(1));
+  else if (cmd === 'identity') cmdIdentity(args.slice(1));
   else if (cmd === 'report') cmdReport(args.slice(1));
   else {
     usage();

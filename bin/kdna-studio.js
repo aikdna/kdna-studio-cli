@@ -320,6 +320,7 @@ function manifestForSigning(manifest) {
   delete copy.signature;
   delete copy.asset_digest;
   delete copy.container_sha256;
+  delete copy.content_digest;
   return copy;
 }
 

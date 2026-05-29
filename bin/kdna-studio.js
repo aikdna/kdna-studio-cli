@@ -136,10 +136,29 @@ function cmdCreate(args) {
 
   if (fromKdna) {
     sourceMode = 'kdna_asset';
-    lineage = importFromKdna(fromKdna, abs, name);
+    const kdnaData = importFromKdna(fromKdna);
+    lineage = kdnaData.lineage;
+    if (kdnaData.cards) {
+      const project = projectApi.createProject(name, 'domain', {
+        author: { name: option(args, '--author-name', ''), id: option(args, '--author-id', '') },
+        sourceMode,
+        creatorIdentity,
+        lineage,
+      });
+      project.cards = kdnaData.cards;
+      if (project.stages?.judgment_cards) {
+        project.stages.judgment_cards.total = kdnaData.cards.length;
+        project.stages.judgment_cards.status = 'in_progress';
+      }
+      fs.mkdirSync(abs, { recursive: true });
+      writeProject(path.join(abs, 'studio.project.json'), project);
+      console.log(`Created Studio project (source_mode: ${sourceMode}, imported: ${kdnaData.cards.length} cards): ${abs}`);
+      return;
+    }
   } else if (fromFolder) {
     sourceMode = 'source_folder';
     importFromFolder(fromFolder, abs, name);
+    return;
   }
 
   const project = projectApi.createProject(name, 'domain', {
@@ -169,12 +188,11 @@ function cmdCreate(args) {
  * Import cards from an existing .kdna asset into a new Studio project.
  * Cards are imported as draft — they do NOT inherit trust from the source.
  */
-function importFromKdna(kdnaPath, projectDir, projectName) {
+function importFromKdna(kdnaPath) {
   const absKdna = path.resolve(kdnaPath);
   if (!fs.existsSync(absKdna)) fail(`KDNA asset not found: ${absKdna}`);
   if (!absKdna.endsWith('.kdna')) fail('--from-kdna requires a .kdna file');
 
-  // Read .kdna as ZIP using Node built-ins
   const zipBuf = fs.readFileSync(absKdna);
   const entries = readZipEntries(zipBuf);
   if (!entries.has('kdna.json')) fail('Not a valid .kdna asset: missing kdna.json');
@@ -185,18 +203,49 @@ function importFromKdna(kdnaPath, projectDir, projectName) {
     parent_name: manifest.name || null,
     parent_asset_uid: manifest.asset_uid || null,
     parent_version: manifest.version || null,
-    parent_asset_digest: manifest.content_digest || manifest.asset_digest || null,
+    parent_asset_digest: manifest.content_digest || null,
   };
 
-  // Import KDNA_Core.json → axioms, ontology, boundaries, risks
+  // Extract cards from KDNA files
+  const importedCards = [];
   if (entries.has('KDNA_Core.json')) {
     const core = JSON.parse(entries.get('KDNA_Core.json').toString());
     for (const ax of (core.axioms || [])) {
-      // Cards are created in the project later via writeProject
+      const fields = {};
+      for (const k of ['one_sentence','full_statement','why','applies_when','does_not_apply_when','failure_risk']) {
+        if (k in ax) fields[k] = ax[k];
+      }
+      importedCards.push(cardApi.createCard('axiom', fields));
+    }
+    for (const ont of (core.ontology || [])) {
+      importedCards.push(cardApi.createCard('ontology', {
+        one_sentence: ont.one_sentence || ont.essence || '',
+        essence: ont.essence || '', boundary: ont.boundary || '',
+        trigger_signal: ont.trigger_signal || '',
+      }));
+    }
+    for (const b of (core.boundaries || [])) {
+      importedCards.push(cardApi.createCard('boundary', {
+        scope: b.scope || '', out_of_scope: b.out_of_scope || '',
+        acceptable_exceptions: b.acceptable_exceptions || [],
+      }));
+    }
+  }
+  if (entries.has('KDNA_Patterns.json')) {
+    const pat = JSON.parse(entries.get('KDNA_Patterns.json').toString());
+    for (const ms of (pat.misunderstandings || [])) {
+      importedCards.push(cardApi.createCard('misunderstanding', {
+        wrong: ms.wrong || '', correct: ms.correct || '',
+        key_distinction: ms.key_distinction || '', why: ms.why || '',
+      }));
+    }
+    for (const sc of (pat.self_check || [])) {
+      const q = typeof sc === 'string' ? sc : sc.question || '';
+      importedCards.push(cardApi.createCard('self_check', { question: q }));
     }
   }
 
-  return lineage;
+  return { lineage, cards: importedCards };
 }
 
 /**

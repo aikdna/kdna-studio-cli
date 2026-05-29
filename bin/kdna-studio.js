@@ -373,21 +373,48 @@ function cmdExport(args) {
   const files = { ...result.files };
   files['README.md'] = compileApi.generateReadme(project);
   files.LICENSE = project.license?.type || 'UNSPECIFIED';
+  files.mimetype = 'application/vnd.aikdna.kdna+zip';
+
+  // Recompute content_digest after README.md / LICENSE / mimetype are added
+  // so that manifest, receipt, and provenance report all agree with the final ZIP contents.
+  const finalDigest = compileApi.computeContentDigest(files);
+  result.identity.content_digest = finalDigest;
+
+  // Update kdna.json manifest with final digest
+  const manifest = JSON.parse(files['kdna.json']);
+  manifest.content_digest = finalDigest;
+  if (manifest.authoring) manifest.authoring.content_digest = finalDigest;
+  files['kdna.json'] = JSON.stringify(manifest, null, 2);
+
+  // Update build-receipt.json
+  let receiptData = JSON.parse(files['build-receipt.json']);
+  receiptData.content_digest = finalDigest;
+  files['build-receipt.json'] = JSON.stringify(receiptData, null, 2);
+
+  // Update provenance report
+  const provenance = JSON.parse(files['reports/provenance-report.json']);
+  provenance.content_digest = finalDigest;
+  provenance.content_fingerprint = finalDigest;
+  files['reports/provenance-report.json'] = JSON.stringify(provenance, null, 2);
+
   if (args.includes('--sign')) applySignature(files);
 
-  const entries = [['mimetype', 'application/vnd.aikdna.kdna+zip']];
-  for (const name of Object.keys(files).sort()) entries.push([name, files[name]]);
+  const entries = [['mimetype', files.mimetype]];
+  for (const name of Object.keys(files).filter(k => k !== 'mimetype').sort()) {
+    entries.push([name, files[name]]);
+  }
   const zip = buildZip(entries);
   const outPath = path.resolve(out);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, zip);
 
   const assetDigest = `sha256:${crypto.createHash('sha256').update(zip).digest('hex')}`;
-  const receipt = JSON.parse(files['build-receipt.json']);
-  receipt.asset_path = outPath;
-  receipt.asset_digest = assetDigest;
-  receipt.signature_status = args.includes('--sign') ? 'signed' : 'unsigned';
-  fs.writeFileSync(path.join(path.dirname(outPath), 'build-receipt.json'), JSON.stringify(receipt, null, 2));
+  receiptData = JSON.parse(files['build-receipt.json']);
+  receiptData.asset_path = outPath;
+  receiptData.asset_digest = assetDigest;
+  receiptData.signature_status = args.includes('--sign') ? 'signed' : 'unsigned';
+  fs.writeFileSync(path.join(path.dirname(outPath), 'build-receipt.json'), JSON.stringify(receiptData, null, 2));
+  fs.writeFileSync(path.join(path.dirname(outPath), 'kdna.json'), files['kdna.json']);
   fs.writeFileSync(path.join(path.dirname(outPath), 'provenance-report.json'), files['reports/provenance-report.json']);
   fs.writeFileSync(path.join(path.dirname(outPath), 'quality-gate-report.json'), files['reports/quality-gate-report.json']);
   fs.writeFileSync(path.join(path.dirname(outPath), 'human-lock-report.json'), files['reports/human-lock-report.json']);

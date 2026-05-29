@@ -150,6 +150,11 @@ test('runs the trusted authoring workflow through compile and export', (t) => {
   assert.equal(manifest.authoring.human_confirmed, true);
   assert.ok(manifest.authoring.human_lock_count >= 1);
 
+  // Content digest must be present and non-trivial
+  assert.ok(manifest.content_digest, 'manifest must have content_digest');
+  assert.match(manifest.content_digest, /^sha256:[0-9a-f]{64}$/);
+  assert.ok(manifest.authoring.content_digest, 'authoring must have content_digest');
+
   const outFile = path.join(tmp, 'dist', 'example.kdna');
   result = run(['export', projectDir, '--out', outFile], { tmp });
   assert.equal(result.status, 0, result.stderr);
@@ -159,6 +164,19 @@ test('runs the trusted authoring workflow through compile and export', (t) => {
   const receipt = JSON.parse(fs.readFileSync(path.join(tmp, 'dist', 'build-receipt.json'), 'utf8'));
   assert.equal(receipt.signature_status, 'unsigned');
   assert.match(receipt.asset_digest, /^sha256:/);
+
+  // ── Digest chain consistency ──────────────────────────────────
+  // All three sources MUST agree on content_digest.
+  const exportedManifest = JSON.parse(fs.readFileSync(path.join(tmp, 'dist', 'kdna.json'), 'utf8'));
+  const exportedProvenance = JSON.parse(fs.readFileSync(path.join(tmp, 'dist', 'provenance-report.json'), 'utf8'));
+  assert.equal(exportedManifest.content_digest, receipt.content_digest,
+    'manifest.content_digest !== build-receipt.content_digest');
+  assert.equal(exportedProvenance.content_digest, receipt.content_digest,
+    'provenance-report.content_digest !== build-receipt.content_digest');
+  assert.ok(exportedManifest.content_digest.startsWith('sha256:'),
+    'content_digest must be sha256: prefix');
+  assert.equal(exportedManifest.content_digest.length, 71,
+    'content_digest must be sha256: + 64 hex chars');
 });
 
 test('refuses signing without runtime identity keys', (t) => {

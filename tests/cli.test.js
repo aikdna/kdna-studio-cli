@@ -5,6 +5,9 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 
+let kdnaCore = null;
+try { kdnaCore = require('@aikdna/kdna-core'); } catch { /* optional — runtime digest cross-verification */ }
+
 const root = path.resolve(__dirname, '..');
 const cli = path.join(root, 'bin', 'kdna-studio.js');
 
@@ -509,6 +512,32 @@ test('E2E blank: create → approve → lock → export → runtime digest match
   assert.equal(manifest.content_digest, provenance.content_digest, 'manifest vs provenance digest mismatch');
   assert.equal(manifest.authoring.compiler, '@aikdna/kdna-studio-core');
   assert.equal(manifest.authoring.human_confirmed, true);
+
+  // ── Runtime cross-verification: content digest consistency ──
+  // Compute content digest from the .kdna ZIP entries and verify it
+  // matches the manifest, receipt, and provenance report.
+  if (kdnaCore) {
+    const reader = kdnaCore.createKdnaAssetReader();
+    const asset = reader.openSync(outFile);
+    const runtimeResult = reader.verifySync(asset);
+    const runtimeDigest = runtimeResult.content_digest;
+
+    assert.ok(runtimeDigest, 'runtime content_digest must be present');
+    assert.match(runtimeDigest, /^sha256:[0-9a-f]{64}$/, 'runtime content_digest must be valid sha256');
+
+    // Read ZIP-internal manifest (avoid sidecar timing issues)
+    const zipManifest = JSON.parse(asset.readEntry('kdna.json').toString());
+    assert.equal(zipManifest.content_digest, receipt.content_digest,
+      `ZIP manifest digest != receipt digest`);
+    assert.equal(zipManifest.content_digest, provenance.content_digest,
+      `ZIP manifest digest != provenance digest`);
+
+    // Verify: runtime computed digest matches ZIP manifest
+    assert.equal(zipManifest.content_digest, runtimeDigest,
+      `ZIP manifest content_digest (${zipManifest.content_digest.slice(0, 20)}...) != runtime computed (${runtimeDigest.slice(0, 20)}...) — trust chain broken`);
+  } else {
+    console.log('  (kdna-core not available, skipping runtime assetReader cross-verification)');
+  }
 });
 
 // ── E2E: Fork workflow ────────────────────────────────────────────

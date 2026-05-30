@@ -629,7 +629,7 @@ function publicKeyFingerprint(publicKeyPem) {
   return `ed25519:${crypto.createHash('sha256').update(publicKeyPem).digest('hex')}`;
 }
 
-function applySignature(files) {
+function applySignature(files, passphrase = null) {
   const paths = identityPaths();
   if (!fs.existsSync(paths.privateKey) || !fs.existsSync(paths.publicKey)) {
     fail('Signing requires KDNA identity keys. Run: kdna identity init', EXIT.TRUST_FAILED);
@@ -643,11 +643,11 @@ function applySignature(files) {
 
   const payload = canonicalPayload(files);
   let privateKeyPem = fs.readFileSync(paths.privateKey, 'utf8');
-  const cid = require('@aikdna/kdna-studio-core').creator;
-  if (cid.isEncryptedKey(privateKeyPem)) {
-    const p = require('./kdna-studio.js').__passphrase || '';
-    if (!p) throw new Error('Private key is encrypted. Use --passphrase to sign exports.');
-    privateKeyPem = cid.decryptPrivateKey(privateKeyPem, p);
+  if (creatorApi.isEncryptedKey(privateKeyPem)) {
+    if (!passphrase) {
+      fail('Private key is encrypted. Export with: kdna-studio export ... --sign --passphrase <your-passphrase>', EXIT.TRUST_FAILED);
+    }
+    privateKeyPem = creatorApi.decryptPrivateKey(privateKeyPem, passphrase);
   }
   manifest.signature = `ed25519:${crypto.sign(null, Buffer.from(payload), privateKeyPem).toString('hex')}`;
   files['kdna.json'] = JSON.stringify(manifest, null, 2);
@@ -685,7 +685,7 @@ function cmdExport(args) {
   provenance.content_fingerprint = finalDigest;
   files['reports/provenance-report.json'] = JSON.stringify(provenance, null, 2);
 
-  if (args.includes('--sign')) applySignature(files);
+  if (args.includes('--sign')) applySignature(files, option(args, '--passphrase'));
 
   const entries = [['mimetype', files.mimetype]];
   for (const name of Object.keys(files).filter(k => k !== 'mimetype').sort()) {

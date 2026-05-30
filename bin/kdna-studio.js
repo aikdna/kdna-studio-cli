@@ -32,11 +32,13 @@ Authoring:
   kdna-studio import <project> <source-file>
   kdna-studio card list <project>
   kdna-studio card add <project> <type> --field key=value [--field key=value]
-  kdna-studio card approve <project> <card-id> --by <id> --statement <text> [--sign]
+  kdna-studio card approve <project> <card-id> --by <id> --statement <text> [--sign] [--passphrase <pass>]
   kdna-studio lock <project>
   kdna-studio compile <project> --out <dir>
   kdna-studio export <project> --out <file.kdna> [--sign]
   kdna-studio report <project>
+  kdna-studio install <@scope/name|file.kdna> [--trusted]
+  kdna-studio update <@scope/name>
 
 Project may be a directory containing studio.project.json or a project JSON file.`);
 }
@@ -640,7 +642,13 @@ function applySignature(files) {
   files['kdna.json'] = JSON.stringify(manifest, null, 2);
 
   const payload = canonicalPayload(files);
-  const privateKeyPem = fs.readFileSync(paths.privateKey, 'utf8');
+  let privateKeyPem = fs.readFileSync(paths.privateKey, 'utf8');
+  const cid = require('@aikdna/kdna-studio-core').creator;
+  if (cid.isEncryptedKey(privateKeyPem)) {
+    const p = require('./kdna-studio.js').__passphrase || '';
+    if (!p) throw new Error('Private key is encrypted. Use --passphrase to sign exports.');
+    privateKeyPem = cid.decryptPrivateKey(privateKeyPem, p);
+  }
   manifest.signature = `ed25519:${crypto.sign(null, Buffer.from(payload), privateKeyPem).toString('hex')}`;
   files['kdna.json'] = JSON.stringify(manifest, null, 2);
 }
@@ -704,6 +712,35 @@ function cmdExport(args) {
   console.log(`Build ID: ${result.identity.build_id}`);
 }
 
+function cmdStudioInstall(args) {
+  // Delegate to kdna CLI for runtime install operations
+  const target = args[0];
+  if (!target) fail('Usage: kdna-studio install <@scope/name|file.kdna>');
+  try {
+    const kdnaArgs = ['install', target, '--yes'];
+    if (args.includes('--trusted')) kdnaArgs.push('--trusted');
+    const result = require('child_process').spawnSync('kdna', kdnaArgs, {
+      stdio: 'inherit', encoding: 'utf8',
+    });
+    if (result.status !== 0) process.exit(result.status);
+  } catch {
+    fail('kdna CLI not found. Install with: npm install -g @aikdna/kdna-cli');
+  }
+}
+
+function cmdStudioUpdate(args) {
+  const target = args[0];
+  if (!target) fail('Usage: kdna-studio update <@scope/name>');
+  try {
+    const result = require('child_process').spawnSync('kdna', ['update', target], {
+      stdio: 'inherit', encoding: 'utf8',
+    });
+    if (result.status !== 0) process.exit(result.status);
+  } catch {
+    fail('kdna CLI not found. Install with: npm install -g @aikdna/kdna-cli');
+  }
+}
+
 function cmdIdentity(args) {
   const sub = args[0];
   if (sub === 'init') {
@@ -764,6 +801,8 @@ try {
   else if (cmd === 'export') cmdExport(args.slice(1));
   else if (cmd === 'identity') cmdIdentity(args.slice(1));
   else if (cmd === 'report') cmdReport(args.slice(1));
+  else if (cmd === 'install') cmdStudioInstall(args.slice(1));
+  else if (cmd === 'update') cmdStudioUpdate(args.slice(1));
   else {
     usage();
     fail(`Unknown command: ${cmd}`);

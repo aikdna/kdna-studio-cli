@@ -443,9 +443,13 @@ function cmdCard(args) {
       const identity = creatorApi.loadIdentity();
       if (!identity) fail('No creator identity. Run: kdna-studio identity init --name "Your Name"', EXIT.TRUST_FAILED);
       lockPayload.creator_id = identity.creator_id;
+      const passphrase = option(args, '--passphrase');
       try {
+        if (identity.encrypted && !passphrase) {
+          fail('Private key is encrypted — provide --passphrase to sign.', EXIT.TRUST_FAILED);
+        }
         lockPayload.signature = creatorApi.signHumanLock(
-          cardId, statement, cardApi.cardJudgmentFingerprint(card),
+          cardId, statement, cardApi.cardJudgmentFingerprint(card), null, passphrase,
         );
       } catch (e) {
         fail(`Failed to sign Human Lock: ${e.message}`, EXIT.TRUST_FAILED);
@@ -704,14 +708,19 @@ function cmdIdentity(args) {
   const sub = args[0];
   if (sub === 'init') {
     const name = option(args, '--name', process.env.USER || process.env.USERNAME || '');
+    const passphrase = option(args, '--passphrase');
     try {
-      const identity = creatorApi.initIdentity(name);
+      const identity = creatorApi.initIdentity(name, null, passphrase);
       console.log(`Creator identity initialized:`);
       console.log(`  creator_id: ${identity.creator_id}`);
       console.log(`  display_name: ${identity.display_name}`);
       console.log(`  identity_dir: ${identity.identity_dir}`);
       console.log(`  public_key saved: ${identity.public_key_path}`);
+      console.log(`  encrypted: ${identity.encrypted}`);
       console.log(`\nBack up your private key at: ${creatorApi.privateKeyPath()}`);
+      if (identity.encrypted) {
+        console.log(`  Private key is encrypted — keep your passphrase safe.`);
+      }
     } catch (err) {
       fail(`Identity already exists. Use 'kdna-studio identity show' to view. ${err.message}`);
     }

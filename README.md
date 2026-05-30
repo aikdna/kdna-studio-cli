@@ -44,3 +44,27 @@ kdna publish dist/my_domain.kdna
 
 `kdna-studio` is the CLI entry for trusted KDNA creation. `kdna` is the runtime
 control plane for existing `.kdna` assets.
+
+## Identity
+
+```bash
+kdna-studio identity init --name "Your Name"
+kdna-studio identity show
+```
+
+## Import from existing KDNA or legacy folders
+
+```bash
+# Fork an existing .kdna asset (cards imported as draft — re-lock required)
+kdna-studio create forked --from-kdna ./parent.kdna --name @scope/forked
+
+# Migrate a legacy JSON source folder
+kdna-studio create migrated --from-folder ./old-domain-json --name @scope/migrated
+```
+
+## Related
+
+- [KDNA Protocol](https://github.com/aikdna/kdna) — specification and schemas
+- [kdna-cli](https://github.com/aikdna/kdna-cli) — runtime CLI for verify, install, load, publish
+- [kdna-studio-core](https://github.com/aikdna/kdna-studio-core) — authoring SDK used by this CLI
+- [kdna-studio-swift](https://github.com/aikdna/kdna-studio-swift) — native Swift counterpart

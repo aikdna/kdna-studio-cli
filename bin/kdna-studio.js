@@ -12,6 +12,7 @@ const {
   compile: compileApi,
   quality,
   creator: creatorApi,
+  distillation: distillationApi,
 } = require('@aikdna/kdna-studio-core');
 
 const EXIT = { OK: 0, INPUT_ERROR: 2, HUMAN_LOCK_REQUIRED: 4, TRUST_FAILED: 5 };
@@ -30,12 +31,24 @@ Create (three entry paths):
 
 Authoring:
   kdna-studio import <project> <source-file>
+  kdna-studio source classify <project>                            # classify evidence against declared target
   kdna-studio card list <project>
   kdna-studio card add <project> <type> --field key=value [--field key=value]
   kdna-studio card approve <project> <card-id> --by <id> --statement <text> [--sign] [--passphrase <pass>]
   kdna-studio lock <project>
   kdna-studio compile <project> --out <dir>
   kdna-studio export <project> --out <file.kdna> [--sign]
+
+Distillation:
+  kdna-studio target declare <project>                           # declare distillation target interactively
+  kdna-studio target declare <project> --category <cat> --scope <scope> --granularity <gran> --task <task> [--include <area,area>] [--exclude <area,area>] [--load-condition <condition>]
+  kdna-studio target show <project>                              # show current distillation target
+  kdna-studio distill <project> --candidates <file.json>          # load AI-generated candidates
+  kdna-studio candidate list <project>                           # list candidates with scope and status
+  kdna-studio candidate accept <project> <candidate-id>
+  kdna-studio candidate reject <project> <candidate-id>
+  kdna-studio candidate override <project> <candidate-id>        # override scope gate
+  kdna-studio candidate promote <project>                        # promote accepted+scope_fit → cards
   kdna-studio report <project>
   kdna-studio install <@scope/name|file.kdna> [--trusted]
   kdna-studio update <@scope/name>
@@ -785,6 +798,192 @@ function cmdReport(args) {
   process.exit(gate.blocked ? EXIT.HUMAN_LOCK_REQUIRED : EXIT.OK);
 }
 
+// ─── Distillation Commands ──────────────────────────────────────────
+
+function cmdTarget(args) {
+  const sub = args[0];
+  if (sub === 'declare') {
+    const projectInput = args[1];
+    if (!projectInput) fail('Usage: kdna-studio target declare <project> --category <cat> --scope <scope> --granularity <gran> --task <task>');
+    const { projectPath, project } = readProject(projectInput);
+    const category = option(args, '--category', 'expression_writing');
+    const scope = option(args, '--scope', 'personal');
+    const granularity = option(args, '--granularity', 'core_principles');
+    const taskScope = option(args, '--task', 'general content creation');
+    const include = option(args, '--include');
+    const exclude = option(args, '--exclude');
+    const loadCondition = option(args, '--load-condition');
+    const domainName = project.name || path.basename(path.dirname(projectPath), '.json');
+
+    const target = distillationApi.createDistillationTarget({
+      domainName,
+      domainCategory: category,
+      ownerScope: scope,
+      granularity,
+      taskScope,
+      includeAreas: include ? include.split(',').map(s => s.trim()).filter(Boolean) : [],
+      excludeAreas: exclude ? exclude.split(',').map(s => s.trim()).filter(Boolean) : [],
+      loadCondition: loadCondition || '',
+    });
+
+    const validation = distillationApi.validateDistillationTarget(target);
+    if (!validation.valid) fail(`Invalid target: ${validation.errors.join('; ')}`);
+
+    project.distillation_target = target;
+    writeProject(projectPath, project);
+    console.log(JSON.stringify({ declared: true, target }, null, 2));
+    return;
+  }
+  if (sub === 'show') {
+    const { project } = readProject(args[1]);
+    const target = project.distillation_target;
+    if (!target) fail('No distillation target declared. Run: kdna-studio target declare <project>');
+    console.log(JSON.stringify(target, null, 2));
+    return;
+  }
+  fail('Usage: kdna-studio target <declare|show>');
+}
+
+function cmdSourceClassify(args) {
+  const projectInput = args[0];
+  if (!projectInput) fail('Usage: kdna-studio source classify <project>');
+  const { projectPath, project } = readProject(projectInput);
+  const target = project.distillation_target;
+  if (!target) fail('Declare a distillation target first: kdna-studio target declare <project>');
+
+  const evidence = project.evidence || [];
+  const results = evidence.map(e => {
+    const text = (e.content || e.title || '').toLowerCase();
+    const domainWords = (target.include_areas || []).concat([target.domain_category, target.task_scope]);
+    const hitCount = domainWords.filter(w => text.includes(w.toLowerCase())).length;
+    let relevance;
+    if (hitCount >= 2) relevance = 'relevant';
+    else if (hitCount === 1) relevance = 'weakly_relevant';
+    else {
+      const otherHits = Object.keys(distillationApi.DOMAIN_CATEGORIES)
+        .filter(k => k !== target.domain_category)
+        .filter(k => text.includes(k)).length;
+      relevance = otherHits > 0 ? 'split_domain' : 'weakly_relevant';
+    }
+    return { id: e.id, title: e.title, relevance };
+  });
+
+  const summary = {};
+  for (const r of results) { summary[r.relevance] = (summary[r.relevance] || 0) + 1; }
+
+  project.distillation_evidence_relevance = results;
+  writeProject(projectPath, project);
+  console.log(JSON.stringify({ summary, results }, null, 2));
+}
+
+function cmdDistill(args) {
+  const projectInput = args[0];
+  const candidatesFile = option(args, '--candidates');
+  if (!projectInput) fail('Usage: kdna-studio distill <project> --candidates <file.json>');
+  if (!candidatesFile) fail('--candidates <file.json> required. Provide AI-generated candidate JSON.');
+  const { projectPath, project } = readProject(projectInput);
+  const target = project.distillation_target;
+  if (!target) fail('Declare a distillation target first: kdna-studio target declare <project>');
+
+  const rawPath = path.resolve(candidatesFile);
+  if (!fs.existsSync(rawPath)) fail(`Candidates file not found: ${rawPath}`);
+  const rawCandidates = JSON.parse(fs.readFileSync(rawPath, 'utf8'));
+  if (!Array.isArray(rawCandidates)) fail('Candidates file must contain a JSON array');
+
+  const candidates = rawCandidates.map(c => {
+    const base = {
+      id: c.candidate_id || `cand_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
+      one_sentence: c.one_sentence || c.oneSentence || '',
+      full_statement: c.full_statement || c.fullStatement || '',
+      suggested_card_type: c.type || 'axiom',
+      supporting_evidence_ids: (c.evidence_ids || c.evidenceIds || []).map(String),
+      confidence: c.confidence || 'medium',
+      candidate_status: 'proposed',
+      scope_fit: c.scope_fit ?? c.scopeFit ?? true,
+    };
+    return distillationApi.applyScopeGate(base, target);
+  });
+
+  const summary = distillationApi.candidateStatusSummary(candidates);
+  project.distillation_candidates = candidates;
+  writeProject(projectPath, project);
+  console.log(JSON.stringify({ summary, count: candidates.length }, null, 2));
+}
+
+function cmdCandidate(args) {
+  const sub = args[0];
+  const projectInput = args[1];
+  if (!sub || !projectInput) fail('Usage: kdna-studio candidate <list|accept|reject|override|promote>');
+
+  const { projectPath, project } = readProject(projectInput);
+  const candidates = project.distillation_candidates || [];
+
+  if (sub === 'list') {
+    for (const c of candidates) {
+      const scopeMarker = c.scope_fit ? '' : ' [OUT_OF_SCOPE]';
+      const split = c.suggested_split_domain ? ` → ${c.suggested_split_domain}` : '';
+      console.log(`${c.id}\t${c.candidate_status}\t${c.suggested_card_type}\t${c.confidence}\t${c.one_sentence.substring(0,60)}${scopeMarker}${split}`);
+    }
+    console.log(JSON.stringify(distillationApi.candidateStatusSummary(candidates), null, 2));
+    return;
+  }
+
+  if (sub === 'accept' || sub === 'reject') {
+    const candId = args[2];
+    if (!candId) fail(`Usage: kdna-studio candidate ${sub} <project> <candidate-id>`);
+    const idx = candidates.findIndex(c => c.id === candId);
+    if (idx < 0) fail(`Candidate not found: ${candId}`);
+    candidates[idx].candidate_status = sub === 'accept' ? 'accepted' : 'rejected';
+    project.distillation_candidates = candidates;
+    writeProject(projectPath, project);
+    console.log(`${sub === 'accept' ? 'Accepted' : 'Rejected'}: ${candId}`);
+    return;
+  }
+
+  if (sub === 'override') {
+    const candId = args[2];
+    if (!candId) fail('Usage: kdna-studio candidate override <project> <candidate-id>');
+    const idx = candidates.findIndex(c => c.id === candId);
+    if (idx < 0) fail(`Candidate not found: ${candId}`);
+    candidates[idx].scope_fit = true;
+    candidates[idx].domain_relevance_score = 50;
+    candidates[idx].relevance_evidence = 'User explicitly overrode scope gate via CLI';
+    candidates[idx].suggested_split_domain = null;
+    project.distillation_candidates = candidates;
+    writeProject(projectPath, project);
+    console.log(`Scope gate overridden: ${candId}`);
+    return;
+  }
+
+  if (sub === 'promote') {
+    const accepted = candidates.filter(c => c.candidate_status === 'accepted' && c.scope_fit !== false);
+    if (accepted.length === 0) fail('No candidates to promote. Accept some candidates first.');
+
+    for (const c of accepted) {
+      const card = cardApi.createCard(c.suggested_card_type, {
+        one_sentence: c.one_sentence,
+        full_statement: c.full_statement,
+        why: '',
+        applies_when: '',
+        does_not_apply_when: '',
+        failure_risk: '',
+      });
+      card.evidence_refs = c.supporting_evidence_ids;
+      project.cards = project.cards || [];
+      project.cards.push(card);
+    }
+    if (project.stages?.judgment_cards) {
+      project.stages.judgment_cards.total = project.cards.length;
+      project.stages.judgment_cards.status = 'in_progress';
+    }
+    writeProject(projectPath, project);
+    console.log(`Promoted ${accepted.length} candidates → ${accepted.length} Studio cards`);
+    return;
+  }
+
+  fail('Usage: kdna-studio candidate <list|accept|reject|override|promote>');
+}
+
 const args = process.argv.slice(2);
 const cmd = args[0];
 if (!cmd || cmd === '--help' || cmd === '-h') {
@@ -795,6 +994,10 @@ if (!cmd || cmd === '--help' || cmd === '-h') {
 try {
   if (cmd === 'create') cmdCreate(args.slice(1));
   else if (cmd === 'import') cmdImport(args.slice(1));
+  else if (cmd === 'target') cmdTarget(args.slice(1));
+  else if (cmd === 'source') cmdSourceClassify(args.slice(1));
+  else if (cmd === 'distill') cmdDistill(args.slice(1));
+  else if (cmd === 'candidate') cmdCandidate(args.slice(1));
   else if (cmd === 'card') cmdCard(args.slice(1));
   else if (cmd === 'lock') cmdLock(args.slice(1));
   else if (cmd === 'compile') cmdCompile(args.slice(1));

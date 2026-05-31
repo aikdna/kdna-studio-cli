@@ -1,6 +1,8 @@
 # @aikdna/kdna-studio-cli
 
-Official Studio command-line authoring entry for KDNA.
+Official Studio command-line entry for KDNA judgment asset creation — turns your notes, documents, works, and feedback into loadable .kdna domains.
+
+Two authoring paths: interview-first (articulate your judgment directly) and distillation-first (provide content, find the patterns, confirm what's really you).
 
 This package provides the `kdna-studio` command. It creates Studio projects,
 imports evidence, manages judgment cards, checks Human Lock, compiles locked

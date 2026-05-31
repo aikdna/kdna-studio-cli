@@ -4,6 +4,8 @@ Official Studio command-line entry for KDNA judgment asset creation — turns yo
 
 Two authoring paths: interview-first (articulate your judgment directly) and distillation-first (provide content, find the patterns, confirm what's really you).
 
+Distillation-first authoring is domain-first: declare the target domain, owner scope, granularity, task scope, include areas, exclude areas, and load condition before extracting candidates. A single `.kdna` should stay scoped; complex work should compose multiple domain assets through a KDNA Cluster.
+
 This package provides the `kdna-studio` command. It creates Studio projects,
 imports evidence, manages judgment cards, checks Human Lock, compiles locked
 cards, and exports canonical `.kdna` assets with build reports.
@@ -27,6 +29,18 @@ npm install -g @aikdna/kdna-studio-cli
 ```bash
 kdna-studio create my_domain --name @yourscope/my_domain
 kdna-studio import my_domain ./notes.md
+kdna-studio target declare my_domain \
+  --category expression_writing \
+  --scope personal \
+  --granularity core_principles \
+  --task "longform article review" \
+  --include "argument structure,tone,revision" \
+  --exclude "life habits,food preference"
+kdna-studio source classify my_domain
+kdna-studio distill my_domain --candidates candidates.json
+kdna-studio candidate list my_domain
+kdna-studio candidate accept my_domain <candidate-id>
+kdna-studio candidate promote my_domain
 kdna-studio card add my_domain axiom \
   --field one_sentence="Prefer specific evidence over broad claims" \
   --field applies_when='["reviewing content"]' \
@@ -36,6 +50,8 @@ kdna-studio card approve my_domain <card-id> --by expert --statement "I confirm 
 kdna-studio lock my_domain
 kdna-studio export my_domain --out dist/my_domain.kdna --sign
 ```
+
+Candidate promotion is scope-gated: only candidates with `status == accepted` and `scope_fit == true` are promoted to cards by default. Use `kdna-studio candidate override <project> <candidate-id>` only when a human intentionally overrides the scope gate.
 
 After export, use the runtime CLI:
 

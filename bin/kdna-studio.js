@@ -710,6 +710,27 @@ function cmdMigrate(args) {
   try { creatorIdentity = creatorApi.loadIdentity(); } catch { /* proceed without */ }
   const { project } = importFromFolder(sourceDir, tmpDir, name, creatorIdentity);
 
+  // Reject if critical judgment fields are missing from axioms
+  const criticalMissing = [];
+  for (const card of (project.cards || [])) {
+    if (card.type !== 'axiom') continue;
+    for (const field of ['applies_when', 'does_not_apply_when', 'failure_risk']) {
+      const val = card.fields && card.fields[field];
+      if (!val || (Array.isArray(val) && val.length === 0) || val === '') {
+        criticalMissing.push(`${card.id}: missing ${field}`);
+      }
+    }
+  }
+  if (criticalMissing.length > 0) {
+    fail(
+      `Cannot migrate: ${criticalMissing.length} critical fields missing from axioms.\n` +
+      `  These fields are required for domain routing (kdna-loader uses them to\n` +
+      `  decide when to load this domain). Add them to your source files first.\n` +
+      `  Missing:\n    ` + criticalMissing.slice(0, 10).join('\n    ') +
+      (criticalMissing.length > 10 ? `\n    ... and ${criticalMissing.length - 10} more` : '')
+    );
+  }
+
   // Step 2: approve and Human Lock all cards
   let locked = 0;
   for (let i = 0; i < (project.cards || []).length; i++) {
@@ -760,7 +781,13 @@ function cmdMigrate(args) {
 
   if (args.includes('--sign')) applySignature(files, option(args, '--passphrase'));
   const absOut = path.resolve(out);
-  buildZip(files, absOut);
+  const entries = [['mimetype', files.mimetype]];
+  for (const name of Object.keys(files).filter(k => k !== 'mimetype').sort()) {
+    entries.push([name, files[name]]);
+  }
+  const zip = buildZip(entries);
+  fs.mkdirSync(path.dirname(absOut), { recursive: true });
+  fs.writeFileSync(absOut, zip);
   console.log(`Exported: ${absOut}`);
   console.log(`  Name: ${name}`);
   console.log(`  Cards: ${project.cards.length} (${locked} locked)`);

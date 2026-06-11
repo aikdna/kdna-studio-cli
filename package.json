@@ -8,6 +8,7 @@
   },
   "files": [
     "bin/",
+    "src/",
     "tests/",
     "README.md"
   ],

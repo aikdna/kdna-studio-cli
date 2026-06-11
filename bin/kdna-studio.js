@@ -172,7 +172,7 @@ function cmdCreate(args) {
     }
   } else if (fromFolder) {
     sourceMode = 'source_folder';
-    importFromFolder(fromFolder, abs, name);
+    importFromFolder(fromFolder, abs, name, creatorIdentity);
     return;
   }
 
@@ -268,13 +268,14 @@ function importFromKdna(kdnaPath) {
  * Reads KDNA_*.json files and converts entries to draft judgment cards.
  * Outputs a schema audit report.
  */
-function importFromFolder(sourceDir, projectDir, projectName) {
+function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
   const absSource = path.resolve(sourceDir);
   if (!fs.existsSync(absSource)) fail(`Source folder not found: ${absSource}`);
   if (!fs.statSync(absSource).isDirectory()) fail('--from-folder requires a directory');
 
   const audit = { filesFound: [], cardsImported: 0, missingFields: [], schemaWarnings: [] };
   const importedCards = [];
+  const manifestData = {};
 
   function loadJson(filename) {
     const p = path.join(absSource, filename);
@@ -282,6 +283,17 @@ function importFromFolder(sourceDir, projectDir, projectName) {
     audit.filesFound.push(filename);
     try { return JSON.parse(fs.readFileSync(p, 'utf8')); }
     catch { audit.schemaWarnings.push(`${filename}: invalid JSON`); return null; }
+  }
+
+  // Load manifest for version/languages/description
+  const manifest = loadJson('kdna.json');
+  if (manifest) {
+    if (manifest.version) manifestData.version = manifest.version;
+    if (manifest.judgment_version) manifestData.judgment_version = manifest.judgment_version;
+    if (manifest.languages) manifestData.languages = manifest.languages;
+    if (manifest.default_language) manifestData.default_language = manifest.default_language;
+    if (manifest.description) manifestData.description = manifest.description;
+    if (manifest.name) manifestData.name = manifest.name;
   }
 
   const core = loadJson('KDNA_Core.json');
@@ -316,9 +328,38 @@ function importFromFolder(sourceDir, projectDir, projectName) {
     for (const r of (core.risks || core.risk_model || [])) {
       importedCards.push(cardApi.createCard('risk', r.fields || r));
     }
+    // NEW: import stances
+    for (const s of (core.stances || [])) {
+      const text = typeof s === 'string' ? s : s.stance || '';
+      importedCards.push(cardApi.createCard('stance', {
+        statement: text,
+        applies_when: s.applies_when || [],
+        does_not_apply_when: s.does_not_apply_when || [],
+      }));
+    }
+    // NEW: import frameworks
+    for (const fw of (core.frameworks || [])) {
+      importedCards.push(cardApi.createCard('framework', {
+        name: fw.name || '', when_to_use: fw.when_to_use || '',
+        steps: fw.steps || [],
+      }));
+    }
   }
 
   if (patterns) {
+    // NEW: import terminology
+    if (patterns.terminology) {
+      for (const t of (patterns.terminology.standard_terms || [])) {
+        importedCards.push(cardApi.createCard('term', {
+          term: t.term || '', definition: t.definition || '',
+        }));
+      }
+      for (const bt of (patterns.terminology.banned_terms || [])) {
+        importedCards.push(cardApi.createCard('banned_term', {
+          term: bt.term || '', why: bt.why || '', replace_with: bt.replace_with || '',
+        }));
+      }
+    }
     for (const ms of (patterns.misunderstandings || [])) {
       importedCards.push(cardApi.createCard('misunderstanding', {
         wrong: ms.wrong || '', correct: ms.correct || '',
@@ -331,14 +372,70 @@ function importFromFolder(sourceDir, projectDir, projectName) {
     }
   }
 
+  // NEW: import scenarios
+  if (scenarios && scenarios.scenes) {
+    for (const scene of scenarios.scenes) {
+      importedCards.push(cardApi.createCard('scenario', {
+        name: scene.name || scene.id || '',
+        trigger: scene.trigger || '', action: scene.action || '',
+      }));
+    }
+  }
+
+  // NEW: import cases
+  if (cases && cases.cases) {
+    for (const c of cases.cases) {
+      importedCards.push(cardApi.createCard('case', {
+        title: c.title || c.id || '',
+        scenario: c.scenario || '', expected: c.expected || '',
+      }));
+    }
+  }
+
+  // NEW: import reasoning chains
+  if (reasoning && reasoning.reasoning_chains) {
+    for (const rc of reasoning.reasoning_chains) {
+      importedCards.push(cardApi.createCard('reasoning', {
+        name: rc.name || rc.id || '', conclusion: rc.conclusion || '',
+        so_what: rc.so_what || '',
+      }));
+    }
+  }
+
+  // NEW: import evolution stages
+  if (evolution && evolution.stages) {
+    for (const stage of evolution.stages) {
+      importedCards.push(cardApi.createCard('evolution_stage', {
+        name: stage.name || stage.id || '',
+        level: stage.level || '', description: stage.description || '',
+      }));
+    }
+  }
+
   audit.cardsImported = importedCards.length;
 
   const project = projectApi.createProject(projectName, 'domain', {
     sourceMode: 'source_folder',
     sourcePath: absSource,
-    creatorIdentity: null,
-    lineage: { type: 'migrated', parent_name: null, parent_asset_uid: null, parent_version: null, parent_asset_digest: null },
+    creatorIdentity: creatorIdentity || null,
+    lineage: { type: 'migrated', parent_name: manifestData.name || null, parent_asset_uid: null, parent_version: manifestData.version || null, parent_asset_digest: null },
   });
+  // Preserve manifest metadata
+  if (manifestData.version) {
+    if (!project.release) project.release = {};
+    project.release.version = manifestData.version;
+  }
+  if (manifestData.judgment_version) {
+    if (!project.release) project.release = {};
+    project.release.judgment_version = manifestData.judgment_version;
+  }
+  if (manifestData.description) {
+    if (!project.release) project.release = {};
+    project.release.description = manifestData.description;
+  }
+  if (manifestData.languages) project.languages = manifestData.languages;
+  if (manifestData.default_language) project.default_language = manifestData.default_language;
+
   project.cards = importedCards;
   if (project.stages?.judgment_cards) {
     project.stages.judgment_cards.total = importedCards.length;
@@ -435,50 +532,66 @@ function cmdCard(args) {
   if (sub === 'approve') {
     const projectInput = args[1];
     const cardId = args[2];
-    if (!projectInput || !cardId) {
+    const approveAll = args.includes('--all');
+    if (!projectInput || (!cardId && !approveAll)) {
       fail('Usage: kdna-studio card approve <project> <card-id> --by <id> --statement <text> [--sign]');
     }
     const by = option(args, '--by');
     const statement = option(args, '--statement');
     if (!by || !statement) fail('card approve requires --by and --statement');
     const { projectPath, project } = readProject(projectInput);
-    const idx = (project.cards || []).findIndex((c) => c.id === cardId);
-    if (idx < 0) fail(`Card not found: ${cardId}`);
-    let card = project.cards[idx];
-    if (card.status === 'draft') card = cardApi.transitionCard(card, 'revised', { by });
 
-    const lockPayload = {
-      by,
-      statement,
-      checked: { applies_when: true, does_not_apply_when: true, failure_risk: true },
+    const lockOneCard = (card) => {
+      if (card.status === 'draft') card = cardApi.transitionCard(card, 'revised', { by });
+      const lockPayload = {
+        by,
+        statement,
+        checked: { applies_when: true, does_not_apply_when: true, failure_risk: true },
+      };
+      if (args.includes('--sign')) {
+        const identity = creatorApi.loadIdentity();
+        if (!identity) fail('No creator identity. Run: kdna-studio identity init --name "Your Name"', EXIT.TRUST_FAILED);
+        lockPayload.creator_id = identity.creator_id;
+        const passphrase = option(args, '--passphrase');
+        try {
+          if (identity.encrypted && !passphrase) {
+            fail('Private key is encrypted — provide --passphrase to sign.', EXIT.TRUST_FAILED);
+          }
+          lockPayload.signature = creatorApi.signHumanLock(
+            card.id, statement, cardApi.cardJudgmentFingerprint(card), null, passphrase,
+          );
+        } catch (e) {
+          fail(`Failed to sign Human Lock: ${e.message}`, EXIT.TRUST_FAILED);
+        }
+      }
+      return [card, cardApi.lockCard(card, lockPayload)];
     };
 
-    // Sign Human Lock with creator identity if --sign is passed
-    if (args.includes('--sign')) {
-      const identity = creatorApi.loadIdentity();
-      if (!identity) fail('No creator identity. Run: kdna-studio identity init --name "Your Name"', EXIT.TRUST_FAILED);
-      lockPayload.creator_id = identity.creator_id;
-      const passphrase = option(args, '--passphrase');
-      try {
-        if (identity.encrypted && !passphrase) {
-          fail('Private key is encrypted — provide --passphrase to sign.', EXIT.TRUST_FAILED);
-        }
-        lockPayload.signature = creatorApi.signHumanLock(
-          cardId, statement, cardApi.cardJudgmentFingerprint(card), null, passphrase,
-        );
-      } catch (e) {
-        fail(`Failed to sign Human Lock: ${e.message}`, EXIT.TRUST_FAILED);
+    if (cardId) {
+      const idx = (project.cards || []).findIndex((c) => c.id === cardId);
+      if (idx < 0) fail(`Card not found: ${cardId}`);
+      const [, locked] = lockOneCard(project.cards[idx]);
+      project.cards[idx] = locked;
+      const signed = args.includes('--sign') ? ' (signed)' : '';
+      console.log(`Approved and Human Locked: ${cardId}${signed}`);
+    } else {
+      let approved = 0;
+      for (let i = 0; i < (project.cards || []).length; i++) {
+        const card = project.cards[i];
+        if (card.locked) continue;
+        const [, locked] = lockOneCard(card);
+        project.cards[i] = locked;
+        approved++;
       }
+      if (approved === 0) fail('No unlocked cards to approve.');
+      const signed = args.includes('--sign') ? ' (signed)' : '';
+      console.log(`Approved and Human Locked: ${approved} cards${signed}`);
     }
-
-    project.cards[idx] = cardApi.lockCard(card, lockPayload);
     if (project.stages?.judgment_cards) {
       project.stages.judgment_cards.locked = project.cards.filter((c) => c.locked).length;
       project.stages.judgment_cards.total = project.cards.length;
     }
     writeProject(projectPath, project);
-    const signed = lockPayload.signature ? ' (signed)' : '';
-    console.log(`Approved and Human Locked: ${cardId}${signed}`);
     return;
   }
   fail('Usage: kdna-studio card <list|add|approve> ...');

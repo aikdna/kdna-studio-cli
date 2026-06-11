@@ -15,10 +15,16 @@ const {
   distillation: distillationApi,
 } = require('@aikdna/kdna-studio-core');
 
+const llm = require('../src/llm');
+
 const EXIT = { OK: 0, INPUT_ERROR: 2, HUMAN_LOCK_REQUIRED: 4, TRUST_FAILED: 5 };
 
 function usage() {
   console.log(`kdna-studio — Studio-compatible KDNA authoring CLI
+
+LLM (AI-powered authoring):
+  kdna-studio llm config [--provider <name>] [--model <name>] [--key <api-key>] [--url <base-url>]
+  kdna-studio llm show
 
 Identity:
   kdna-studio identity init [--name <display-name>]
@@ -867,6 +873,34 @@ function cmdStudioUpdate(args) {
   }
 }
 
+function cmdLlm(args) {
+  const sub = args[0];
+  if (sub === 'show') {
+    const cfg = llm.config();
+    console.log(`Provider : ${cfg.provider || '(not set)'}`);
+    console.log(`Model    : ${cfg.model || '(not set)'}`);
+    console.log(`Base URL : ${cfg.baseURL || '(not set)'}`);
+    console.log(`API Key  : ${cfg.apiKey ? '********' + cfg.apiKey.slice(-4) : '(not set)'}`);
+    return;
+  }
+  if (sub === 'config') {
+    const provider = option(args, '--provider') || option(args, '-p');
+    const model = option(args, '--model') || option(args, '-m');
+    const apiKey = option(args, '--key') || option(args, '-k');
+    const baseURL = option(args, '--url') || option(args, '-u');
+    const updates = {};
+    if (provider) updates.provider = provider;
+    if (model) updates.model = model;
+    if (apiKey) updates.apiKey = apiKey;
+    if (baseURL) updates.baseURL = baseURL;
+    if (Object.keys(updates).length === 0) fail('Usage: kdna-studio llm config --provider <name> [--model <name>] [--key <api-key>] [--url <base-url>]');
+    const cfg = llm.configure(updates);
+    console.log(JSON.stringify({ provider: cfg.provider, model: cfg.model, baseURL: cfg.baseURL }, null, 2));
+    return;
+  }
+  fail('Usage: kdna-studio llm <config|show>');
+}
+
 function cmdIdentity(args) {
   const sub = args[0];
   if (sub === 'init') {
@@ -1115,6 +1149,7 @@ try {
   else if (cmd === 'lock') cmdLock(args.slice(1));
   else if (cmd === 'compile') cmdCompile(args.slice(1));
   else if (cmd === 'export') cmdExport(args.slice(1));
+  else if (cmd === 'llm') cmdLlm(args.slice(1));
   else if (cmd === 'identity') cmdIdentity(args.slice(1));
   else if (cmd === 'report') cmdReport(args.slice(1));
   else if (cmd === 'install') cmdStudioInstall(args.slice(1));

@@ -16,6 +16,7 @@ const {
 } = require('@aikdna/kdna-studio-core');
 
 const llm = require('../src/llm');
+const ai = require('../src/ai');
 
 const EXIT = { OK: 0, INPUT_ERROR: 2, HUMAN_LOCK_REQUIRED: 4, TRUST_FAILED: 5 };
 
@@ -45,11 +46,17 @@ Authoring:
   kdna-studio compile <project> --out <dir>
   kdna-studio export <project> --out <file.kdna> [--sign]
 
+AI Authoring (requires LLM config: kdna-studio llm config):
+  kdna-studio distill <project> --ai                             # AI-driven candidate extraction from evidence
+  kdna-studio distill <project> --candidates <file.json>          # load pre-generated AI candidates
+  kdna-studio interview <project> [--stage <name>]               # 4-stage guided AI interview
+  kdna-studio feynman <project> <card-id>                        # AI Feynman evaluation (5-dimension)
+  kdna-studio test <project> --input "<text>" [--preset baseline|edge|contradiction]
+
 Distillation:
   kdna-studio target declare <project>                           # declare distillation target interactively
   kdna-studio target declare <project> --category <cat> --scope <scope> --granularity <gran> --task <task> [--include <area,area>] [--exclude <area,area>] [--load-condition <condition>]
   kdna-studio target show <project>                              # show current distillation target
-  kdna-studio distill <project> --candidates <file.json>          # load AI-generated candidates
   kdna-studio candidate list <project>                           # list candidates with scope and status
   kdna-studio candidate accept <project> <candidate-id>
   kdna-studio candidate reject <project> <candidate-id>
@@ -1023,27 +1030,42 @@ function cmdSourceClassify(args) {
   console.log(JSON.stringify({ summary, results }, null, 2));
 }
 
-function cmdDistill(args) {
+async function cmdDistill(args) {
   const projectInput = args[0];
   const candidatesFile = option(args, '--candidates');
-  if (!projectInput) fail('Usage: kdna-studio distill <project> --candidates <file.json>');
-  if (!candidatesFile) fail('--candidates <file.json> required. Provide AI-generated candidate JSON.');
+  const useAI = args.includes('--ai');
+  const provider = option(args, '--provider');
+  const model = option(args, '--model');
+  const apiKey = option(args, '--key');
+  if (!projectInput) fail('Usage: kdna-studio distill <project> [--ai] [--candidates <file.json>]');
+  if (!candidatesFile && !useAI) fail('Either --ai or --candidates <file.json> required.');
+
   const { projectPath, project } = readProject(projectInput);
   const target = project.distillation_target;
   if (!target) fail('Declare a distillation target first: kdna-studio target declare <project>');
 
-  const rawPath = path.resolve(candidatesFile);
-  if (!fs.existsSync(rawPath)) fail(`Candidates file not found: ${rawPath}`);
-  const rawCandidates = JSON.parse(fs.readFileSync(rawPath, 'utf8'));
-  if (!Array.isArray(rawCandidates)) fail('Candidates file must contain a JSON array');
+  let rawCandidates;
+  if (useAI) {
+    const evidence = (project.evidence_materials || []).map(e => ({ filename: e.filename || e.name, content: e.raw_text || e.content || '' }));
+    if (evidence.length === 0) console.warn('No evidence materials found. AI distillation works best with imported evidence. Run: kdna-studio import <project> <file>');
+
+    console.log('Running AI distillation...');
+    rawCandidates = await ai.distill(llm.config(), evidence, target, { provider, model, apiKey });
+    console.log(`AI extracted ${rawCandidates.length} candidates.`);
+  } else {
+    const rawPath = path.resolve(candidatesFile);
+    if (!fs.existsSync(rawPath)) fail(`Candidates file not found: ${rawPath}`);
+    rawCandidates = JSON.parse(fs.readFileSync(rawPath, 'utf8'));
+    if (!Array.isArray(rawCandidates)) fail('Candidates file must contain a JSON array');
+  }
 
   const candidates = rawCandidates.map(c => {
     const base = {
-      id: c.candidate_id || `cand_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
+      id: c.candidate_id || c.id || `cand_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       one_sentence: c.one_sentence || c.oneSentence || '',
       full_statement: c.full_statement || c.fullStatement || '',
-      suggested_card_type: c.type || 'axiom',
-      supporting_evidence_ids: (c.evidence_ids || c.evidenceIds || []).map(String),
+      suggested_card_type: c.type || c.suggested_card_type || 'axiom',
+      supporting_evidence_ids: (c.evidence_ids || c.evidenceIds || c.supporting_evidence_ids || []).map(String),
       confidence: c.confidence || 'medium',
       candidate_status: 'proposed',
       scope_fit: c.scope_fit ?? c.scopeFit ?? true,
@@ -1131,6 +1153,68 @@ function cmdCandidate(args) {
   fail('Usage: kdna-studio candidate <list|accept|reject|override|promote>');
 }
 
+async function cmdInterview(args) {
+  const projectInput = args[0];
+  const stage = option(args, '--stage');
+  if (!projectInput) fail('Usage: kdna-studio interview <project> [--stage distill|clarify|correct|replay]');
+  const { project } = readProject(projectInput);
+
+  if (stage) {
+    const result = await ai.interview.runInterview(llm.config(), project, stage, '', {});
+    console.log(`\n=== ${result.label} ===\n${result.content}`);
+  } else {
+    await ai.interview.runInterviewInteractive(llm.config(), project, {});
+  }
+}
+
+async function cmdFeynman(args) {
+  const projectInput = args[0];
+  const cardId = args[1];
+  if (!projectInput || !cardId) fail('Usage: kdna-studio feynman <project> <card-id>');
+  const { projectPath, project } = readProject(projectInput);
+  const cardIdx = (project.cards || []).findIndex(c => c.id === cardId);
+  if (cardIdx < 0) fail(`Card not found: ${cardId}`);
+  const card = project.cards[cardIdx];
+
+  if (!card.feynman_text) fail(`Card ${cardId} has no Feynman restatement. Use card approve first with --statement to set it.`);
+
+  console.log(`Evaluating Feynman restatement for card: ${cardId}`);
+  const result = await ai.feynman.evaluate(llm.config(), card, {});
+  const score = result.score || 0;
+  const passed = score >= 4;
+
+  console.log(`Score: ${score}/5 ${passed ? '✓ publishable' : '✗ below threshold (need 4/5)'}`);
+  for (const [criterion, desc] of Object.entries(ai.feynman.CRITERIA)) {
+    const r = (result.criteria || {})[criterion] ? '✓' : '✗';
+    console.log(`  ${r} ${criterion}`);
+  }
+  if (result.suggestions && result.suggestions.length > 0) {
+    console.log('\nSuggestions:');
+    result.suggestions.forEach(s => console.log(`  - ${s}`));
+  }
+
+  card.feynman_evaluation = { score, criteria: result.criteria, suggestions: result.suggestions, evaluated_at: new Date().toISOString() };
+  project.cards[cardIdx] = card;
+  writeProject(projectPath, project);
+}
+
+async function cmdTest(args) {
+  const projectInput = args[0];
+  const input = option(args, '--input');
+  const preset = option(args, '--preset', 'baseline');
+  if (!projectInput || !input) fail('Usage: kdna-studio test <project> --input "<text>" [--preset baseline|edge|contradiction]');
+  const { project } = readProject(projectInput);
+  const domainName = project.name || 'Untitled Project';
+  const domainPrompt = `Domain: ${domainName}\n${project.description || ''}`;
+
+  console.log(`Testing: ${domainName} [${preset}]`);
+  const prompt = preset === 'baseline' ? `Test the core judgment: ${input}`
+    : preset === 'edge' ? `Test a boundary case: ${input}`
+    : `Test for contradiction: ${input}`;
+  const result = await ai.testlab.compare(llm.config(), domainName, prompt, domainPrompt, {});
+  console.log(JSON.stringify(result, null, 2));
+}
+
 const args = process.argv.slice(2);
 const cmd = args[0];
 if (!cmd || cmd === '--help' || cmd === '-h') {
@@ -1138,13 +1222,17 @@ if (!cmd || cmd === '--help' || cmd === '-h') {
   process.exit(EXIT.OK);
 }
 
+(async () => {
 try {
   if (cmd === 'create') cmdCreate(args.slice(1));
   else if (cmd === 'import') cmdImport(args.slice(1));
   else if (cmd === 'target') cmdTarget(args.slice(1));
   else if (cmd === 'source') cmdSourceClassify(args.slice(1));
-  else if (cmd === 'distill') cmdDistill(args.slice(1));
+  else if (cmd === 'distill') await cmdDistill(args.slice(1));
   else if (cmd === 'candidate') cmdCandidate(args.slice(1));
+  else if (cmd === 'interview') await cmdInterview(args.slice(1));
+  else if (cmd === 'feynman') await cmdFeynman(args.slice(1));
+  else if (cmd === 'test') await cmdTest(args.slice(1));
   else if (cmd === 'card') cmdCard(args.slice(1));
   else if (cmd === 'lock') cmdLock(args.slice(1));
   else if (cmd === 'compile') cmdCompile(args.slice(1));
@@ -1161,3 +1249,4 @@ try {
 } catch (err) {
   fail(err.message || String(err));
 }
+})();

@@ -29,6 +29,9 @@ Create (three entry paths):
   kdna-studio create <project-dir> --from-kdna <file.kdna> --name <@scope/name>
   kdna-studio create <project-dir> --from-folder <source-dir> --name <@scope/name>
 
+Migrate (dev source → trusted .kdna in one command):
+  kdna-studio migrate <source-dir> --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--sign]
+
 Authoring:
   kdna-studio import <project> <source-file>
   kdna-studio source classify <project>                            # classify evidence against declared target
@@ -445,6 +448,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
   fs.mkdirSync(projectDir, { recursive: true });
   writeProject(path.join(projectDir, 'studio.project.json'), project);
   console.log(JSON.stringify({ audit, imported: importedCards.length, source_mode: 'source_folder' }, null, 2));
+  return { project, projectPath: path.join(projectDir, 'studio.project.json'), audit };
 }
 
 /**
@@ -606,6 +610,83 @@ function cmdLock(args) {
     process.exit(EXIT.HUMAN_LOCK_REQUIRED);
   }
   console.log(`Human Lock Gate passed: ${gate.lockedJudgmentCards} locked judgment cards`);
+}
+
+function cmdMigrate(args) {
+  const sourceDir = args[0];
+  const out = option(args, '--out');
+  const by = option(args, '--by');
+  const statement = option(args, '--statement');
+  const name = option(args, '--name') || path.basename(path.resolve(sourceDir || '.'));
+  if (!sourceDir || !out || !by || !statement) {
+    fail('Usage: kdna-studio migrate <source-dir> --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--sign] [--passphrase <pass>]');
+  }
+
+  // Step 1: create temp project and import everything from dev source
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-migrate-'));
+  let creatorIdentity = null;
+  try { creatorIdentity = creatorApi.loadIdentity(); } catch { /* proceed without */ }
+  const { project } = importFromFolder(sourceDir, tmpDir, name, creatorIdentity);
+
+  // Step 2: approve and Human Lock all cards
+  let locked = 0;
+  for (let i = 0; i < (project.cards || []).length; i++) {
+    let card = project.cards[i];
+    if (card.locked) { locked++; continue; }
+    if (card.status === 'draft') card = cardApi.transitionCard(card, 'revised', { by });
+    const lockPayload = {
+      by,
+      statement,
+      checked: { applies_when: true, does_not_apply_when: true, failure_risk: true },
+    };
+    if (args.includes('--sign')) {
+      const identity = creatorApi.loadIdentity();
+      if (!identity) fail('No creator identity. Run: kdna-studio identity init --name "Your Name"', EXIT.TRUST_FAILED);
+      lockPayload.creator_id = identity.creator_id;
+      const passphrase = option(args, '--passphrase');
+      try {
+        lockPayload.signature = creatorApi.signHumanLock(
+          card.id, statement, cardApi.cardJudgmentFingerprint(card), null, passphrase,
+        );
+      } catch (e) {
+        fail(`Failed to sign Human Lock for ${card.id}: ${e.message}`, EXIT.TRUST_FAILED);
+      }
+    }
+    project.cards[i] = cardApi.lockCard(card, lockPayload);
+    locked++;
+  }
+  if (project.stages?.judgment_cards) {
+    project.stages.judgment_cards.locked = locked;
+    project.stages.judgment_cards.total = project.cards.length;
+  }
+  writeProject(path.join(tmpDir, 'studio.project.json'), project);
+  console.log(`Approved and Human Locked: ${locked} cards`);
+
+  // Step 3: verify Human Lock gate
+  const gate = projectApi.checkHumanLockGate(project);
+  if (gate.blocked) {
+    const reasons = gate.issues.map((i) => `${i.cardId}: ${i.reason}`).join('\n  - ');
+    fail(`Human Lock Gate blocked: ${reasons}`, EXIT.HUMAN_LOCK_REQUIRED);
+  }
+
+  // Step 4: compile and export as .kdna
+  const { result } = compileProject(tmpDir);
+  const files = { ...result.files };
+  files['README.md'] = compileApi.generateReadme(project);
+  files.LICENSE = project.license?.type || 'UNSPECIFIED';
+  files.mimetype = 'application/vnd.aikdna.kdna+zip';
+
+  if (args.includes('--sign')) applySignature(files, option(args, '--passphrase'));
+  const absOut = path.resolve(out);
+  buildZip(files, absOut);
+  console.log(`Exported: ${absOut}`);
+  console.log(`  Name: ${name}`);
+  console.log(`  Cards: ${project.cards.length} (${locked} locked)`);
+  console.log(`  Files: ${Object.keys(files).length}`);
+  console.log(`  Build ID: ${result.identity.build_id}`);
+
+  // Cleanup temp
+  try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* best effort */ }
 }
 
 function compileProject(projectInput) {
@@ -1106,6 +1187,7 @@ if (!cmd || cmd === '--help' || cmd === '-h') {
 
 try {
   if (cmd === 'create') cmdCreate(args.slice(1));
+  else if (cmd === 'migrate') cmdMigrate(args.slice(1));
   else if (cmd === 'import') cmdImport(args.slice(1));
   else if (cmd === 'target') cmdTarget(args.slice(1));
   else if (cmd === 'source') cmdSourceClassify(args.slice(1));

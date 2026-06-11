@@ -760,7 +760,13 @@ function cmdMigrate(args) {
 
   if (args.includes('--sign')) applySignature(files, option(args, '--passphrase'));
   const absOut = path.resolve(out);
-  buildZip(files, absOut);
+  const entries = [['mimetype', files.mimetype]];
+  for (const name of Object.keys(files).filter(k => k !== 'mimetype').sort()) {
+    entries.push([name, files[name]]);
+  }
+  const zip = buildZip(entries);
+  fs.mkdirSync(path.dirname(absOut), { recursive: true });
+  fs.writeFileSync(absOut, zip);
   console.log(`Exported: ${absOut}`);
   console.log(`  Name: ${name}`);
   console.log(`  Cards: ${project.cards.length} (${locked} locked)`);

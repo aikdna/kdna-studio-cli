@@ -40,7 +40,8 @@ Migrate (dev source → trusted .kdna in one command):
   kdna-studio migrate <source-dir> --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--sign]
 
 Authoring:
-  kdna-studio import <project> <source-file>
+  kdna-studio import <project> <source-file-or-dir>               # import evidence (txt/md/json/yaml/csv/log/srt/vtt/html)
+  kdna-studio filter <project>                                    # check evidence for sensitive content
   kdna-studio source classify <project>                            # classify evidence against declared target
   kdna-studio card list <project>
   kdna-studio card add <project> <type> --field key=value [--field key=value]
@@ -509,17 +510,85 @@ function readZipEntries(buf) {
   return entries;
 }
 
+const aiFilter = require('../src/ai/filter');
+
 function cmdImport(args) {
   const [projectInput, source] = args;
-  if (!projectInput || !source) fail('Usage: kdna-studio import <project> <source-file>');
+  if (!projectInput || !source) fail('Usage: kdna-studio import <project> <source-file-or-dir>');
   const { projectPath, project } = readProject(projectInput);
+
   const sourcePath = path.resolve(source);
-  if (!fs.existsSync(sourcePath)) fail(`Source file not found: ${sourcePath}`);
-  const content = fs.readFileSync(sourcePath, 'utf8');
-  const evidence = evidenceApi.createEvidenceEntry('text', path.basename(sourcePath), content, sourcePath);
-  evidenceApi.addEvidence(project, evidence);
+  if (!fs.existsSync(sourcePath)) fail(`Source not found: ${sourcePath}`);
+
+  const TEXT_EXTS = new Set(['.txt', '.md', '.json', '.jsonl', '.yaml', '.yml', '.csv', '.log', '.srt', '.vtt', '.html', '.xml', '.rst']);
+  const BINARY_EXTS = new Set(['.pdf', '.docx', '.rtf']);
+  let imported = 0;
+  let skipped = 0;
+
+  function importFile(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    const name = path.basename(filePath);
+
+    if (BINARY_EXTS.has(ext)) {
+      console.warn(`Skipping binary format (not yet supported in CLI): ${name}`);
+      skipped++;
+      return;
+    }
+
+    let content;
+    try { content = fs.readFileSync(filePath, 'utf8'); } catch { console.warn(`Cannot read: ${name}`); skipped++; return; }
+
+    if (content.length > 120000) {
+      console.warn(`File too large (${content.length} chars, max 120000): ${name}`);
+      skipped++;
+      return;
+    }
+
+    const evidence = evidenceApi.createEvidenceEntry('text', name, content, filePath);
+    evidenceApi.addEvidence(project, evidence);
+    imported++;
+  }
+
+  if (fs.statSync(sourcePath).isDirectory()) {
+    const files = fs.readdirSync(sourcePath).map(f => path.join(sourcePath, f)).filter(f => fs.statSync(f).isFile());
+    for (const f of files) {
+      if (imported >= 300) { console.warn('Reached 300 file limit.'); break; }
+      importFile(f);
+    }
+  } else {
+    importFile(sourcePath);
+  }
+
   writeProject(projectPath, project);
-  console.log(`Imported evidence: ${evidence.id}`);
+
+  // Check for sensitive content
+  const evidenceList = project.evidence_materials || [];
+  const flagged = aiFilter.checkEvidence(evidenceList);
+  if (flagged.length > 0) {
+    console.warn(`\nSensitive content detected in ${flagged.length} file(s):`);
+    for (const f of flagged) console.warn(`  ${f.filename}: ${f.flagged.join(', ')}`);
+  }
+
+  console.log(`Imported: ${imported} file(s)${skipped > 0 ? `, ${skipped} skipped` : ''}`);
+}
+
+function cmdFilter(args) {
+  const projectInput = args[0];
+  if (!projectInput) fail('Usage: kdna-studio filter <project>');
+  const { project } = readProject(projectInput);
+  const evidenceList = project.evidence_materials || [];
+  if (evidenceList.length === 0) { console.log('No evidence to filter.'); return; }
+
+  const flagged = aiFilter.checkEvidence(evidenceList);
+  if (flagged.length === 0) {
+    console.log(`All ${evidenceList.length} evidence file(s) passed sensitive content filter.`);
+  } else {
+    console.log(`Sensitive content detected in ${flagged.length}/${evidenceList.length} file(s):`);
+    for (const f of flagged) {
+      console.log(`  ${f.filename}: ${f.flagged.join(', ')}`);
+      for (const [domain, match] of Object.entries(f.matches)) console.log(`    ${domain}: "${match}"`);
+    }
+  }
 }
 
 function cmdCard(args) {
@@ -1308,6 +1377,7 @@ try {
   if (cmd === 'create') cmdCreate(args.slice(1));
   else if (cmd === 'migrate') cmdMigrate(args.slice(1));
   else if (cmd === 'import') cmdImport(args.slice(1));
+  else if (cmd === 'filter') cmdFilter(args.slice(1));
   else if (cmd === 'target') cmdTarget(args.slice(1));
   else if (cmd === 'source') cmdSourceClassify(args.slice(1));
   else if (cmd === 'distill') await cmdDistill(args.slice(1));

@@ -38,7 +38,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@aikdna/kdna-studio-core": "^1.5.0"
+    "@aikdna/kdna-studio-core": "file:../kdna-studio-core"
   },
   "devDependencies": {
     "@aikdna/kdna-core": "^0.7.1"

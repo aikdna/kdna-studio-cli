@@ -2,6 +2,8 @@
 
 Official Studio command-line entry for KDNA judgment asset creation — turns your notes, documents, works, and feedback into loadable .kdna domains.
 
+**Official** means this package is part of the KDNA official toolchain. It does not imply content trust, asset endorsement, registry status, or quality rating.
+
 Two authoring paths: interview-first (articulate your judgment directly) and distillation-first (provide content, find the patterns, confirm what's really you).
 
 Distillation-first authoring is domain-first: declare the target domain, owner scope, granularity, task scope, include areas, exclude areas, and load condition before extracting candidates. A single `.kdna` should stay scoped; complex work should compose multiple domain assets through a KDNA Cluster.

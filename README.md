@@ -82,7 +82,7 @@ kdna-studio create migrated --from-folder ./old-domain-json --name @scope/migrat
 
 ## Related
 
-- [KDNA Protocol](https://github.com/aikdna/kdna) — specification and schemas
+- [KDNA Core](https://github.com/aikdna/kdna) — Official format specification
 - [kdna-cli](https://github.com/aikdna/kdna-cli) — runtime CLI for verify, install, load, publish
 - [kdna-studio-core](https://github.com/aikdna/kdna-studio-core) — authoring SDK used by this CLI
 - [kdna-studio-swift](https://github.com/aikdna/kdna-studio-swift) — native Swift counterpart

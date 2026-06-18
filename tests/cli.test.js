@@ -397,6 +397,45 @@ test('migrate --format v1 maps scoped name, writes checksums, and preserves sour
   assert.equal(JSON.stringify(full).includes('registry'), false);
 });
 
+test('export --format v1 exports a Studio project as a valid non-empty v1 asset', (t) => {
+  assert.ok(kdnaCore, '@aikdna/kdna-core is required for v1 export verification');
+  const { tmp, projectDir } = createLockedProject(t);
+  const outFile = path.join(tmp, 'project-v1.kdna');
+
+  const result = run(['export', projectDir, '--format', 'v1', '--out', outFile], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Exported \(v1\)/);
+
+  const validation = kdnaCore.validate(outFile);
+  assert.equal(validation.overall_valid, true, JSON.stringify(validation.problems));
+  const loaded = kdnaCore.loadV1(outFile, { profile: 'full', as: 'json' }).content;
+  assert.equal(loaded.payload.core.axioms.length, 1);
+  assert.equal(loaded.payload.source_cards.length, 1);
+  assert.ok(loaded.payload.core.boundaries.some((b) => b.type === 'axiom_applicability'));
+});
+
+test('migrate --format v1 accepts an existing Studio project without dropping cards', (t) => {
+  assert.ok(kdnaCore, '@aikdna/kdna-core is required for v1 export verification');
+  const { tmp, projectDir } = createLockedProject(t);
+  const outFile = path.join(tmp, 'project-migrated-v1.kdna');
+
+  const result = run([
+    'migrate', projectDir,
+    '--format', 'v1',
+    '--out', outFile,
+    '--by', 'tester',
+    '--statement', 'I confirm this project v1 migration.',
+  ], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Cards: 1/);
+
+  const validation = kdnaCore.validate(outFile);
+  assert.equal(validation.overall_valid, true, JSON.stringify(validation.problems));
+  const loaded = kdnaCore.loadV1(outFile, { profile: 'full', as: 'json' }).content;
+  assert.equal(loaded.payload.core.axioms.length, 1);
+  assert.equal(loaded.payload.source_cards.length, 1);
+});
+
 // ── Create from KDNA ────────────────────────────────────────────────
 
 test('create --from-kdna forks an existing .kdna asset', (t) => {

@@ -58,12 +58,14 @@ Candidate promotion is scope-gated: only candidates with `status == accepted` an
 After export, use the runtime CLI:
 
 ```bash
-kdna verify dist/my_domain.kdna --judgment
-kdna publish dist/my_domain.kdna
+kdna validate dist/my_domain.kdna
+kdna load dist/my_domain.kdna --profile=compact --as=prompt
 ```
 
-`kdna-studio` is the CLI entry for trusted KDNA creation. `kdna` is the runtime
-control plane for existing `.kdna` assets.
+`kdna-studio` is the CLI entry for confirmed KDNA authoring. `kdna` is the
+runtime control plane for inspecting, validating, packing, unpacking, and
+loading existing `.kdna` assets. Signature, encryption, registry publishing,
+and private assets are future/gated phases, not the current Core v1 baseline.
 
 ## Identity
 
@@ -85,6 +87,6 @@ kdna-studio create migrated --from-folder ./old-domain-json --name @scope/migrat
 ## Related
 
 - [KDNA Core](https://github.com/aikdna/kdna) — Official format specification
-- [kdna-cli](https://github.com/aikdna/kdna-cli) — runtime CLI for verify, install, load, publish
+- [kdna-cli](https://github.com/aikdna/kdna-cli) — runtime CLI for inspect, validate, pack, unpack, and load
 - [kdna-studio-core](https://github.com/aikdna/kdna-studio-core) — authoring SDK used by this CLI
 - [kdna-studio-swift](https://github.com/aikdna/kdna-studio-swift) — native Swift counterpart

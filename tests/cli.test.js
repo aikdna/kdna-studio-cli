@@ -309,6 +309,94 @@ test('create --from-folder imports legacy JSON source, outputs audit', (t) => {
   assert.equal(project.lineage.type, 'migrated');
 });
 
+test('migrate --format v1 maps scoped name, writes checksums, and preserves source cards', (t) => {
+  assert.ok(kdnaCore, '@aikdna/kdna-core is required for v1 export verification');
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  const sourceDir = path.join(tmp, 'legacy-source');
+  fs.mkdirSync(sourceDir, { recursive: true });
+  fs.writeFileSync(path.join(sourceDir, 'kdna.json'), JSON.stringify({
+    name: '@test/legacy-import',
+    version: '0.7.3',
+    judgment_version: '2026.05',
+    asset_type: 'domain_judgment',
+    description: 'Legacy import fixture.',
+    core_insight: 'Preserve real judgment structure.',
+    author: { name: 'Test Author', id: 'test-author' },
+    license: { type: 'CC-BY-4.0' },
+    keywords: ['legacy', 'v1'],
+    languages: ['en'],
+    default_language: 'en',
+    quality_badge: 'tested',
+    registry: { repo: 'https://example.invalid/legacy' },
+  }));
+  fs.writeFileSync(path.join(sourceDir, 'KDNA_Core.json'), JSON.stringify({
+    axioms: [{
+      id: 'ax_legacy',
+      one_sentence: 'Prefer specific evidence over broad claims.',
+      full_statement: 'When evaluating a claim the agent must preserve specific evidence and not collapse it into generic advice.',
+      why: 'Without this judgment the agent produces plausible but weak summaries.',
+      applies_when: ['reviewing content'],
+      does_not_apply_when: ['pure formatting'],
+      failure_risk: 'May over-diagnose simple copy edits.',
+    }],
+    ontology: [{ id: 'on_legacy', essence: 'Specificity anchor', boundary: 'Not generic polish', trigger_signal: 'abstract claim' }],
+    frameworks: [{ id: 'fw_legacy', name: 'Diagnose before rewrite', when_to_use: 'reviewing drafts', steps: ['diagnose', 'rewrite'] }],
+    stances: [{ id: 'st_legacy', stance: 'Structure first', applies_when: ['draft review'], does_not_apply_when: ['grammar only'] }],
+  }));
+  fs.writeFileSync(path.join(sourceDir, 'KDNA_Patterns.json'), JSON.stringify({
+    terminology: {
+      standard_terms: [{ term: 'specificity anchor', definition: 'A concrete detail.' }],
+      banned_terms: [{ term: 'make it better', why: 'Non-diagnostic.', replace_with: 'name the structural issue' }],
+    },
+    misunderstandings: [{ wrong: 'Smooth means good.', correct: 'Smooth can hide weak thinking.', key_distinction: 'surface vs structure', why: 'Prevents false praise.' }],
+    self_check: ['Did I preserve the structural judgment?'],
+  }));
+  fs.writeFileSync(path.join(sourceDir, 'KDNA_Scenarios.json'), JSON.stringify({ scenes: [{ id: 'sc_legacy', name: 'Draft review', trigger: 'user asks for review', action: 'diagnose first' }] }));
+  fs.writeFileSync(path.join(sourceDir, 'KDNA_Cases.json'), JSON.stringify({ cases: [{ id: 'ca_legacy', title: 'Smooth but empty', scenario: 'draft reads well', expected: 'flag missing claim' }] }));
+  fs.writeFileSync(path.join(sourceDir, 'KDNA_Reasoning.json'), JSON.stringify({ reasoning_chains: [{ id: 're_legacy', name: 'structure-first', conclusion: 'diagnose structure first', so_what: 'avoid surface polish' }] }));
+  fs.writeFileSync(path.join(sourceDir, 'KDNA_Evolution.json'), JSON.stringify({ stages: [{ id: 'ev_legacy', name: 'Structural reviewer', description: 'Moves beyond surface editing.' }] }));
+
+  const outFile = path.join(tmp, 'legacy.kdna');
+  const result = run([
+    'migrate', sourceDir,
+    '--out', outFile,
+    '--name', '@test/legacy-import',
+    '--by', 'tester',
+    '--statement', 'I confirm this v1 migration fixture.',
+    '--format', 'v1',
+  ], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+
+  const validation = kdnaCore.validate(outFile);
+  assert.equal(validation.overall_valid, true, JSON.stringify(validation.problems));
+  const inspected = kdnaCore.inspect(outFile);
+  assert.equal(inspected.asset_id, 'kdna:test:legacy-import');
+  assert.equal(inspected.checksums_present, true);
+
+  const full = kdnaCore.loadV1(outFile, { profile: 'full', as: 'json' }).content;
+  assert.equal(full.manifest.creator.name, 'Test Author');
+  assert.equal(full.manifest.version, '0.7.3');
+  assert.equal(full.manifest.judgment_version, '2026.05.0');
+  assert.equal(full.payload.core.axioms.length, 1);
+  assert.equal(full.payload.core.boundaries.length, 3);
+  assert.ok(full.payload.core.boundaries.some((b) => b.type === 'axiom_applicability'));
+  assert.ok(full.payload.core.boundaries.some((b) => b.type === 'ontology_boundary'));
+  assert.ok(full.payload.core.boundaries.some((b) => b.type === 'stance_boundary'));
+  assert.equal(full.payload.patterns.filter((p) => p.type === 'term').length, 1);
+  assert.equal(full.payload.patterns.filter((p) => p.type === 'banned_term').length, 1);
+  assert.equal(full.payload.scenarios.length, 1);
+  assert.equal(full.payload.cases.length, 1);
+  assert.equal(full.payload.reasoning.self_checks.length, 1);
+  assert.equal(full.payload.reasoning.failure_modes.length, 1);
+  assert.equal(full.payload.reasoning.reasoning_chains.length, 1);
+  assert.equal(full.payload.evolution.stages.length, 1);
+  assert.equal(full.payload.source_cards.length, 12);
+  assert.equal(JSON.stringify(full).includes('quality_badge'), false);
+  assert.equal(JSON.stringify(full).includes('registry'), false);
+});
+
 // ── Create from KDNA ────────────────────────────────────────────────
 
 test('create --from-kdna forks an existing .kdna asset', (t) => {

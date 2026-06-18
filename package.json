@@ -41,6 +41,6 @@
     "@aikdna/kdna-studio-core": "^1.5.0"
   },
   "devDependencies": {
-    "@aikdna/kdna-core": "^0.9.1"
+    "@aikdna/kdna-core": "^0.11.0"
   }
 }

@@ -39,7 +39,7 @@ Create (three entry paths):
   kdna-studio create <project-dir> --from-folder <source-dir> --name <@scope/name>
 
 Migrate (dev source → trusted .kdna in one command):
-  kdna-studio migrate <source-dir> --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--sign]
+  kdna-studio migrate <source-dir|project> --format v1 --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--sign]
 
 Authoring:
   kdna-studio import <project> <source-file-or-dir>               # import evidence (txt/md/json/yaml/csv/log/srt/vtt/html)
@@ -50,7 +50,8 @@ Authoring:
   kdna-studio card approve <project> <card-id> --by <id> --statement <text> [--sign] [--passphrase <pass>]
   kdna-studio lock <project>
   kdna-studio compile <project> --out <dir>
-  kdna-studio export <project> --out <file.kdna> [--sign]
+  kdna-studio export <project> --format v1 --out <file.kdna>
+  kdna-studio export <project> --out <file.kdna> [--sign]                  # legacy v2
 
 AI Authoring (requires LLM config: kdna-studio llm config):
   kdna-studio distill <project> --ai                             # AI-driven candidate extraction from evidence
@@ -1125,16 +1126,33 @@ function cmdMigrate(args) {
   const out = option(args, '--out');
   const by = option(args, '--by');
   const statement = option(args, '--statement');
-  const name = option(args, '--name') || path.basename(path.resolve(sourceDir || '.'));
+  const requestedName = option(args, '--name');
+  let name = requestedName || path.basename(path.resolve(sourceDir || '.'));
   if (!sourceDir || !out || !by || !statement) {
     fail('Usage: kdna-studio migrate <source-dir> --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--sign] [--passphrase <pass>]');
   }
 
-  // Step 1: create temp project and import everything from dev source
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-migrate-'));
+  const sourcePath = path.resolve(sourceDir);
+  const format = option(args, '--format');
+  const isStudioProject = fs.existsSync(path.join(sourcePath, 'studio.project.json'));
+  let tmpDir = null;
+  let projectPath = null;
+  let project = null;
+
+  // Step 1: import dev source, or use an existing Studio project directly.
   let creatorIdentity = null;
   try { creatorIdentity = creatorApi.loadIdentity(); } catch { /* proceed without */ }
-  const { project } = importFromFolder(sourceDir, tmpDir, name, creatorIdentity);
+  if (format === 'v1' && isStudioProject) {
+    const loaded = readProject(sourcePath);
+    project = loaded.project;
+    projectPath = loaded.projectPath;
+    if (!requestedName && project.name) name = project.name;
+  } else {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-migrate-'));
+    const imported = importFromFolder(sourceDir, tmpDir, name, creatorIdentity);
+    project = imported.project;
+    projectPath = path.join(tmpDir, 'studio.project.json');
+  }
 
   // Reject if critical judgment fields are missing from axioms
   const criticalMissing = [];
@@ -1188,7 +1206,7 @@ function cmdMigrate(args) {
     project.stages.judgment_cards.locked = locked;
     project.stages.judgment_cards.total = project.cards.length;
   }
-  writeProject(path.join(tmpDir, 'studio.project.json'), project);
+  writeProject(projectPath, project);
   console.log(`Approved and Human Locked: ${locked} cards`);
 
   // Step 3: verify Human Lock gate
@@ -1200,24 +1218,11 @@ function cmdMigrate(args) {
 
   const absOut = path.resolve(out);
   // Step 4: v1 export or v2 compile + export
-  if (args.includes('--format') && option(args, '--format') === 'v1') {
-    let core;
-    try { core = require('@aikdna/kdna-core'); } catch (e) {
-      fail('@aikdna/kdna-core@0.11.0+ is required for v1 export.', 2);
+  if (format === 'v1') {
+    exportProjectV1(project, name, absOut);
+    if (tmpDir) {
+      try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* cleanup */ }
     }
-    const lockedCards = (project.cards || []).filter(c => c.locked);
-    const v1Dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-v1-'));
-    fs.writeFileSync(path.join(v1Dir, 'mimetype'), 'application/vnd.kdna.asset');
-    fs.writeFileSync(path.join(v1Dir, 'kdna.json'), JSON.stringify(buildV1Manifest(project, name), null, 2));
-    fs.writeFileSync(path.join(v1Dir, 'payload.kdnab'), JSON.stringify(buildV1Payload(project), null, 2));
-    fs.writeFileSync(path.join(v1Dir, 'checksums.json'), JSON.stringify(buildChecksumsV1(v1Dir), null, 2));
-    core.pack(v1Dir, absOut);
-    const vr = core.validate(absOut);
-    if (!vr.overall_valid) fail('v1 export validation failed: ' + (vr.problems || []).join('; '));
-    console.log('Exported (v1): ' + absOut);
-    console.log('  Name: ' + name + '  Cards: ' + lockedCards.length + '  Validated: all gates pass');
-    try { fs.rmSync(v1Dir, { recursive: true }); } catch { /* cleanup */ }
-    try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* cleanup */ }
     return;
   }
   const { result } = compileProject(tmpDir);
@@ -1240,7 +1245,37 @@ function cmdMigrate(args) {
   console.log(`  Build ID: ${result.identity.build_id}`);
 
   // Cleanup temp
-  try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* best effort */ }
+  if (tmpDir) {
+    try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* best effort */ }
+  }
+}
+
+function exportProjectV1(project, name, outPath) {
+  let core;
+  try { core = require('@aikdna/kdna-core'); } catch (e) {
+    fail('@aikdna/kdna-core@0.11.0+ is required for v1 export.', 2);
+  }
+  const gate = projectApi.checkHumanLockGate(project);
+  if (gate.blocked) {
+    const reasons = gate.issues.map((i) => `${i.cardId}: ${i.reason}`).join('\n  - ');
+    fail(`Human Lock Gate blocked v1 export:\n  - ${reasons}`, EXIT.HUMAN_LOCK_REQUIRED);
+  }
+  const lockedCards = (project.cards || []).filter(c => c.locked);
+  const v1Dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-v1-'));
+  try {
+    fs.writeFileSync(path.join(v1Dir, 'mimetype'), 'application/vnd.kdna.asset');
+    fs.writeFileSync(path.join(v1Dir, 'kdna.json'), JSON.stringify(buildV1Manifest(project, name), null, 2));
+    fs.writeFileSync(path.join(v1Dir, 'payload.kdnab'), JSON.stringify(buildV1Payload(project), null, 2));
+    fs.writeFileSync(path.join(v1Dir, 'checksums.json'), JSON.stringify(buildChecksumsV1(v1Dir), null, 2));
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    core.pack(v1Dir, outPath);
+    const vr = core.validate(outPath);
+    if (!vr.overall_valid) fail('v1 export validation failed: ' + (vr.problems || []).join('; '));
+    console.log('Exported (v1): ' + outPath);
+    console.log('  Name: ' + name + '  Cards: ' + lockedCards.length + '  Validated: all gates pass');
+  } finally {
+    try { fs.rmSync(v1Dir, { recursive: true }); } catch { /* cleanup */ }
+  }
 }
 
 function compileProject(projectInput) {
@@ -1417,7 +1452,12 @@ function applySignature(files, passphrase = null) {
 function cmdExport(args) {
   const projectInput = args[0];
   const out = option(args, '--out');
-  if (!projectInput || !out) fail('Usage: kdna-studio export <project> --out <file.kdna> [--sign]');
+  if (!projectInput || !out) fail('Usage: kdna-studio export <project> --out <file.kdna> [--format v1] [--sign]');
+  if (option(args, '--format') === 'v1') {
+    const { project } = readProject(projectInput);
+    exportProjectV1(project, option(args, '--name') || project.name, path.resolve(out));
+    return;
+  }
   const { project, result } = compileProject(projectInput);
   const files = { ...result.files };
   files['README.md'] = compileApi.generateReadme(project);
@@ -1841,6 +1881,10 @@ const args = process.argv.slice(2);
 const cmd = args[0];
 if (!cmd || cmd === '--help' || cmd === '-h') {
   usage();
+  process.exit(EXIT.OK);
+}
+if (cmd === '--version' || cmd === '-v') {
+  console.log(require('../package.json').version);
   process.exit(EXIT.OK);
 }
 

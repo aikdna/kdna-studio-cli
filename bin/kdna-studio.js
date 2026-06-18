@@ -772,82 +772,44 @@ function cmdMigrate(args) {
     fail(`Human Lock Gate blocked: ${reasons}`, EXIT.HUMAN_LOCK_REQUIRED);
   }
 
-  // Step 4: compile and export as .kdna
+  // Step 4: v1 export or v2 compile + export
+  if (args.includes('--format') && option(args, '--format') === 'v1') {
+    let core;
+    try { core = require('@aikdna/kdna-core'); } catch (e) {
+      fail('@aikdna/kdna-core@0.11.0+ is required for v1 export.', 2);
+    }
+    const lockedAxioms = (project.cards || []).filter(c => c.type === 'axiom' && c.locked);
+    const v1Dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-v1-'));
+    fs.writeFileSync(path.join(v1Dir, 'mimetype'), 'application/vnd.kdna.asset');
+    fs.writeFileSync(path.join(v1Dir, 'kdna.json'), JSON.stringify({
+      kdna_version: '1.0', asset_id: name || 'studio:v1-export',
+      asset_uid: 'urn:uuid:' + uuidv7(), asset_type: 'domain',
+      title: name || 'Studio v1 Export', version: '1.0.0',
+      judgment_version: '1.0.0',
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      creator: { name: 'Studio Export' },
+      compatibility: { min_loader_version: '1.0.0', profile: 'judgment-profile-v1' },
+      payload: { path: 'payload.kdnab', encoding: 'json', encrypted: false },
+      lineage: { type: 'original', fork_of: null, derived_from: null },
+    }, null, 2));
+    fs.writeFileSync(path.join(v1Dir, 'payload.kdnab'), JSON.stringify({
+      profile: 'judgment-profile-v1',
+      core: { highest_question: '', axioms: lockedAxioms.map(c => ({ one_sentence: c.fields?.one_sentence || c.summary || '' })), boundaries: [], risk_model: {} },
+      patterns: [], scenarios: [], cases: [], reasoning: { self_checks: [], failure_modes: [] },
+    }, null, 2));
+    core.pack(v1Dir, absOut);
+    const vr = core.validate(absOut);
+    if (!vr.overall_valid) fail('v1 export validation failed: ' + (vr.problems || []).join('; '));
+    console.log('Exported (v1): ' + absOut);
+    console.log('  Name: ' + name + '  Axioms: ' + lockedAxioms.length + '  Validated: all gates pass');
+    try { fs.rmSync(v1Dir, { recursive: true }); } catch { /* cleanup */ }
+    try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* cleanup */ }
+    return;
+  }
   const { result } = compileProject(tmpDir);
   const files = { ...result.files };
   files['README.md'] = compileApi.generateReadme(project);
   files.LICENSE = project.license?.type || 'UNSPECIFIED';
-
-  if (args.includes('--format') && option(args, '--format') === 'v1') {
-    process.stderr.write('[debug] v1 export path triggered\n');
-    // ── v1 export: use @aikdna/kdna-core for pack/checksum ──
-    let core;
-    try {
-      core = require('@aikdna/kdna-core');
-    } catch (e) {
-      fail('@aikdna/kdna-core@0.11.0+ is required for v1 export. Run: npm install -g @aikdna/kdna-core@latest', 2);
-    }
-    const v2Manifest = JSON.parse(files['kdna.json']);
-    let payloadObj;
-    try {
-      const payloadBuf = files['payload.kdnab'];
-      payloadObj = cbor.decode(Buffer.isBuffer(payloadBuf) ? payloadBuf : Buffer.from(payloadBuf));
-    } catch (e) {
-      fail('Cannot decode v1 payload from Studio compile output: ' + e.message);
-    }
-    // Build a v1 source dir
-    const v1Dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'kdna-v1-'));
-    fs.writeFileSync(path.join(v1Dir, 'mimetype'), 'application/vnd.kdna.asset');
-    fs.writeFileSync(path.join(v1Dir, 'kdna.json'), JSON.stringify({
-      kdna_version: '1.0',
-      asset_id: v2Manifest.name || 'studio:v1-export',
-      asset_uid: 'urn:uuid:' + uuidv7(),
-      asset_type: 'domain',
-      title: v2Manifest.name || 'Studio v1 Export',
-      version: v2Manifest.version || '1.0.0',
-      judgment_version: v2Manifest.judgment_version || '1.0.0',
-      created_at: v2Manifest.created || new Date().toISOString(),
-      updated_at: v2Manifest.updated || new Date().toISOString(),
-      creator: { name: v2Manifest.author?.name || 'Studio Export', id: v2Manifest.author?.id },
-      compatibility: { min_loader_version: '1.0.0', profile: 'judgment-profile-v1' },
-      payload: { path: 'payload.kdnab', encoding: 'json', encrypted: false },
-      summary: v2Manifest.description || '',
-      language: v2Manifest.default_language || 'en',
-      lineage: { type: 'original', fork_of: null, derived_from: null },
-    }, null, 2));
-    // Build v1 payload: minimal mapping from v2 compile output
-    const v1Payload = {
-      profile: 'judgment-profile-v1',
-      core: {
-        highest_question: project.stages?.judgment_cards?.goal || '',
-        axioms: (project.cards || []).filter(c => c.type === 'axiom' && c.locked).map(c => ({
-          one_sentence: c.fields?.one_sentence || c.summary || '',
-        })),
-        boundaries: [],
-        risk_model: {},
-      },
-      patterns: [],
-      scenarios: [],
-      cases: [],
-      reasoning: { self_checks: [], failure_modes: [] },
-    };
-    fs.writeFileSync(path.join(v1Dir, 'payload.kdnab'), JSON.stringify(v1Payload, null, 2));
-    // Use official core to pack + checksum
-    core.pack(v1Dir, absOut);
-    // Re-validate
-    const vr = core.validate(absOut);
-    if (!vr.overall_valid) {
-      fail('v1 export validation failed: ' + (vr.problems || []).join('; '));
-    }
-    console.log(`Exported (v1): ${absOut}`);
-    console.log(`  Name: ${name}`);
-    console.log(`  Axioms: ${v1Payload.core.axioms.length}`);
-    console.log(`  Validated: ${vr.overall_valid ? 'all gates pass' : 'FAIL'}`);
-    try { fs.rmSync(v1Dir, { recursive: true }); } catch { /* best effort */ }
-    try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* best effort */ }
-    return;
-  }
-
   files.mimetype = 'application/vnd.aikdna.kdna+zip';
 
   if (args.includes('--sign')) applySignature(files, option(args, '--passphrase'));

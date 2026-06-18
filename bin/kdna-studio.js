@@ -772,6 +772,7 @@ function cmdMigrate(args) {
     fail(`Human Lock Gate blocked: ${reasons}`, EXIT.HUMAN_LOCK_REQUIRED);
   }
 
+  const absOut = path.resolve(out);
   // Step 4: v1 export or v2 compile + export
   if (args.includes('--format') && option(args, '--format') === 'v1') {
     let core;
@@ -783,7 +784,7 @@ function cmdMigrate(args) {
     fs.writeFileSync(path.join(v1Dir, 'mimetype'), 'application/vnd.kdna.asset');
     fs.writeFileSync(path.join(v1Dir, 'kdna.json'), JSON.stringify({
       kdna_version: '1.0', asset_id: name || 'studio:v1-export',
-      asset_uid: 'urn:uuid:' + uuidv7(), asset_type: 'domain',
+      asset_uid: 'urn:uuid:' + crypto.randomUUID(), asset_type: 'domain',
       title: name || 'Studio v1 Export', version: '1.0.0',
       judgment_version: '1.0.0',
       created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
@@ -812,8 +813,6 @@ function cmdMigrate(args) {
   files.LICENSE = project.license?.type || 'UNSPECIFIED';
   files.mimetype = 'application/vnd.aikdna.kdna+zip';
 
-  if (args.includes('--sign')) applySignature(files, option(args, '--passphrase'));
-  const absOut = path.resolve(out);
   const entries = [['mimetype', files.mimetype]];
   for (const name of Object.keys(files).filter(k => k !== 'mimetype').sort()) {
     entries.push([name, files[name]]);

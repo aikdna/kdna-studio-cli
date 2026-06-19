@@ -6,6 +6,16 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const cbor = require('cbor-x');
 
+function loadStudioCore() {
+  const publishedCore = require('@aikdna/kdna-studio-core');
+  if (publishedCore.exportRuntime) return publishedCore;
+  try {
+    return require('../../kdna-studio-core/src');
+  } catch (_) {
+    return publishedCore;
+  }
+}
+
 const {
   project: projectApi,
   cards: cardApi,
@@ -14,8 +24,8 @@ const {
   quality,
   creator: creatorApi,
   distillation: distillationApi,
-} = require('@aikdna/kdna-studio-core');
-const { buildChecksumsV1 } = require('@aikdna/kdna-core/v1');
+  exportRuntime,
+} = loadStudioCore();
 
 const llm = require('../src/llm');
 const ai = require('../src/ai');
@@ -152,12 +162,6 @@ function parseFields(args) {
   return fields;
 }
 
-function arrayValue(value) {
-  if (Array.isArray(value)) return value;
-  if (value === undefined || value === null || value === '') return [];
-  return [value];
-}
-
 function semverValue(value, fallback = '1.0.0') {
   const raw = String(value || '').trim();
   if (/^[0-9]+\.[0-9]+\.[0-9]+([+-].+)?$/.test(raw)) return raw;
@@ -206,10 +210,6 @@ function publicManifestMetadata(raw = {}) {
   delete copy.signature;
   delete copy.media_type;
   return copy;
-}
-
-function cardPayload(card) {
-  return { id: card.id, ...(card.fields || {}) };
 }
 
 function cleanFields(fields = {}) {
@@ -379,116 +379,6 @@ function cardsFromPayload(payload) {
     return cardsFromLegacyPayload(payload);
   }
   return [];
-}
-
-function buildV1Payload(project) {
-  const locked = (project.cards || []).filter((c) => c.locked);
-  const byType = (type) => locked.filter((c) => c.type === type);
-  const source = project.source_manifest || {};
-
-  const axioms = byType('axiom').map((c) => ({
-    id: c.id,
-    one_sentence: c.fields?.one_sentence || '',
-    full_statement: c.fields?.full_statement || '',
-    why: c.fields?.why || '',
-    applies_when: arrayValue(c.fields?.applies_when),
-    does_not_apply_when: arrayValue(c.fields?.does_not_apply_when),
-    failure_risk: c.fields?.failure_risk || '',
-    status: c.status || null,
-    human_lock: c.human_lock || null,
-  }));
-
-  const boundaries = [
-    ...byType('boundary').map((c) => ({ type: 'explicit_boundary', ...cardPayload(c) })),
-    ...byType('axiom').map((c) => ({
-      id: `${c.id}_applicability`,
-      type: 'axiom_applicability',
-      axiom_id: c.id,
-      one_sentence: c.fields?.one_sentence || '',
-      applies_when: arrayValue(c.fields?.applies_when),
-      does_not_apply_when: arrayValue(c.fields?.does_not_apply_when),
-      failure_risk: c.fields?.failure_risk || '',
-    })),
-    ...byType('ontology')
-      .filter((c) => c.fields?.boundary || c.fields?.applies_when || c.fields?.does_not_apply_when)
-      .map((c) => ({
-        id: `${c.id}_boundary`,
-        type: 'ontology_boundary',
-        concept_id: c.id,
-        one_sentence: c.fields?.one_sentence || '',
-        boundary: c.fields?.boundary || '',
-        applies_when: arrayValue(c.fields?.applies_when),
-        does_not_apply_when: arrayValue(c.fields?.does_not_apply_when),
-        trigger_signal: c.fields?.trigger_signal || '',
-      })),
-    ...byType('stance')
-      .filter((c) => c.fields?.applies_when || c.fields?.does_not_apply_when)
-      .map((c) => ({
-        id: `${c.id}_boundary`,
-        type: 'stance_boundary',
-        stance_id: c.id,
-        stance: c.fields?.stance || c.fields?.statement || c.fields?.one_sentence || '',
-        applies_when: arrayValue(c.fields?.applies_when),
-        does_not_apply_when: arrayValue(c.fields?.does_not_apply_when),
-      })),
-  ];
-
-  const patterns = [
-    ...byType('ontology').map((c) => ({ type: 'ontology', ...cardPayload(c) })),
-    ...byType('misunderstanding').map((c) => ({ type: 'misunderstanding', ...cardPayload(c) })),
-    ...byType('term').map((c) => ({ type: 'term', ...cardPayload(c) })),
-    ...byType('banned_term').map((c) => ({ type: 'banned_term', ...cardPayload(c) })),
-    ...byType('framework').map((c) => ({ type: 'framework', ...cardPayload(c) })),
-    ...byType('stance').map((c) => ({ type: 'stance', ...cardPayload(c) })),
-  ];
-
-  const failureModes = byType('misunderstanding').map((c) => ({
-    id: c.id,
-    mode: c.fields?.wrong || c.fields?.key_distinction || c.id,
-    correct: c.fields?.correct || '',
-    key_distinction: c.fields?.key_distinction || '',
-    why: c.fields?.why || '',
-  }));
-
-  return {
-    profile: 'judgment-profile-v1',
-    core: {
-      highest_question: source.core_insight || project.release?.description || '',
-      axioms,
-      boundaries,
-      risk_model: {
-        risks: byType('risk').map((c) => cardPayload(c)),
-        source_risk_level: source.risk_level || null,
-        fitness_for_purpose: source.fitness_for_purpose || null,
-      },
-    },
-    patterns,
-    scenarios: byType('scenario').map((c) => cardPayload(c)),
-    cases: byType('case').map((c) => cardPayload(c)),
-    reasoning: {
-      self_checks: byType('self_check').map((c) => c.fields?.question || c.fields?.one_sentence || c.id),
-      failure_modes: failureModes,
-      reasoning_chains: byType('reasoning').map((c) => cardPayload(c)),
-    },
-    evolution: {
-      stages: byType('evolution_stage').map((c) => cardPayload(c)),
-      changelog: locked.map((c) => ({
-        id: `locked_${c.id}`,
-        card_id: c.id,
-        type: c.type,
-        event: 'locked',
-        at: c.human_lock?.at || null,
-      })),
-      version_notes: source.judgment_version ? [`Migrated from source judgment_version ${source.judgment_version}`] : [],
-    },
-    source_cards: locked.map((c) => ({
-      id: c.id,
-      type: c.type,
-      status: c.status,
-      fields: c.fields || {},
-      human_lock: c.human_lock || null,
-    })),
-  };
 }
 
 function buildV1Manifest(project, name) {
@@ -1255,6 +1145,9 @@ function exportProjectV1(project, name, outPath) {
   try { core = require('@aikdna/kdna-core'); } catch (e) {
     fail('@aikdna/kdna-core@0.11.0+ is required for v1 export.', 2);
   }
+  if (!exportRuntime || typeof exportRuntime.exportRuntimeAsset !== 'function') {
+    fail('@aikdna/kdna-studio-core with exportRuntime.exportRuntimeAsset is required for v1 export.', 2);
+  }
   const gate = projectApi.checkHumanLockGate(project);
   if (gate.blocked) {
     const reasons = gate.issues.map((i) => `${i.cardId}: ${i.reason}`).join('\n  - ');
@@ -1263,10 +1156,16 @@ function exportProjectV1(project, name, outPath) {
   const lockedCards = (project.cards || []).filter(c => c.locked);
   const v1Dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-v1-'));
   try {
-    fs.writeFileSync(path.join(v1Dir, 'mimetype'), 'application/vnd.kdna.asset');
-    fs.writeFileSync(path.join(v1Dir, 'kdna.json'), JSON.stringify(buildV1Manifest(project, name), null, 2));
-    fs.writeFileSync(path.join(v1Dir, 'payload.kdnab'), JSON.stringify(buildV1Payload(project), null, 2));
-    fs.writeFileSync(path.join(v1Dir, 'checksums.json'), JSON.stringify(buildChecksumsV1(v1Dir), null, 2));
+    const manifestDefaults = buildV1Manifest(project, name);
+    const runtimeAsset = exportRuntime.exportRuntimeAsset(project, {
+      asset_id: manifestDefaults.asset_id,
+      asset_uid: manifestDefaults.asset_uid,
+      title: manifestDefaults.title,
+      created_at: manifestDefaults.created_at,
+      updated_at: manifestDefaults.updated_at,
+      access: project.release?.access || project.source_manifest?.access || 'public',
+    });
+    writeFiles(v1Dir, runtimeAsset.files);
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     core.pack(v1Dir, outPath);
     const vr = core.validate(outPath);

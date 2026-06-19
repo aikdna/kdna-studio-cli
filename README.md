@@ -50,7 +50,7 @@ kdna-studio card add my_domain axiom \
   --field failure_risk="generic advice"
 kdna-studio card approve my_domain <card-id> --by expert --statement "I confirm this judgment."
 kdna-studio lock my_domain
-kdna-studio export my_domain --out dist/my_domain.kdna --sign
+kdna-studio export my_domain --format v1 --out dist/my_domain.kdna
 ```
 
 Candidate promotion is scope-gated: only candidates with `status == accepted` and `scope_fit == true` are promoted to cards by default. Use `kdna-studio candidate override <project> <candidate-id>` only when a human intentionally overrides the scope gate.
@@ -58,14 +58,35 @@ Candidate promotion is scope-gated: only candidates with `status == accepted` an
 After export, use the runtime CLI:
 
 ```bash
-kdna validate dist/my_domain.kdna
+kdna validate dist/my_domain.kdna --runtime
+kdna plan-load dist/my_domain.kdna --json
 kdna load dist/my_domain.kdna --profile=compact --as=prompt
 ```
 
 `kdna-studio` is the CLI entry for confirmed KDNA authoring. `kdna` is the
 runtime control plane for inspecting, validating, packing, unpacking, and
-loading existing `.kdna` assets. Signature, encryption, registry publishing,
-and private assets are future/gated phases, not the current Core v1 baseline.
+loading existing `.kdna` assets.
+
+## Runtime Export Contract
+
+`kdna-studio export --format v1` is the canonical runtime export path. It uses
+`@aikdna/kdna-studio-core` to compile the Studio project into a KDNA Core v1
+runtime asset and then packs it with `@aikdna/kdna-core`.
+
+A v1 runtime export contains only these top-level entries:
+
+- `mimetype`
+- `kdna.json`
+- `payload.kdnab`
+- `checksums.json`
+
+Authoring/source entries such as `KDNA_Core.json`, `KDNA_Patterns.json`, and
+`source_cards` are not runtime distribution entries. They may exist in Studio
+compile output or legacy imports, but they must not be emitted by the runtime
+export path.
+
+Signature, encryption, registry publishing, paid distribution, and private
+assets are future/gated phases, not the current Core v1 baseline.
 
 ## Identity
 

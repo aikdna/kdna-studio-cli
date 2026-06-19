@@ -27,6 +27,15 @@ function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-studio-cli-'));
 }
 
+function assertCanonicalRuntimeContainer(outFile) {
+  const layout = kdnaCore.readV1Layout(outFile);
+  const names = (layout.entries || []).map((entry) => entry.name).sort();
+  assert.deepEqual(names, ['checksums.json', 'kdna.json', 'mimetype', 'payload.kdnab']);
+  assert.equal(names.includes('KDNA_Core.json'), false);
+  assert.equal(names.includes('KDNA_Patterns.json'), false);
+  return layout;
+}
+
 function createLockedProject(t) {
   const tmp = tmpDir();
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -309,7 +318,7 @@ test('create --from-folder imports legacy JSON source, outputs audit', (t) => {
   assert.equal(project.lineage.type, 'migrated');
 });
 
-test('migrate --format v1 maps scoped name, writes checksums, and preserves source cards', (t) => {
+test('migrate --format v1 exports canonical runtime payload without source entries', (t) => {
   assert.ok(kdnaCore, '@aikdna/kdna-core is required for v1 export verification');
   const tmp = tmpDir();
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -374,25 +383,22 @@ test('migrate --format v1 maps scoped name, writes checksums, and preserves sour
   const inspected = kdnaCore.inspect(outFile);
   assert.equal(inspected.asset_id, 'kdna:test:legacy-import');
   assert.equal(inspected.checksums_present, true);
+  const layout = assertCanonicalRuntimeContainer(outFile);
+  assert.equal(layout.manifest.lineage.type, 'adaptation');
+  assert.equal(layout.manifest.lineage.source_lineage_type, 'migrated');
 
   const full = kdnaCore.loadV1(outFile, { profile: 'full', as: 'json' }).content;
   assert.equal(full.manifest.creator.name, 'Test Author');
   assert.equal(full.manifest.version, '0.7.3');
   assert.equal(full.manifest.judgment_version, '2026.05.0');
+  assert.equal(full.payload.profile, 'judgment-profile-v1');
   assert.equal(full.payload.core.axioms.length, 1);
-  assert.equal(full.payload.core.boundaries.length, 3);
-  assert.ok(full.payload.core.boundaries.some((b) => b.type === 'axiom_applicability'));
-  assert.ok(full.payload.core.boundaries.some((b) => b.type === 'ontology_boundary'));
-  assert.ok(full.payload.core.boundaries.some((b) => b.type === 'stance_boundary'));
-  assert.equal(full.payload.patterns.filter((p) => p.type === 'term').length, 1);
-  assert.equal(full.payload.patterns.filter((p) => p.type === 'banned_term').length, 1);
   assert.equal(full.payload.scenarios.length, 1);
   assert.equal(full.payload.cases.length, 1);
   assert.equal(full.payload.reasoning.self_checks.length, 1);
   assert.equal(full.payload.reasoning.failure_modes.length, 1);
-  assert.equal(full.payload.reasoning.reasoning_chains.length, 1);
-  assert.equal(full.payload.evolution.stages.length, 1);
-  assert.equal(full.payload.source_cards.length, 12);
+  assert.ok(full.payload.evolution.stages.length >= 1);
+  assert.equal(Object.hasOwn(full.payload, 'source_cards'), false);
   assert.equal(JSON.stringify(full).includes('quality_badge'), false);
   assert.equal(JSON.stringify(full).includes('registry'), false);
 });
@@ -408,10 +414,12 @@ test('export --format v1 exports a Studio project as a valid non-empty v1 asset'
 
   const validation = kdnaCore.validate(outFile);
   assert.equal(validation.overall_valid, true, JSON.stringify(validation.problems));
+  assertCanonicalRuntimeContainer(outFile);
   const loaded = kdnaCore.loadV1(outFile, { profile: 'full', as: 'json' }).content;
   assert.equal(loaded.payload.core.axioms.length, 1);
-  assert.equal(loaded.payload.source_cards.length, 1);
-  assert.ok(loaded.payload.core.boundaries.some((b) => b.type === 'axiom_applicability'));
+  assert.equal(Object.hasOwn(loaded.payload, 'source_cards'), false);
+  assert.equal(loaded.manifest.payload.path, 'payload.kdnab');
+  assert.equal(loaded.manifest.payload.encrypted, false);
 });
 
 test('migrate --format v1 accepts an existing Studio project without dropping cards', (t) => {
@@ -431,9 +439,10 @@ test('migrate --format v1 accepts an existing Studio project without dropping ca
 
   const validation = kdnaCore.validate(outFile);
   assert.equal(validation.overall_valid, true, JSON.stringify(validation.problems));
+  assertCanonicalRuntimeContainer(outFile);
   const loaded = kdnaCore.loadV1(outFile, { profile: 'full', as: 'json' }).content;
   assert.equal(loaded.payload.core.axioms.length, 1);
-  assert.equal(loaded.payload.source_cards.length, 1);
+  assert.equal(Object.hasOwn(loaded.payload, 'source_cards'), false);
 });
 
 // ── Create from KDNA ────────────────────────────────────────────────

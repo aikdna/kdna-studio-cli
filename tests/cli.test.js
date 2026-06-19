@@ -98,6 +98,53 @@ test('rejects unknown commands with input error', () => {
   assert.match(result.stderr, /Unknown command/);
 });
 
+test('card approve --all locks every unlocked card', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const projectDir = path.join(tmp, 'project');
+
+  let result = run(['create', projectDir, '--name', '@test/approve-all'], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+
+  result = run([
+    'card',
+    'add',
+    projectDir,
+    'axiom',
+    '--field',
+    'one_sentence=Prefer specific evidence over broad claims',
+    '--field',
+    'full_statement=When evaluating a claim the agent must weigh the specificity of the supporting evidence. A narrow claim backed by concrete data should be preferred over a broad claim supported only by general principles.',
+    '--field',
+    'why=Without this axiom the agent may accept broad plausible-sounding claims as equally credible as narrow evidence-backed ones leading to false balance.',
+    '--field',
+    'applies_when=["reviewing content"]',
+    '--field',
+    'does_not_apply_when=["pure formatting"]',
+    '--field',
+    'failure_risk=generic advice',
+  ], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+
+  result = run([
+    'card',
+    'approve',
+    projectDir,
+    '--all',
+    '--by',
+    'expert',
+    '--statement',
+    'I confirm every unlocked card in this project.',
+  ], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Approved and Human Locked: 1 cards/);
+
+  const project = JSON.parse(fs.readFileSync(path.join(projectDir, 'studio.project.json'), 'utf8'));
+  assert.equal(project.cards.length, 1);
+  assert.equal(project.cards[0].locked, true);
+  assert.ok(project.cards[0].human_lock);
+});
+
 test('creates a Studio project and rejects accidental overwrite', (t) => {
   const tmp = tmpDir();
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));

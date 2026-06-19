@@ -934,10 +934,10 @@ function cmdCard(args) {
   }
   if (sub === 'approve') {
     const projectInput = args[1];
-    const cardId = args[2];
     const approveAll = args.includes('--all');
+    const cardId = approveAll ? null : args[2];
     if (!projectInput || (!cardId && !approveAll)) {
-      fail('Usage: kdna-studio card approve <project> <card-id> --by <id> --statement <text> [--sign]');
+      fail('Usage: kdna-studio card approve <project> <card-id|--all> --by <id> --statement <text> [--sign]');
     }
     const by = option(args, '--by');
     const statement = option(args, '--statement');

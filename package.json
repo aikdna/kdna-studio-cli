@@ -1,6 +1,6 @@
 {
   "name": "@aikdna/kdna-studio-cli",
-  "version": "0.5.3",
+  "version": "0.5.5",
   "description": "Official KDNA Studio command-line authoring entry for creating, locking, compiling, and exporting .kdna judgment assets through the KDNA toolchain.",
   "type": "commonjs",
   "bin": {
@@ -38,13 +38,13 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@aikdna/kdna-core": "^0.11.1",
-    "@aikdna/kdna-studio-core": "^1.5.3",
+    "@aikdna/kdna-core": "^0.12.0",
+    "@aikdna/kdna-studio-core": "^1.5.4",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "cbor-x": "^1.6.4"
   },
   "devDependencies": {
-    "@aikdna/kdna-core": "^0.11.1"
+    "@aikdna/kdna-core": "^0.12.0"
   }
 }

@@ -45,10 +45,12 @@ kdna-studio candidate accept my_domain <candidate-id>
 kdna-studio candidate promote my_domain
 kdna-studio card add my_domain axiom \
   --field one_sentence="Prefer specific evidence over broad claims" \
+  --field full_statement="When reviewing content, prefer specific evidence over broad claims because unsupported generalizations make the judgment impossible to verify or improve." \
+  --field why="Broad claims hide the actual reason for a judgment, so reviewers cannot tell whether the conclusion is evidence based, reusable, or merely plausible sounding." \
   --field applies_when='["reviewing content"]' \
   --field does_not_apply_when='["pure formatting"]' \
   --field failure_risk="generic advice"
-kdna-studio card approve my_domain <card-id> --by expert --statement "I confirm this judgment."
+kdna-studio card approve my_domain --all --by expert --statement "I confirm this judgment."
 kdna-studio lock my_domain
 kdna-studio export my_domain --format v1 --out dist/my_domain.kdna
 ```

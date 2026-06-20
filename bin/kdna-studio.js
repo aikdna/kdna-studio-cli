@@ -48,8 +48,8 @@ Create (three entry paths):
   kdna-studio create <project-dir> --from-kdna <file.kdna> --name <@scope/name>
   kdna-studio create <project-dir> --from-folder <source-dir> --name <@scope/name>
 
-Migrate (dev source → trusted .kdna in one command):
-  kdna-studio migrate <source-dir|project> --format v1 --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--sign]
+Migrate (dev source or Studio project → canonical .kdna in one command):
+  kdna-studio migrate <source-dir|project> --format v1 --out <file.kdna> --name <@scope/name> --by <id> --statement <text>
 
 Authoring:
   kdna-studio import <project> <source-file-or-dir>               # import evidence (txt/md/json/yaml/csv/log/srt/vtt/html)
@@ -58,10 +58,8 @@ Authoring:
   kdna-studio card list <project>
   kdna-studio card add <project> <type> --field key=value [--field key=value]
   kdna-studio card approve <project> <card-id> --by <id> --statement <text> [--sign] [--passphrase <pass>]
-  kdna-studio lock <project>
   kdna-studio compile <project> --out <dir>
   kdna-studio export <project> --format v1 --out <file.kdna>
-  kdna-studio export <project> --out <file.kdna> [--sign]                  # legacy v2
 
 AI Authoring (requires LLM config: kdna-studio llm config):
   kdna-studio distill <project> --ai                             # AI-driven candidate extraction from evidence
@@ -80,8 +78,6 @@ Distillation:
   kdna-studio candidate override <project> <candidate-id>        # override scope gate
   kdna-studio candidate promote <project>                        # promote accepted+scope_fit → cards
   kdna-studio report <project>
-  kdna-studio install <@scope/name|file.kdna> [--trusted]
-  kdna-studio update <@scope/name>
 
 Project may be a directory containing studio.project.json or a project JSON file.`);
 }

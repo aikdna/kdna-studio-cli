@@ -4,20 +4,21 @@ Official Studio command-line entry for KDNA judgment asset creation — turns yo
 
 **Official** means this package is part of the KDNA official toolchain. It does not imply content trust, asset endorsement, registry status, or quality rating.
 
-Two authoring paths: interview-first (articulate your judgment directly) and distillation-first (provide content, find the patterns, confirm what's really you).
+Two authoring paths: interview-first (articulate judgment directly) and distillation-first (provide content, find the patterns, review what belongs in scope).
 
 Distillation-first authoring is domain-first: declare the target domain, owner scope, granularity, task scope, include areas, exclude areas, and load condition before extracting candidates. A single `.kdna` should stay scoped; complex work should compose multiple domain assets through a KDNA Cluster.
 
 This package provides the `kdna-studio` command. It creates Studio projects,
-imports evidence, manages judgment cards, checks Human Lock, compiles locked
-cards, and exports canonical `.kdna` assets with build reports.
+imports evidence, manages judgment cards, records optional review/provenance
+signals, compiles reviewed project content, and exports canonical `.kdna`
+assets with build reports.
 
 It is intentionally separate from `@aikdna/kdna-cli`:
 
 | Package | Command | Role |
 | --- | --- | --- |
-| `@aikdna/kdna-cli` | `kdna` | Runtime CLI: verify, install, load, compare, publish existing `.kdna` assets |
-| `@aikdna/kdna-studio-cli` | `kdna-studio` | Authoring CLI: create, lock, compile, export trusted `.kdna` assets |
+| `@aikdna/kdna-cli` | `kdna` | Runtime CLI: inspect, validate, plan-load, load, pack, and unpack `.kdna` assets |
+| `@aikdna/kdna-studio-cli` | `kdna-studio` | Authoring CLI: create, review, compile, and export `.kdna` files |
 | `@aikdna/kdna-studio-core` | none | Studio SDK/compiler kernel used by apps and this CLI |
 
 ## Install
@@ -51,11 +52,14 @@ kdna-studio card add my_domain axiom \
   --field does_not_apply_when='["pure formatting"]' \
   --field failure_risk="generic advice"
 kdna-studio card approve my_domain --all --by expert --statement "I confirm this judgment."
-kdna-studio lock my_domain
 kdna-studio export my_domain --format v1 --out dist/my_domain.kdna
 ```
 
 Candidate promotion is scope-gated: only candidates with `status == accepted` and `scope_fit == true` are promoted to cards by default. Use `kdna-studio candidate override <project> <candidate-id>` only when a human intentionally overrides the scope gate.
+
+The current Studio CLI export workflow uses approved cards as release evidence.
+This is Studio project policy, not a KDNA Core v1 format-validity rule. Human
+Lock, signatures, and quality claims are separate trust/provenance layers.
 
 After export, use the runtime CLI:
 
@@ -65,7 +69,7 @@ kdna plan-load dist/my_domain.kdna --json
 kdna load dist/my_domain.kdna --profile=compact --as=prompt
 ```
 
-`kdna-studio` is the CLI entry for confirmed KDNA authoring. `kdna` is the
+`kdna-studio` is the CLI entry for Studio project authoring. `kdna` is the
 runtime control plane for inspecting, validating, packing, unpacking, and
 loading existing `.kdna` assets.
 
@@ -100,7 +104,7 @@ kdna-studio identity show
 ## Import from existing KDNA or legacy folders
 
 ```bash
-# Fork an existing .kdna asset (cards imported as draft — re-lock required)
+# Fork an existing .kdna asset (cards imported as draft — review before Studio export)
 kdna-studio create forked --from-kdna ./parent.kdna --name @scope/forked
 
 # Migrate a legacy JSON source folder

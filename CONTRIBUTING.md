@@ -55,15 +55,17 @@ Negative Cases: (at least 1 example where the pattern should NOT trigger)
 
 **Submit to:** `benchmarks/judgment-benchmark.json` via PR
 
-### 3. Domain Asset Contribution
-Submit a complete KDNA domain asset.
+### 3. KDNA Example Contribution
+Submit a packaged `.kdna` example candidate.
 
-1. Create a repository under `kdna-<domain>` naming convention
-2. Include at least `KDNA_Core.json` and `KDNA_Patterns.json`
-3. Ensure the domain passes `kdna dev validate`
-4. Include `kdna.json` manifest and `README.md`
-5. Add tests in `tests/before-after.json` (minimum 3 cases)
-6. Open a PR adding an entry to `registry/domains.json`
+1. Create or adapt the judgment through the official toolchain.
+2. Export a packaged `.kdna` file.
+3. Run `kdna validate`, `kdna plan-load`, and `kdna load`.
+4. Provide a release card: SHA256, usage commands, before/after evidence,
+   applies/does-not-apply boundaries, known limitations, and provenance
+   metadata.
+5. Source JSON may be used for authoring or audit, but it is not the public
+   consumption unit.
 
 ### 4. Case Contribution
 Submit test cases that prove KDNA changes judgment.
@@ -79,13 +81,13 @@ Add entries to existing domain `tests/before-after.json` or submit new test file
 }
 ```
 
-### 5. Cluster Contribution
-Submit a KDNA Cluster — a composable group of packages.
+### 5. Composition Contribution
+Submit composition guidance for multiple packaged `.kdna` files.
 
-1. Create `KDNA_Cluster.json` following the schema
-2. Ensure all referenced packages exist in the registry
-3. Include composition rules and routing questions
-4. Submit to `examples/clusters/`
+1. Reference packaged `.kdna` files by file identity, version, and optional
+   digest.
+2. Include composition rules and routing questions.
+3. Do not turn a source directory or registry entry into the user-facing asset.
 
 ### 6. Evaluation Report Contribution
 Submit a report comparing agent judgment with and without KDNA.

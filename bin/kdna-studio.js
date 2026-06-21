@@ -57,7 +57,7 @@ Authoring:
   kdna-studio source classify <project>                            # classify evidence against declared target
   kdna-studio card list <project>
   kdna-studio card add <project> <type> --field key=value [--field key=value]
-  kdna-studio card approve <project> <card-id> --by <id> --statement <text> [--sign] [--passphrase <pass>]
+  kdna-studio card approve <project> <card-id|--all> --by <id> --statement <text> [--sign] [--passphrase <pass>]
   kdna-studio compile <project> --out <dir>
   kdna-studio export <project> --format v1 --out <file.kdna>
 

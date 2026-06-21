@@ -57,7 +57,8 @@ Candidate promotion is scope-gated: only candidates with `status == accepted` an
 
 The current Studio CLI export workflow uses approved cards as release evidence.
 This is Studio project policy, not a KDNA Core v1 format-validity rule. Human
-Lock, signatures, and quality claims are separate trust/provenance layers.
+Lock and other provenance records are optional review evidence, not validity
+requirements.
 
 After export, use the runtime CLI:
 
@@ -89,12 +90,9 @@ Authoring/source entries such as `KDNA_Core.json`, `KDNA_Patterns.json`, and
 compile output or legacy imports, but they must not be emitted by the runtime
 export path.
 
-Signature, encryption, registry publishing, paid distribution, and private
-assets are future/gated phases, not the current Core v1 baseline.
-
 Being part of the official toolchain means this package is maintained by the
-KDNA project. It does not make any specific asset trusted, endorsed, rated, or
-safe for every use case.
+KDNA project. It does not make any specific asset endorsed or suitable for
+every use case.
 
 ## Identity
 

@@ -1,8 +1,6 @@
 # @aikdna/kdna-studio-cli
 
-Official Studio command-line entry for KDNA judgment asset creation — turns your notes, documents, works, and feedback into loadable .kdna domains.
-
-**Official** means this package is part of the KDNA official toolchain. It does not imply content trust, asset endorsement, registry status, or quality rating.
+Official Studio command-line entry for KDNA judgment asset creation — turns your notes, documents, works, and feedback into loadable `.kdna` files.
 
 Two authoring paths: interview-first (articulate judgment directly) and distillation-first (provide content, find the patterns, review what belongs in scope).
 
@@ -93,6 +91,10 @@ export path.
 
 Signature, encryption, registry publishing, paid distribution, and private
 assets are future/gated phases, not the current Core v1 baseline.
+
+Being part of the official toolchain means this package is maintained by the
+KDNA project. It does not make any specific asset trusted, endorsed, rated, or
+safe for every use case.
 
 ## Identity
 

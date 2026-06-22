@@ -16,7 +16,8 @@
     "lint": "node --check bin/kdna-studio.js && node --check tests/cli.test.js",
     "test": "node --test tests/*.test.js",
     "test:all": "npm run lint && npm test",
-    "release:check": "node scripts/release-check.js"
+    "release:check": "node scripts/release-check.js",
+    "prepublishOnly": "npm test && npm run release:check"
   },
   "keywords": [
     "kdna",

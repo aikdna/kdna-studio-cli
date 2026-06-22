@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: KDNA Documentation
+    url: https://aikdna.com/en/docs
+    about: Check the docs first
+  - name: KDNA Assets
+    url: https://aikdna.com/en/assets
+    about: Download official .kdna assets

@@ -44,22 +44,25 @@ Identity:
   kdna-studio identity show
 
 Create (three entry paths):
-  kdna-studio create <project-dir> --name <@scope/name>                       # blank
+  kdna-studio create <project-dir> --name <@scope/name> [--author <name>]                        # blank
   kdna-studio create <project-dir> --from-kdna <file.kdna> --name <@scope/name>
   kdna-studio create <project-dir> --from-folder <source-dir> --name <@scope/name>
 
 Migrate (dev source or Studio project → canonical .kdna in one command):
-  kdna-studio migrate <source-dir|project> --format v1 --out <file.kdna> --name <@scope/name> --by <id> --statement <text>
+  kdna-studio migrate <source-dir|project> --format v1 --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--allow-incomplete]
 
 Authoring:
   kdna-studio import <project> <source-file-or-dir>               # import evidence (txt/md/json/yaml/csv/log/srt/vtt/html)
   kdna-studio filter <project>                                    # check evidence for sensitive content
   kdna-studio source classify <project>                            # classify evidence against declared target
   kdna-studio card list <project>
-  kdna-studio card add <project> <type> --field key=value [--field key=value]
+  kdna-studio card add <project> <type> --field key=value [--field key=value] [--template <name>] [--no-strict]
+  kdna-studio card update <project> <card-id> --field key=value
+  kdna-studio card remove <project> <card-id>
   kdna-studio card approve <project> <card-id|--all> --by <id> --statement <text> [--sign] [--passphrase <pass>]
+  kdna-studio card unlock <project> <card-id> --by <id> --statement <text>
   kdna-studio compile <project> --out <dir>
-  kdna-studio export <project> --format v1 --out <file.kdna>
+  kdna-studio export <project> --format v1 --out <file.kdna> [--allow-incomplete]
 
 AI Authoring (requires LLM config: kdna-studio llm config):
   kdna-studio distill <project> --ai                             # AI-driven candidate extraction from evidence
@@ -425,11 +428,12 @@ function buildV1Manifest(project, name) {
 
 function cmdCreate(args) {
   const dir = args[0];
-  if (!dir) fail('Usage: kdna-studio create <project-dir> --name <name> [--from-kdna <file> | --from-folder <dir>]');
+  if (!dir) fail('Usage: kdna-studio create <project-dir> --name <name> [--author <name>] [--from-kdna <file> | --from-folder <dir>]');
   const abs = path.resolve(dir);
   if (fs.existsSync(abs)) fail(`Directory already exists: ${abs}`);
 
   const name = option(args, '--name', path.basename(abs));
+  const authorName = option(args, '--author', '');
   const fromKdna = option(args, '--from-kdna');
   const fromFolder = option(args, '--from-folder');
 
@@ -448,7 +452,7 @@ function cmdCreate(args) {
       const sourceAuthor = kdnaData.source_manifest?.author || {};
       const project = projectApi.createProject(name, 'domain', {
         author: {
-          name: option(args, '--author-name', sourceAuthor.name || ''),
+          name: authorName || option(args, '--author-name', sourceAuthor.name || ''),
           id: option(args, '--author-id', sourceAuthor.id || ''),
         },
         sourceMode,
@@ -485,7 +489,7 @@ function cmdCreate(args) {
   }
 
   const project = projectApi.createProject(name, 'domain', {
-    author: { name: option(args, '--author-name', ''), id: option(args, '--author-id', '') },
+    author: { name: authorName || option(args, '--author-name', ''), id: option(args, '--author-id', '') },
     sourceMode,
     creatorIdentity,
     lineage,
@@ -904,6 +908,50 @@ function cmdFilter(args) {
   }
 }
 
+const CARD_REQUIRED_FIELDS = {
+  axiom: [
+    'one_sentence', 'full_statement', 'why',
+    'applies_when', 'does_not_apply_when', 'failure_risk',
+    'confidence', 'evidence_type',
+  ],
+  boundary: ['scope', 'out_of_scope'],
+  misunderstanding: ['wrong', 'correct', 'key_distinction', 'why'],
+  self_check: ['question'],
+  scenario: ['name', 'trigger', 'action', 'expected'],
+  case: ['title', 'scenario', 'input', 'expected'],
+  risk: ['name', 'description', 'mitigation'],
+  stance: ['statement'],
+  pattern: ['type', 'name', 'one_sentence', 'what_it_looks_like', 'how_to_fix', 'failure_risk'],
+};
+
+function checkRequiredFields(type, fields) {
+  const required = CARD_REQUIRED_FIELDS[type];
+  if (!required) return [];
+  const missing = [];
+  for (const f of required) {
+    const val = fields[f];
+    if (val === undefined || val === null || val === '' ||
+        (Array.isArray(val) && val.length === 0)) {
+      missing.push(f);
+    }
+  }
+  return missing;
+}
+
+function cardStrictTemplate(type, fields) {
+  const required = CARD_REQUIRED_FIELDS[type];
+  if (!required) return fields;
+  const filled = { ...fields };
+  for (const f of required) {
+    const val = filled[f];
+    if (val === undefined || val === null || val === '' ||
+        (Array.isArray(val) && val.length === 0)) {
+      filled[f] = `<TBD: ${f}>`;
+    }
+  }
+  return filled;
+}
+
 function cmdCard(args) {
   const sub = args[0];
   if (sub === 'list') {
@@ -916,9 +964,28 @@ function cmdCard(args) {
   if (sub === 'add') {
     const projectInput = args[1];
     const type = args[2];
-    if (!projectInput || !type) fail('Usage: kdna-studio card add <project> <type> --field key=value');
+    if (!projectInput || !type) fail('Usage: kdna-studio card add <project> <type> --field key=value [--template <name>] [--no-strict]');
     const { projectPath, project } = readProject(projectInput);
-    const card = cardApi.createCard(type, parseFields(args.slice(3)));
+    let fields = parseFields(args.slice(3));
+
+    const useTemplate = option(args, '--template');
+    if (useTemplate === 'axiom-strict') {
+      if (type !== 'axiom') fail('--template axiom-strict only applies to axiom cards');
+      fields = cardStrictTemplate('axiom', fields);
+    }
+
+    const isNoStrict = args.includes('--no-strict');
+    if (!isNoStrict) {
+      const missing = checkRequiredFields(type, fields);
+      if (missing.length > 0) {
+        fail(
+          `Missing required fields for ${type}: ${missing.join(', ')}\n` +
+          `Use --no-strict to add a partial card.`
+        );
+      }
+    }
+
+    const card = cardApi.createCard(type, fields);
     project.cards.push(card);
     if (project.stages?.judgment_cards) {
       project.stages.judgment_cards.total = project.cards.length;
@@ -926,6 +993,40 @@ function cmdCard(args) {
     }
     writeProject(projectPath, project);
     console.log(`Added card: ${card.id}`);
+    return;
+  }
+  if (sub === 'update') {
+    const projectInput = args[1];
+    const cardId = args[2];
+    if (!projectInput || !cardId) fail('Usage: kdna-studio card update <project> <card-id> --field key=value');
+    const { projectPath, project } = readProject(projectInput);
+    const idx = (project.cards || []).findIndex((c) => c.id === cardId);
+    if (idx < 0) fail(`Card not found: ${cardId}`);
+    const card = project.cards[idx];
+    if (card.locked) fail(`Cannot update locked card: ${cardId}. Unlock first with card unlock.`);
+    const updates = parseFields(args.slice(3));
+    for (const [k, v] of Object.entries(updates)) {
+      if (card.fields) card.fields[k] = v;
+    }
+    project.cards[idx] = card;
+    writeProject(projectPath, project);
+    console.log(`Updated card: ${cardId}`);
+    return;
+  }
+  if (sub === 'remove') {
+    const projectInput = args[1];
+    const cardId = args[2];
+    if (!projectInput || !cardId) fail('Usage: kdna-studio card remove <project> <card-id>');
+    const { projectPath, project } = readProject(projectInput);
+    const idx = (project.cards || []).findIndex((c) => c.id === cardId);
+    if (idx < 0) fail(`Card not found: ${cardId}`);
+    if (project.cards[idx].locked) fail(`Cannot remove locked card: ${cardId}. Unlock first with card unlock.`);
+    project.cards.splice(idx, 1);
+    if (project.stages?.judgment_cards) {
+      project.stages.judgment_cards.total = project.cards.length;
+    }
+    writeProject(projectPath, project);
+    console.log(`Removed card: ${cardId}`);
     return;
   }
   if (sub === 'approve') {
@@ -939,6 +1040,7 @@ function cmdCard(args) {
     const statement = option(args, '--statement');
     if (!by || !statement) fail('card approve requires --by and --statement');
     const { projectPath, project } = readProject(projectInput);
+    const errors = [];
 
     const lockOneCard = (card) => {
       if (card.status === 'draft') card = cardApi.transitionCard(card, 'revised', { by });
@@ -949,42 +1051,57 @@ function cmdCard(args) {
       };
       if (args.includes('--sign')) {
         const identity = creatorApi.loadIdentity();
-        if (!identity) fail('No creator identity. Run: kdna-studio identity init --name "Your Name"', EXIT.TRUST_FAILED);
+        if (!identity) {
+          errors.push(`${card.id}: No creator identity. Run: kdna-studio identity init`);
+          return null;
+        }
         lockPayload.creator_id = identity.creator_id;
         const passphrase = option(args, '--passphrase');
         try {
           if (identity.encrypted && !passphrase) {
-            fail('Private key is encrypted — provide --passphrase to sign.', EXIT.TRUST_FAILED);
+            errors.push(`${card.id}: Private key is encrypted — provide --passphrase`);
+            return null;
           }
           lockPayload.signature = creatorApi.signHumanLock(
             card.id, statement, cardApi.cardJudgmentFingerprint(card), null, passphrase,
           );
         } catch (e) {
-          fail(`Failed to sign Human Lock: ${e.message}`, EXIT.TRUST_FAILED);
+          errors.push(`${card.id}: Signing failed: ${e.message}`);
+          return null;
         }
       }
-      return [card, cardApi.lockCard(card, lockPayload)];
+      return cardApi.lockCard(card, lockPayload);
     };
 
     if (cardId) {
       const idx = (project.cards || []).findIndex((c) => c.id === cardId);
       if (idx < 0) fail(`Card not found: ${cardId}`);
-      const [, locked] = lockOneCard(project.cards[idx]);
+      if (project.cards[idx].locked) fail(`Card already locked: ${cardId}`);
+      const locked = lockOneCard(project.cards[idx]);
+      if (!locked) fail(errors[0]);
       project.cards[idx] = locked;
       const signed = args.includes('--sign') ? ' (signed)' : '';
       console.log(`Approved and Human Locked: ${cardId}${signed}`);
     } else {
       let approved = 0;
+      let skipped = 0;
       for (let i = 0; i < (project.cards || []).length; i++) {
         const card = project.cards[i];
-        if (card.locked) continue;
-        const [, locked] = lockOneCard(card);
+        if (card.locked) { skipped++; continue; }
+        const locked = lockOneCard(card);
+        if (!locked) continue;
         project.cards[i] = locked;
         approved++;
       }
-      if (approved === 0) fail('No unlocked cards to approve.');
+      if (errors.length > 0) {
+        fail(`Failed to approve ${errors.length} card(s):\n  ${errors.join('\n  ')}`);
+      }
+      if (approved === 0) {
+        if (skipped > 0) fail(`No unlocked cards to approve (${skipped} already locked).`);
+        fail('No unlocked cards to approve.');
+      }
       const signed = args.includes('--sign') ? ' (signed)' : '';
-      console.log(`Approved and Human Locked: ${approved} cards${signed}`);
+      console.log(`Approved and Human Locked: ${approved} cards${signed}${skipped > 0 ? ` (${skipped} already locked)` : ''}`);
     }
     if (project.stages?.judgment_cards) {
       project.stages.judgment_cards.locked = project.cards.filter((c) => c.locked).length;
@@ -993,7 +1110,37 @@ function cmdCard(args) {
     writeProject(projectPath, project);
     return;
   }
-  fail('Usage: kdna-studio card <list|add|approve> ...');
+  if (sub === 'unlock') {
+    const projectInput = args[1];
+    const cardId = args[2];
+    if (!projectInput || !cardId) fail('Usage: kdna-studio card unlock <project> <card-id> --by <id> --statement <text>');
+    const by = option(args, '--by');
+    const statement = option(args, '--statement');
+    if (!by || !statement) fail('card unlock requires --by and --statement');
+    const { projectPath, project } = readProject(projectInput);
+    const idx = (project.cards || []).findIndex((c) => c.id === cardId);
+    if (idx < 0) fail(`Card not found: ${cardId}`);
+    const card = project.cards[idx];
+    if (!card.locked) fail(`Card is not locked: ${cardId}`);
+    card.locked = false;
+    card.status = 'draft';
+    delete card.human_lock;
+    if (!card.audit_log) card.audit_log = [];
+    card.audit_log.push({
+      action: 'unlocked',
+      by,
+      statement,
+      timestamp: new Date().toISOString(),
+    });
+    project.cards[idx] = card;
+    if (project.stages?.judgment_cards) {
+      project.stages.judgment_cards.locked = project.cards.filter((c) => c.locked).length;
+    }
+    writeProject(projectPath, project);
+    console.log(`Unlocked card: ${cardId}`);
+    return;
+  }
+  fail('Usage: kdna-studio card <list|add|update|remove|approve|unlock> ...');
 }
 
 function cmdLock(args) {
@@ -1103,9 +1250,10 @@ function cmdMigrate(args) {
   }
 
   const absOut = path.resolve(out);
+  const allowIncomplete = args.includes('--allow-incomplete');
   // Step 4: v1 export or v2 compile + export
   if (format === 'v1') {
-    exportProjectV1(project, name, absOut);
+    exportProjectV1(project, name, absOut, { allowIncomplete });
     if (tmpDir) {
       try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* cleanup */ }
     }
@@ -1136,7 +1284,7 @@ function cmdMigrate(args) {
   }
 }
 
-function exportProjectV1(project, name, outPath) {
+function exportProjectV1(project, name, outPath, opts = {}) {
   let core;
   try { core = require('@aikdna/kdna-core'); } catch (e) {
     fail('@aikdna/kdna-core@0.11.0+ is required for v1 export.', 2);
@@ -1146,8 +1294,13 @@ function exportProjectV1(project, name, outPath) {
   }
   const gate = projectApi.checkHumanLockGate(project);
   if (gate.blocked) {
-    const reasons = gate.issues.map((i) => `${i.cardId}: ${i.reason}`).join('\n  - ');
-    fail(`Human Lock Gate blocked v1 export:\n  - ${reasons}`, EXIT.HUMAN_LOCK_REQUIRED);
+    if (opts.allowIncomplete) {
+      console.warn('Human Lock Gate bypassed (--allow-incomplete):');
+      for (const issue of gate.issues) console.warn(`  - ${issue.cardId}: ${issue.reason}`);
+    } else {
+      const reasons = gate.issues.map((i) => `${i.cardId}: ${i.reason}`).join('\n  - ');
+      fail(`Human Lock Gate blocked v1 export:\n  - ${reasons}\nUse --allow-incomplete to bypass.`, EXIT.HUMAN_LOCK_REQUIRED);
+    }
   }
   const lockedCards = (project.cards || []).filter(c => c.locked);
   const v1Dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-v1-'));
@@ -1347,10 +1500,10 @@ function applySignature(files, passphrase = null) {
 function cmdExport(args) {
   const projectInput = args[0];
   const out = option(args, '--out');
-  if (!projectInput || !out) fail('Usage: kdna-studio export <project> --out <file.kdna> [--format v1] [--sign]');
+  if (!projectInput || !out) fail('Usage: kdna-studio export <project> --out <file.kdna> [--format v1] [--sign] [--allow-incomplete]');
   if (option(args, '--format') === 'v1') {
     const { project } = readProject(projectInput);
-    exportProjectV1(project, option(args, '--name') || project.name, path.resolve(out));
+    exportProjectV1(project, option(args, '--name') || project.name, path.resolve(out), { allowIncomplete: args.includes('--allow-incomplete') });
     return;
   }
   const { project, result } = compileProject(projectInput);

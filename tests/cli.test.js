@@ -65,6 +65,10 @@ function createLockedProject(t) {
     'does_not_apply_when=["pure formatting"]',
     '--field',
     'failure_risk=generic advice',
+    '--field',
+    'confidence=high',
+    '--field',
+    'evidence_type=practice',
   ], { tmp });
   assert.equal(result.status, 0, result.stderr);
   const cardId = result.stdout.match(/Added card: (\S+)/)?.[1];
@@ -123,6 +127,10 @@ test('card approve --all locks every unlocked card', (t) => {
     'does_not_apply_when=["pure formatting"]',
     '--field',
     'failure_risk=generic advice',
+    '--field',
+    'confidence=high',
+    '--field',
+    'evidence_type=practice',
   ], { tmp });
   assert.equal(result.status, 0, result.stderr);
 
@@ -174,6 +182,7 @@ test('blocks compile and export until judgment cards are Human Locked', (t) => {
     'add',
     projectDir,
     'axiom',
+    '--no-strict',
     '--field',
     'one_sentence=Prefer specific evidence over broad claims',
   ], { tmp });
@@ -550,6 +559,8 @@ test('card approve --sign binds Human Lock to creator identity', (t) => {
     '--field', 'applies_when=["reviewing content"]',
     '--field', 'does_not_apply_when=["pure formatting"]',
     '--field', 'failure_risk=generic advice',
+    '--field', 'confidence=high',
+    '--field', 'evidence_type=practice',
   ], { tmp });
   assert.equal(result.status, 0, result.stderr);
   const cardId = result.stdout.match(/Added card: (\S+)/)?.[1];
@@ -615,6 +626,8 @@ test('export includes creator and lineage in kdna.json', (t) => {
     '--field', 'applies_when=["testing"]',
     '--field', 'does_not_apply_when=["not testing"]',
     '--field', 'failure_risk=test may pass incorrectly',
+    '--field', 'confidence=high',
+    '--field', 'evidence_type=practice',
   ], { tmp });
   let result = run(['card', 'list', projectDir], { tmp });
   const cardId = result.stdout.match(/(\S+)\s+axiom/)?.[1];
@@ -652,6 +665,8 @@ test('E2E blank: create → approve → lock → export → runtime digest match
     '--field', 'applies_when=["e2e testing"]',
     '--field', 'does_not_apply_when=["production"]',
     '--field', 'failure_risk=e2e test may incorrectly pass',
+    '--field', 'confidence=high',
+    '--field', 'evidence_type=practice',
   ], { tmp });
   assert.equal(result.status, 0, result.stderr);
   const cardId = result.stdout.match(/Added card: (\S+)/)?.[1];
@@ -662,6 +677,7 @@ test('E2E blank: create → approve → lock → export → runtime digest match
     '--field', 'wrong=E2E tests are unnecessary.',
     '--field', 'correct=E2E tests catch integration issues not visible in unit tests.',
     '--field', 'key_distinction=E2E tests validate the full pipeline, not individual functions.',
+    '--field', 'why=E2E test failures are hard to debug without a full integration test running.',
   ], { tmp });
   assert.equal(result.status, 0, result.stderr);
 
@@ -740,6 +756,8 @@ test('E2E fork: parent → fork → approve → export → lineage check', (t) =
     '--field', 'applies_when=["fork testing"]',
     '--field', 'does_not_apply_when=["not forking"]',
     '--field', 'failure_risk=forked content may lose lineage',
+    '--field', 'confidence=high',
+    '--field', 'evidence_type=practice',
   ], { tmp });
   const pCards = run(['card', 'list', parentDir], { tmp });
   for (const line of pCards.stdout.trim().split('\n')) {

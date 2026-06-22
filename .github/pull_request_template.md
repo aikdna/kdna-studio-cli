@@ -14,3 +14,6 @@
 - [ ] Release card attached
 - [ ] SHA256 provided
 - [ ] Validation output attached
+
+## DCO
+- [ ] All commits signed off: `git commit -s`

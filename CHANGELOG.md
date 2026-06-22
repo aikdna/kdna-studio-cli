@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.6.4 (2026-06-22)
+
+### Fixed
+- Pattern export: compilePatterns() in studio-core 1.5.11 maps pattern cards to payload.
+- Depends on `@aikdna/kdna-studio-core ^1.5.11`.
+
+---
+
+## v0.6.3 (2026-06-22)
+
+### Added
+- Pattern to valid card types (CARD_TYPES in studio-core 1.5.10).
+
+---
+
 ## v0.6.2 (2026-06-22)
 
 ### Added

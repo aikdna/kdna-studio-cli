@@ -997,6 +997,16 @@ function cmdCard(args) {
       }
     }
 
+    // Warn: one_sentence is the compact profile display field
+    if (type === 'axiom') {
+      const oneSentence = fields.one_sentence;
+      if (!oneSentence || String(oneSentence).startsWith('<TBD')) {
+        console.warn('Warning: one_sentence is used by kdna load --profile=compact.');
+        console.warn('Without it, the compact output may show a placeholder or truncated full_statement.');
+        console.warn('Add --field one_sentence="..." for best results.\n');
+      }
+    }
+
     const card = cardApi.createCard(type, fields);
     project.cards.push(card);
     if (project.stages?.judgment_cards) {

@@ -2,9 +2,6 @@
 
 ## v0.6.5 (2026-06-22)
 - Fix: import detects and skips binary files
-
-# Changelog
-
 ## v0.6.4 (2026-06-22)
 
 ### Fixed

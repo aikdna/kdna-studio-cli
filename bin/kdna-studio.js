@@ -852,6 +852,18 @@ function cmdImport(args) {
       return;
     }
 
+    // Detect binary content: try reading first 4KB as utf8; if it contains
+    // null bytes or too many non-printable chars, it's likely binary.
+    const buf = fs.readFileSync(filePath);
+    if (buf.length === 0) { console.warn(`Empty file: ${name}`); skipped++; return; }
+    const sample = buf.subarray(0, Math.min(buf.length, 4096));
+    const nulls = sample.filter(b => b === 0).length;
+    const nonPrintable = sample.filter(b => b !== 0 && (b < 0x20 || b === 0x7F) && b !== 0x0A && b !== 0x0D && b !== 0x09).length;
+    if (nulls > 0 || nonPrintable > sample.length * 0.1) {
+      console.warn(`Binary or non-text file skipped: ${name}`);
+      skipped++;
+      return;
+    }
     let content;
     try { content = fs.readFileSync(filePath, 'utf8'); } catch { console.warn(`Cannot read: ${name}`); skipped++; return; }
 

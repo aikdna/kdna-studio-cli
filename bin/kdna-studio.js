@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const cbor = require('cbor-x');
+const { execFileSync } = require('child_process');
 
 function loadStudioCore() {
   const publishedCore = require('@aikdna/kdna-studio-core');
@@ -842,13 +843,50 @@ function cmdImport(args) {
   let imported = 0;
   let skipped = 0;
 
+  function extractBinaryText(filePath, ext) {
+    try {
+      if (ext === '.pdf') {
+        const result = execFileSync('pdftotext', ['-layout', filePath, '-'], {
+          encoding: 'utf8',
+          timeout: 30000,
+          maxBuffer: 5 * 1024 * 1024,
+        });
+        return result;
+      }
+      if (ext === '.docx' || ext === '.rtf') {
+        const result = execFileSync('textutil', ['-convert', 'txt', '-stdout', filePath], {
+          encoding: 'utf8',
+          timeout: 30000,
+          maxBuffer: 5 * 1024 * 1024,
+        });
+        return result;
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
   function importFile(filePath) {
     const ext = path.extname(filePath).toLowerCase();
     const name = path.basename(filePath);
 
     if (BINARY_EXTS.has(ext)) {
-      console.warn(`Skipping binary format (not yet supported in CLI): ${name}`);
-      skipped++;
+      const extracted = extractBinaryText(filePath, ext);
+      if (!extracted || extracted.trim().length === 0) {
+        const tool = ext === '.pdf' ? 'pdftotext (poppler-utils)' : 'textutil (macOS built-in)';
+        console.warn(`Skipping ${ext} file (requires ${tool}): ${name}`);
+        skipped++;
+        return;
+      }
+      if (extracted.length > 120000) {
+        console.warn(`Extracted text too large (${extracted.length} chars, max 120000): ${name}`);
+        skipped++;
+        return;
+      }
+      const evidence = evidenceApi.createEvidenceEntry('text', name, extracted.substring(0, 120000), filePath);
+      evidenceApi.addEvidence(project, evidence);
+      imported++;
       return;
     }
 

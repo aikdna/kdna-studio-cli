@@ -846,12 +846,12 @@ function cmdImport(args) {
   function extractBinaryText(filePath, ext) {
     try {
       if (ext === '.pdf') {
-        const result = execFileSync('pdftotext', ['-layout', filePath, '-'], {
+        const result = execFileSync('pdftotext', ['-raw', filePath, '-'], {
           encoding: 'utf8',
           timeout: 30000,
           maxBuffer: 5 * 1024 * 1024,
         });
-        return result;
+        return { text: result, error: null };
       }
       if (ext === '.docx' || ext === '.rtf') {
         const result = execFileSync('textutil', ['-convert', 'txt', '-stdout', filePath], {
@@ -859,12 +859,16 @@ function cmdImport(args) {
           timeout: 30000,
           maxBuffer: 5 * 1024 * 1024,
         });
-        return result;
+        return { text: result, error: null };
       }
-    } catch (_) {
-      return null;
+    } catch (e) {
+      // Tool not installed or extraction failed — report distinguishably
+      if (e.code === 'ENOENT') {
+        return { text: null, error: 'tool_missing' };
+      }
+      return { text: null, error: 'extraction_failed', detail: e.message };
     }
-    return null;
+    return { text: null, error: 'unsupported_format' };
   }
 
   function importFile(filePath) {
@@ -873,18 +877,24 @@ function cmdImport(args) {
 
     if (BINARY_EXTS.has(ext)) {
       const extracted = extractBinaryText(filePath, ext);
-      if (!extracted || extracted.trim().length === 0) {
+      if (!extracted.text || extracted.text.trim().length === 0) {
         const tool = ext === '.pdf' ? 'pdftotext (poppler-utils)' : 'textutil (macOS built-in)';
-        console.warn(`Skipping ${ext} file (requires ${tool}): ${name}`);
+        if (extracted.error === 'tool_missing') {
+          console.warn(`Skipping ${ext} file (${tool} not installed): ${name}`);
+        } else if (extracted.error === 'extraction_failed') {
+          console.warn(`Skipping ${ext} file (extraction failed: ${extracted.detail}): ${name}`);
+        } else {
+          console.warn(`Skipping ${ext} file (empty or unsupported): ${name}`);
+        }
         skipped++;
         return;
       }
-      if (extracted.length > 120000) {
-        console.warn(`Extracted text too large (${extracted.length} chars, max 120000): ${name}`);
+      if (extracted.text.length > 120000) {
+        console.warn(`Extracted text too large (${extracted.text.length} chars, max 120000): ${name}`);
         skipped++;
         return;
       }
-      const evidence = evidenceApi.createEvidenceEntry('text', name, extracted.substring(0, 120000), filePath);
+      const evidence = evidenceApi.createEvidenceEntry('text', name, extracted.text.substring(0, 120000), filePath);
       evidenceApi.addEvidence(project, evidence);
       imported++;
       return;

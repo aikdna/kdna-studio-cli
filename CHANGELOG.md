@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.7.0 (2026-06-23)
+- Feat: binary evidence import.
+- Feat: one_sentence warning.
+
 ## v0.6.5 (2026-06-22)
 - Fix: import detects and skips binary files
 ## v0.6.4 (2026-06-22)

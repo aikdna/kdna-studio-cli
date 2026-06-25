@@ -2,10 +2,11 @@
   "publicDirs": ["README.md", "docs/", "bin/"],
   "publicFiles": ["package.json", "CHANGELOG.md"],
   "allowedHistoricalPaths": ["docs/archive/"],
-  "forbiddenPatterns": [
-    "kdna-x",
-    "kdna-lab",
-    "/Users/AI/K/OPEN",
-    "A-agent-meta"
+  "forbiddenPatternHashes": [
+    "0b15e32cc3a9ac3cc01615eed2d2631b77ce9f4c515058007c9d2dbfe6aaf706",
+    "d0e633254ae3097f3053ea558d3fb77e49bfb67970ee97e46a437c564dd9833c",
+    "8d67be590500a620c47055dc8d8262220dd34993e394a73832c4e40a93c14491",
+    "d6414bd273c230b84849cd353b14325d3403b7d5070bdd835e61a5e70edf53f5",
+    "a0e6b3e53f7d38a0f3b97b8dbbe34eab7f3a789e0c94b442a8768a37e8aa5f7b"
   ]
 }

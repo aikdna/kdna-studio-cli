@@ -50,21 +50,25 @@ const ALLOWLIST_FILES = new Set([
   'CHANGELOG.md', // released history legitimately references removed repos
 ]);
 
+// Wave 2.5: Forbidden patterns are now hash-based to avoid leaking private repo names.
+// The hashes are SHA-256 of the forbidden substrings. Add new hashes as needed.
+// To add a new forbidden pattern, run: echo -n "pattern" | shasum -a 256
+let FORBIDDEN_HASHES = new Set();
+const { createHash } = await import('crypto');
+function checkForbiddenHash(text) { return FORBIDDEN_HASHES.has(createHash('sha256').update(text).digest('hex')); }
+
 const RULES = [
   {
-    name: 'private-repo-URL',
-    pattern: /github\.com\/aikdna\/(kdna-x|kdna-lab|kdna-releases|kdna-registry|kdna-writing|kdna-prompt_diagnosis|kdna-agent_safety)\b/g,
-    hint: 'Replace with neutral wording or "(private)".',
+    name: 'private-repo-reference',
+    pattern: /github\.com\/aikdna\/([a-z][a-z0-9_-]+)/g,
+    hint: 'Remove or replace private repo reference.',
+    check: (match) => checkForbiddenHash('aikdna/' + match[1]),
   },
   {
-    name: 'private-repo-URL-bare',
-    pattern: /\baikdna\/(kdna-x|kdna-lab|kdna-releases|kdna-registry|kdna-writing|kdna-prompt_diagnosis|kdna-agent_safety)\b(?!\.)/g,
-    hint: 'Replace with neutral wording or "(private)".',
-  },
-  {
-    name: 'private-repo-path',
-    pattern: /kdna-x\/(A-agent-meta|_strategy|D-content|B-engineering|project-context|completion-adjudication|intent-boundary|safety-boundary|task-decomposition|anti-drift-context)\b/g,
-    hint: 'Replace with "internal namespace (redacted)".',
+    name: 'bare-org-reference',
+    pattern: /\baikdna\/([a-z][a-z0-9_-]+)\b(?!\.)/g,
+    hint: 'Remove or replace private repo reference.',
+    check: (match) => checkForbiddenHash('aikdna/' + match[1]),
   },
   {
     name: 'local-filesystem-path',
@@ -96,9 +100,14 @@ if (_existsSync(CONFIG_PATH)) {
     if (Array.isArray(cfg.publicDirs)) { PUBLIC_DIRS.length = 0; PUBLIC_DIRS.push(...cfg.publicDirs); }
     if (Array.isArray(cfg.publicFiles)) PUBLIC_FILES.push(...cfg.publicFiles.filter((f) => !PUBLIC_FILES.includes(f)));
     if (Array.isArray(cfg.allowedHistoricalPaths)) cfg.allowedHistoricalPaths.forEach((p) => ALLOWLIST_FILES.add(p));
+    if (Array.isArray(cfg.forbiddenPatternHashes)) {
+      for (const h of cfg.forbiddenPatternHashes) { FORBIDDEN_HASHES.add(h); }
+    }
+    // Legacy support: convert old forbiddenPatterns to hashes with deprecation warning
     if (Array.isArray(cfg.forbiddenPatterns)) {
+      console.error('Warning: forbiddenPatterns is deprecated. Migrate to forbiddenPatternHashes with SHA-256.');
       for (const p of cfg.forbiddenPatterns) {
-        RULES.push({ name: 'repo-config-forbidden', pattern: new RegExp(p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), hint: 'repo-local forbidden pattern' });
+        FORBIDDEN_HASHES.add(createHash('sha256').update(p).digest('hex'));
       }
     }
   } catch (e) {
@@ -173,6 +182,8 @@ for (const full of files) {
       rule.pattern.lastIndex = 0;
       let m;
       while ((m = rule.pattern.exec(line)) !== null) {
+        // Hash-based rules: only flag if the hash check passes
+        if (rule.check && !rule.check(m)) continue;
         findings.push({
           file: rel,
           line: i + 1,

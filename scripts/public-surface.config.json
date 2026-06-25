@@ -1,0 +1,11 @@
+{
+  "publicDirs": ["README.md", "docs/", "bin/"],
+  "publicFiles": ["package.json", "CHANGELOG.md"],
+  "allowedHistoricalPaths": ["docs/archive/"],
+  "forbiddenPatterns": [
+    "kdna-x",
+    "kdna-lab",
+    "/Users/AI/K/OPEN",
+    "A-agent-meta"
+  ]
+}

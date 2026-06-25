@@ -521,6 +521,10 @@ function importFromKdna(kdnaPath) {
   if (!fs.existsSync(absKdna)) fail(`KDNA asset not found: ${absKdna}`);
   if (!absKdna.endsWith('.kdna')) fail('--from-kdna requires a .kdna file');
 
+  const stats = fs.statSync(absKdna);
+  if (stats.size > 50 * 1024 * 1024) {
+    fail(`KDNA file too large (${(stats.size / (1024 * 1024)).toFixed(1)} MiB, max 50 MiB): ${absKdna}`);
+  }
   const zipBuf = fs.readFileSync(absKdna);
   const entries = readZipEntries(zipBuf);
   if (!entries.has('kdna.json')) fail('Not a valid .kdna asset: missing kdna.json');
@@ -913,13 +917,13 @@ function cmdImport(args) {
       return;
     }
     let content;
-    try { content = fs.readFileSync(filePath, 'utf8'); } catch { console.warn(`Cannot read: ${name}`); skipped++; return; }
-
-    if (content.length > 120000) {
-      console.warn(`File too large (${content.length} chars, max 120000): ${name}`);
-      skipped++;
-      return;
-    }
+    try {
+      const fd = fs.openSync(filePath, 'r');
+      const buf = Buffer.alloc(120000);
+      const bytesRead = fs.readSync(fd, buf, 0, 120000, 0);
+      fs.closeSync(fd);
+      content = buf.toString('utf8', 0, bytesRead);
+    } catch { console.warn(`Cannot read: ${name}`); skipped++; return; }
 
     const evidence = evidenceApi.createEvidenceEntry('text', name, content, filePath);
     evidenceApi.addEvidence(project, evidence);
@@ -1835,6 +1839,10 @@ async function cmdDistill(args) {
   } else {
     const rawPath = path.resolve(candidatesFile);
     if (!fs.existsSync(rawPath)) fail(`Candidates file not found: ${rawPath}`);
+    const stats = fs.statSync(rawPath);
+    if (stats.size > 50 * 1024 * 1024) {
+      fail(`Candidates file too large (${(stats.size / (1024 * 1024)).toFixed(1)} MiB, max 50 MiB): ${rawPath}`);
+    }
     rawCandidates = JSON.parse(fs.readFileSync(rawPath, 'utf8'));
     if (!Array.isArray(rawCandidates)) fail('Candidates file must contain a JSON array');
   }

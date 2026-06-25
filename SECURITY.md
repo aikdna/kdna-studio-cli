@@ -2,40 +2,32 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in a KDNA project, please **do not** open a public issue.
+If you discover a security vulnerability in KDNA, please **do not** open a public issue.
 
 Email: **security@aikdna.com**
 
 We will respond within 48 hours and work with you on a coordinated disclosure timeline.
 
-## Supported Versions
+## About This Package
 
-| Version | Supported          |
-|---------|--------------------|
-| latest  | ✅ Active support  |
-| < latest| ❌ Upgrade required |
+This package (`kdna-studio-cli`) is a **CLI authoring tool** for creating, migrating, and exporting KDNA assets. Its security posture depends on:
 
-## Security Model
+- **`aikdna/kdna-core`** — crypto profiles, container validation, LoadPlan authorization
+- **`aikdna/kdna-cli`** — protect/unlock/recover/license commands via Core
 
-KDNA assets (.kdna files) and Work Packs may contain encrypted or licensed content. The security of these assets depends on:
+This package does NOT implement cryptographic primitives directly. For the canonical security model, see `aikdna/kdna`.
 
-1. **Ed25519 signatures** — for asset authenticity
-2. **AES-256-GCM encryption** — for licensed/protected content
-3. **Argon2id key derivation** — for password-protected assets (RFC-0009)
+### API Key Handling
 
-If you find a weakness in any of these mechanisms, please report it immediately.
+If you use the LLM features (`distill`, `interview`, etc.), provide your API key via:
+- `KDNA_API_KEY` environment variable (preferred)
+- `--key-pipe` (stdin, one-shot read)
 
-## Best Practices for Contributors
+The deprecated `--key` flag passes the key via process arguments and should not be used in automated environments.
+
+## Best Practices
 
 - Never commit secrets, API keys, or credentials
 - Use signed commits when possible
 - Review your PRs for accidental inclusion of sensitive data
 - Keep dependencies up to date
-
-## Disclosure Policy
-
-We follow a 90-day responsible disclosure timeline:
-- Day 0: Report received
-- Day 3: Initial acknowledgment
-- Day 30: Fix developed
-- Day 90: Public disclosure (coordinated with reporter)

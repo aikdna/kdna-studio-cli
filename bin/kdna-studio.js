@@ -55,7 +55,7 @@ Migrate (dev source or Studio project → canonical .kdna in one command):
 Authoring:
   kdna-studio import <project> <source-file-or-dir>               # import evidence (txt/md/json/yaml/csv/log/srt/vtt/html)
   kdna-studio filter <project>                                    # check evidence for sensitive content
-  kdna-studio source classify <project>                            # classify evidence against declared target
+  kdna-studio source <project>                                    # classify imported evidence against declared target
   kdna-studio card list <project>
   kdna-studio card add <project> <type> --field key=value [--field key=value] [--template <name>] [--no-strict]
   kdna-studio card update <project> <card-id> --field key=value
@@ -1780,7 +1780,7 @@ function cmdTarget(args) {
 
 function cmdSourceClassify(args) {
   const projectInput = args[0];
-  if (!projectInput) fail('Usage: kdna-studio source classify <project>');
+  if (!projectInput) fail('Usage: kdna-studio source <project>');
   const { projectPath, project } = readProject(projectInput);
   const target = project.distillation_target;
   if (!target) fail('Declare a distillation target first: kdna-studio target declare <project>');

@@ -29,11 +29,12 @@ async function chatWithJSON(messages, options = {}) {
   const result = await chat(messages, { ...options, responseFormat: { type: 'json_object' } });
   try {
     result.data = JSON.parse(result.content);
-  } catch {
+  } catch (e) {
+    console.error('Error parsing LLM JSON response:', e.message);
     // Try to extract JSON from markdown code blocks
     const match = result.content.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (match) {
-      try { result.data = JSON.parse(match[1].trim()); } catch { /* raw text */ }
+      try { result.data = JSON.parse(match[1].trim()); } catch (e2) { console.error('Error parsing JSON from markdown code block:', e2.message); }
     }
   }
   return result;

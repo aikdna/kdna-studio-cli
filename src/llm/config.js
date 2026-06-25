@@ -24,7 +24,7 @@ function loadConfig() {
 
   // 1. Read from ~/.kdna/config.json
   const configPath = path.join(os.homedir(), '.kdna', 'config.json');
-  try { if (fs.existsSync(configPath)) Object.assign(config, JSON.parse(fs.readFileSync(configPath, 'utf8')).llm || {}); } catch {}
+  try { if (fs.existsSync(configPath)) Object.assign(config, JSON.parse(fs.readFileSync(configPath, 'utf8')).llm || {}); } catch (e) { console.error('Error reading LLM config file:', e.message); }
 
   // 2. Env vars override
   if (process.env.KDNA_LLM_PROVIDER) config.provider = process.env.KDNA_LLM_PROVIDER;
@@ -41,12 +41,25 @@ function loadConfig() {
     if (wk.models.length > 0 && !config.model) config.model = wk.models[0];
   }
 
-  // 4. Also check provider-specific env vars
-  if (!config.apiKey) {
-    const keyEnv = `KDNA_LLM_API_KEY_${(config.provider || '').toUpperCase().replace(/-/g, '_')}`;
+  // 4. Provider-specific env var (KDNA_LLM_API_KEY_<PROVIDER>)
+  if (!config.apiKey && config.provider) {
+    const keyEnv = `KDNA_LLM_API_KEY_${config.provider.toUpperCase().replace(/-/g, '_')}`;
     if (process.env[keyEnv]) config.apiKey = process.env[keyEnv];
-    // Fallback: OPENAI_API_KEY, ANTHROPIC_API_KEY, DEEPSEEK_API_KEY
-    if (!config.apiKey) config.apiKey = process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.DEEPSEEK_API_KEY || '';
+  }
+
+  // 5. Provider-native fallback — each provider only uses its own native env var
+  if (!config.apiKey && config.provider) {
+    const PROVIDER_NATIVE_KEYS = {
+      openai: 'OPENAI_API_KEY',
+      anthropic: 'ANTHROPIC_API_KEY',
+      deepseek: 'DEEPSEEK_API_KEY',
+      groq: 'GROQ_API_KEY',
+      gemini: 'GEMINI_API_KEY',
+      perplexity: 'PERPLEXITY_API_KEY',
+      openrouter: 'OPENROUTER_API_KEY',
+    };
+    const nativeEnv = PROVIDER_NATIVE_KEYS[config.provider];
+    if (nativeEnv && process.env[nativeEnv]) config.apiKey = process.env[nativeEnv];
   }
 
   return config;
@@ -55,7 +68,7 @@ function loadConfig() {
 function saveConfig(updates) {
   const configPath = path.join(os.homedir(), '.kdna', 'config.json');
   let existing = {};
-  try { if (fs.existsSync(configPath)) existing = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch {}
+  try { if (fs.existsSync(configPath)) existing = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch (e) { console.error('Error reading config file for save:', e.message); }
   existing.llm = { ...(existing.llm || {}), ...updates };
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(existing, null, 2) + '\n');

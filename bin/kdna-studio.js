@@ -37,7 +37,7 @@ function usage() {
   console.log(`kdna-studio — Studio-compatible KDNA authoring CLI
 
 LLM (AI-powered authoring):
-  kdna-studio llm config [--provider <name>] [--model <name>] [--key <api-key>] [--url <base-url>]
+  kdna-studio llm config [--provider <name>] [--model <name>] [--key-pipe] [--url <base-url>]
   kdna-studio llm show
 
 Identity:
@@ -97,6 +97,34 @@ function option(args, name, fallback = null) {
   const value = args[idx + 1];
   if (!value || value.startsWith('--')) fail(`Missing value for ${name}`);
   return value;
+}
+
+function resolveApiKey(args) {
+  // 1. KDNA_API_KEY environment variable (preferred)
+  if (process.env.KDNA_API_KEY) return process.env.KDNA_API_KEY;
+
+  // 2. Read from stdin via --key-pipe flag
+  if (args.includes('--key-pipe')) {
+    if (process.stdin.isTTY) {
+      console.error('Error: --key-pipe requires stdin to be piped. Example: echo $KDNA_API_KEY | kdna-studio llm config --key-pipe');
+      return null;
+    }
+    try {
+      return fs.readFileSync(0, 'utf8').trim();
+    } catch (e) {
+      console.error('Error reading API key from stdin:', e.message);
+      return null;
+    }
+  }
+
+  // 3. Deprecated --key / -k flag (backward compat)
+  const key = option(args, '--key', null) || option(args, '-k', null);
+  if (key) {
+    console.error('Warning: --key is deprecated and exposes secrets in shell history and ps output. Use KDNA_API_KEY env var or pipe via stdin (--key-pipe).');
+    return key;
+  }
+
+  return null;
 }
 
 function optionsAll(args, name) {
@@ -1646,7 +1674,8 @@ function cmdStudioInstall(args) {
       stdio: 'inherit', encoding: 'utf8',
     });
     if (result.status !== 0) process.exit(result.status);
-  } catch {
+  } catch (e) {
+    console.error('Error spawning kdna CLI:', e.message);
     fail('kdna CLI not found. Install with: npm install -g @aikdna/kdna-cli');
   }
 }
@@ -1659,7 +1688,8 @@ function cmdStudioUpdate(args) {
       stdio: 'inherit', encoding: 'utf8',
     });
     if (result.status !== 0) process.exit(result.status);
-  } catch {
+  } catch (e) {
+    console.error('Error spawning kdna CLI:', e.message);
     fail('kdna CLI not found. Install with: npm install -g @aikdna/kdna-cli');
   }
 }
@@ -1677,14 +1707,14 @@ function cmdLlm(args) {
   if (sub === 'config') {
     const provider = option(args, '--provider') || option(args, '-p');
     const model = option(args, '--model') || option(args, '-m');
-    const apiKey = option(args, '--key') || option(args, '-k');
+    const apiKey = resolveApiKey(args);
     const baseURL = option(args, '--url') || option(args, '-u');
     const updates = {};
     if (provider) updates.provider = provider;
     if (model) updates.model = model;
     if (apiKey) updates.apiKey = apiKey;
     if (baseURL) updates.baseURL = baseURL;
-    if (Object.keys(updates).length === 0) fail('Usage: kdna-studio llm config --provider <name> [--model <name>] [--key <api-key>] [--url <base-url>]');
+    if (Object.keys(updates).length === 0) fail('Usage: kdna-studio llm config --provider <name> [--model <name>] [--key-pipe] [--url <base-url>]');
     const cfg = llm.configure(updates);
     console.log(JSON.stringify({ provider: cfg.provider, model: cfg.model, baseURL: cfg.baseURL }, null, 2));
     return;
@@ -1820,7 +1850,7 @@ async function cmdDistill(args) {
   const useAI = args.includes('--ai');
   const provider = option(args, '--provider');
   const model = option(args, '--model');
-  const apiKey = option(args, '--key');
+  const apiKey = resolveApiKey(args);
   if (!projectInput) fail('Usage: kdna-studio distill <project> [--ai] [--candidates <file.json>]');
   if (!candidatesFile && !useAI) fail('Either --ai or --candidates <file.json> required.');
 

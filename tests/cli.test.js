@@ -478,29 +478,57 @@ test('export --format v1 exports a Studio project as a valid non-empty v1 asset'
   assert.equal(loaded.manifest.payload.encrypted, false);
 });
 
-test('export --format v1 --password fails early with B2-not-yet-implemented message (B2)', (t) => {
-  // B2 (encrypted v1 export) requires extending the v1 container spec
-  // to support an encrypted payload encoding. Until that lands, the
-  // CLI accepts the flag and refuses early with a clear error rather
-  // than producing a broken .kdna file.
-  //
-  // This test pins the current behavior: --password exits 2 with a
-  // message that points to the documented workaround (export plain →
-  // kdna protect → kdna load --password). When B2 is fully implemented,
-  // this test should be replaced with one that asserts the round-trip.
+test('B2: export --format v1 --password encrypts payload and round-trips (scrypt profile)', (t) => {
+  assert.ok(kdnaCore, '@aikdna/kdna-core is required for B2 round-trip');
   const { tmp, projectDir } = createLockedProject(t);
   const outFile = path.join(tmp, 'project-v1-encrypted.kdna');
+  const password = 'test-password-12345';
 
+  // 1. Export with --password → exit 0, file created
   const result = run([
     'export', projectDir, '--format', 'v1',
-    '--out', outFile, '--password', 'test-password-12345',
+    '--out', outFile, '--password', password,
   ], { tmp });
-  assert.equal(result.status, 2, `expected exit 2 for B2 stub, got ${result.status}: ${result.stderr}`);
-  assert.match(result.stderr, /Encrypted v1 export is not yet implemented/);
-  assert.match(result.stderr, /kdna protect/);
-  // The .kdna file should NOT be created.
-  assert.equal(fs.existsSync(outFile), false,
-    'encrypted .kdna should not be created when B2 fails early');
+  assert.equal(result.status, 0, `export exit code: ${result.status}\nstderr: ${result.stderr}`);
+  assert.ok(fs.existsSync(outFile), 'encrypted .kdna should exist');
+
+  // 2. Verify canonical container structure
+  const layout = assertCanonicalRuntimeContainer(outFile);
+
+  // 3. planLoad without password → needs_password
+  const planNoPw = kdnaCore.planLoad(outFile);
+  assert.equal(planNoPw.state, 'needs_password');
+  assert.equal(planNoPw.can_load_now, false);
+
+  // 4. planLoad with correct password → ready
+  const planOk = kdnaCore.planLoad(outFile, { password });
+  assert.equal(planOk.access, 'licensed');
+  assert.equal(planOk.entitlement_profile, 'password');
+  assert.equal(planOk.state, 'ready');
+  assert.equal(planOk.can_load_now, true);
+
+  // 5. loadV1 without password → planLoad reports needs_password, loadAuthorized throws
+  assert.throws(
+    () => kdnaCore.loadV1(outFile, { profile: 'full', as: 'json' }),
+    /needs_password|enter_password|KDNA_AUTH/i,
+    'loadV1 without password should fail with authorization error',
+  );
+
+  // 6. loadV1 with wrong password → decrypt fails
+  assert.throws(
+    () => kdnaCore.loadV1(outFile, { password: 'wrong-password', profile: 'full', as: 'json' }),
+    /KDNA_DECRYPT_FAILED|decrypt|unwrap|integrity/i,
+    'loadV1 with wrong password should fail-closed',
+  );
+
+  // 7. loadV1 with correct password → round-trip
+  const loaded = kdnaCore.loadV1(outFile, { password, profile: 'full', as: 'json' }).content;
+  assert.equal(loaded.manifest.payload.encrypted, true);
+  assert.equal(loaded.manifest.access, 'licensed');
+  assert.equal(loaded.manifest.entitlement?.profile, 'password');
+  assert.equal(loaded.manifest.encryption?.profile, 'kdna-password-protected-v1-scrypt');
+  assert.ok(loaded.manifest.encryption?.encrypted_entries?.includes('payload.kdnab'));
+  assert.equal(loaded.payload.core.axioms.length, 1);
 });
 
 test('migrate --format v1 accepts an existing Studio project without dropping cards', (t) => {

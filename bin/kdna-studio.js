@@ -1394,24 +1394,6 @@ function exportProjectV1(project, name, outPath, opts = {}) {
   if (!exportRuntime || typeof exportRuntime.exportRuntimeAsset !== 'function') {
     fail('@aikdna/kdna-studio-core with exportRuntime.exportRuntimeAsset is required for v1 export.', 2);
   }
-  if (opts.password) {
-    // B2 (encrypted v1 export) requires extending the v1 container
-    // spec to support an encrypted payload encoding. The current v1
-    // container format only supports CBOR-encoded payload.kdnab, and
-    // kdna-core's pack() validates this. Re-encoding an encrypted
-    // payload back into v1 is a non-trivial protocol change that
-    // requires coordination with the v1 spec maintainers.
-    //
-    // For now, --password is reserved but not implemented end-to-end.
-    // The CLI accepts the flag and refuses early with a clear error
-    // rather than producing a broken .kdna file. See roadmap B2.
-    fail('Encrypted v1 export is not yet implemented end-to-end (B2 in progress). ' +
-         'Until the v1 spec adds an encrypted payload encoding, use the workaround:\n' +
-         '  1. Run `kdna-studio export <project> --format v1 --out <plain.kdna>`\n' +
-         '  2. Run `kdna protect <plain.kdna> --out <enc.kdna> --password <pw>` (CLI 0.28.1+)\n' +
-         '  3. Distribute <enc.kdna> to consumers via `kdna load --password=<pw>` (CLI 0.28.1+)',
-         2);
-  }
   const gate = projectApi.checkHumanLockGate(project);
   if (gate.blocked) {
     if (opts.allowIncomplete) {
@@ -1433,6 +1415,7 @@ function exportProjectV1(project, name, outPath, opts = {}) {
       created_at: manifestDefaults.created_at,
       updated_at: manifestDefaults.updated_at,
       access: project.release?.access || project.source_manifest?.access || 'public',
+      password: opts.password || undefined,
     });
     writeFiles(v1Dir, runtimeAsset.files);
     fs.mkdirSync(path.dirname(outPath), { recursive: true });

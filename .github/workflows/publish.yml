@@ -18,6 +18,14 @@ jobs:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
       - run: npm ci
+      - name: Verify CHANGELOG has entry for the current version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if ! head -10 CHANGELOG.md | grep -q "$VERSION"; then
+            echo "::error::CHANGELOG.md is missing a top entry for v$VERSION."
+            echo "::error::Bump package.json and add a CHANGELOG entry together."
+            exit 1
+          fi
       - run: npm run test:all
       - name: Publish @aikdna/kdna-studio-cli
         run: |

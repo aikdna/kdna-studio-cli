@@ -478,6 +478,31 @@ test('export --format v1 exports a Studio project as a valid non-empty v1 asset'
   assert.equal(loaded.manifest.payload.encrypted, false);
 });
 
+test('export --format v1 --password fails early with B2-not-yet-implemented message (B2)', (t) => {
+  // B2 (encrypted v1 export) requires extending the v1 container spec
+  // to support an encrypted payload encoding. Until that lands, the
+  // CLI accepts the flag and refuses early with a clear error rather
+  // than producing a broken .kdna file.
+  //
+  // This test pins the current behavior: --password exits 2 with a
+  // message that points to the documented workaround (export plain →
+  // kdna protect → kdna load --password). When B2 is fully implemented,
+  // this test should be replaced with one that asserts the round-trip.
+  const { tmp, projectDir } = createLockedProject(t);
+  const outFile = path.join(tmp, 'project-v1-encrypted.kdna');
+
+  const result = run([
+    'export', projectDir, '--format', 'v1',
+    '--out', outFile, '--password', 'test-password-12345',
+  ], { tmp });
+  assert.equal(result.status, 2, `expected exit 2 for B2 stub, got ${result.status}: ${result.stderr}`);
+  assert.match(result.stderr, /Encrypted v1 export is not yet implemented/);
+  assert.match(result.stderr, /kdna protect/);
+  // The .kdna file should NOT be created.
+  assert.equal(fs.existsSync(outFile), false,
+    'encrypted .kdna should not be created when B2 fails early');
+});
+
 test('migrate --format v1 accepts an existing Studio project without dropping cards', (t) => {
   assert.ok(kdnaCore, '@aikdna/kdna-core is required for v1 export verification');
   const { tmp, projectDir } = createLockedProject(t);

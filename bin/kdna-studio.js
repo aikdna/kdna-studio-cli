@@ -63,7 +63,7 @@ Authoring:
   kdna-studio card approve <project> <card-id|--all> --by <id> --statement <text> [--sign] [--passphrase <pass>]
   kdna-studio card unlock <project> <card-id> --by <id> --statement <text>
   kdna-studio compile <project> --out <dir>
-  kdna-studio export <project> --format v1 --out <file.kdna> [--allow-incomplete]
+  kdna-studio export <project> --format v1 --out <file.kdna> [--allow-incomplete] [--password <pw>|--password-stdin]
 
 AI Authoring (requires LLM config: kdna-studio llm config):
   kdna-studio distill <project> --ai                             # AI-driven candidate extraction from evidence
@@ -1394,6 +1394,24 @@ function exportProjectV1(project, name, outPath, opts = {}) {
   if (!exportRuntime || typeof exportRuntime.exportRuntimeAsset !== 'function') {
     fail('@aikdna/kdna-studio-core with exportRuntime.exportRuntimeAsset is required for v1 export.', 2);
   }
+  if (opts.password) {
+    // B2 (encrypted v1 export) requires extending the v1 container
+    // spec to support an encrypted payload encoding. The current v1
+    // container format only supports CBOR-encoded payload.kdnab, and
+    // kdna-core's pack() validates this. Re-encoding an encrypted
+    // payload back into v1 is a non-trivial protocol change that
+    // requires coordination with the v1 spec maintainers.
+    //
+    // For now, --password is reserved but not implemented end-to-end.
+    // The CLI accepts the flag and refuses early with a clear error
+    // rather than producing a broken .kdna file. See roadmap B2.
+    fail('Encrypted v1 export is not yet implemented end-to-end (B2 in progress). ' +
+         'Until the v1 spec adds an encrypted payload encoding, use the workaround:\n' +
+         '  1. Run `kdna-studio export <project> --format v1 --out <plain.kdna>`\n' +
+         '  2. Run `kdna protect <plain.kdna> --out <enc.kdna> --password <pw>` (CLI 0.28.1+)\n' +
+         '  3. Distribute <enc.kdna> to consumers via `kdna load --password=<pw>` (CLI 0.28.1+)',
+         2);
+  }
   const gate = projectApi.checkHumanLockGate(project);
   if (gate.blocked) {
     if (opts.allowIncomplete) {
@@ -1605,7 +1623,15 @@ function cmdExport(args) {
   if (!projectInput || !out) fail('Usage: kdna-studio export <project> --out <file.kdna> [--format v1] [--sign] [--allow-incomplete]');
   if (option(args, '--format') === 'v1') {
     const { project } = readProject(projectInput);
-    exportProjectV1(project, option(args, '--name') || project.name, path.resolve(out), { allowIncomplete: args.includes('--allow-incomplete') });
+    const password = option(args, '--password') || option(args, '--passphrase');
+    if (password && option(args, '--password-stdin')) {
+      // Caller piped the password on stdin (avoids it appearing in shell history)
+      password = fs.readFileSync(0, 'utf8').trim();
+    }
+    exportProjectV1(project, option(args, '--name') || project.name, path.resolve(out), {
+      allowIncomplete: args.includes('--allow-incomplete'),
+      password,
+    });
     return;
   }
   const { project, result } = compileProject(projectInput);

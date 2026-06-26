@@ -1,8 +1,44 @@
 # Changelog
 
-## v0.7.0 (2026-06-23)
+## v0.7.0 (2026-06-26)
+
+### Features
 - Feat: binary evidence import.
 - Feat: one_sentence warning.
+
+### Security (PR #27)
+- **Fix: SECURITY.md — remove incorrect crypto claims.** kdna-studio-cli is a CLI
+  authoring tool; it does NOT implement crypto primitives. The previous SECURITY.md
+  claimed Ed25519 signatures / AES-256-GCM / Argon2id which were not implemented
+  in this package. Replaced with accurate description pointing to `aikdna/kdna-core`
+  and `aikdna/kdna-cli` as the real security dependencies.
+
+### Security (CQ-S1, CQ-S2, CQ-T4 — commits 59aafc3, b7ecd08)
+- **Fix (P0): API key handling — `bin/kdna-studio.js` `resolveApiKey()`** with priority
+  `KDNA_API_KEY` env var → `--key-pipe` stdin → deprecated `--key` flag (with warning).
+  Previously, `--key` was the only option and exposed secrets in shell history + `ps`.
+- **Fix (P0): provider key isolation — `src/llm/config.js` `PROVIDER_NATIVE_KEYS`** table
+  with strict per-provider env var mapping. Previously, `config.js:49` had
+  cross-provider fallback (`OPENAI_API_KEY || ANTHROPIC_API_KEY || DEEPSEEK_API_KEY`)
+  which leaked keys across providers.
+- **Fix: empty catch blocks gain diagnostic logging** in `src/llm/config.js` and
+  `bin/kdna-studio.js`. Previously, all 5 empty catch blocks silently swallowed errors.
+
+### Quality (PR #26)
+- **Fix: NP-3 tarball — `package.json` `files` excludes `tests/`.** Previously, the
+  npm tarball shipped test files.
+- **Fix (P0): `importFromKdna` size limit** — 50 MiB cap via `fs.statSync` before
+  `readFileSync`. Prevents OOM on large .kdna files.
+- **Fix: `cmdDistill` size limit** — same 50 MiB cap.
+- **Fix: `cmdImport` streaming** — `fs.readSync(fd, buf, 0, 120000, 0)` instead of
+  full `readFileSync`. Prevents OOM on large source files.
+
+### Security (PR #28)
+- **Fix: public-surface guardrail config real SHA-256 hashes.** Replaced 5 placeholder
+  hashes in `scripts/public-surface.config.json` with 7 real SHA-256 hashes (for
+  `aikdna/kdna-{x,lab,registry,releases,writing,prompt_diagnosis,agent_safety}`).
+  Previously, the guardrail silently passed for any input because no forbidden pattern
+  hash matched.
 
 ## v0.6.5 (2026-06-22)
 - Fix: import detects and skips binary files

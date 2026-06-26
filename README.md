@@ -56,7 +56,7 @@ kdna-studio export my_domain --format v1 --out dist/my_domain.kdna
 Candidate promotion is scope-gated: only candidates with `status == accepted` and `scope_fit == true` are promoted to cards by default. Use `kdna-studio candidate override <project> <candidate-id>` only when a human intentionally overrides the scope gate.
 
 The current Studio CLI export workflow uses approved cards as release evidence.
-This is Studio project policy, not a Core GA format-validity rule. Human
+This is Studio project policy, not a KDNA Core v1 format-validity rule. Human
 Lock and other provenance records are optional review evidence, not validity
 requirements.
 
@@ -75,10 +75,10 @@ loading existing `.kdna` assets.
 ## Runtime Export Contract
 
 `kdna-studio export --format v1` is the canonical runtime export path. It uses
-`@aikdna/kdna-studio-core` to compile the Studio project into a Core GA
+`@aikdna/kdna-studio-core` to compile the Studio project into a KDNA Core v1
 runtime asset and then packs it with `@aikdna/kdna-core`.
 
-A Core GA runtime export contains only these top-level entries:
+A KDNA Core v1 runtime export contains only these top-level entries:
 
 - `mimetype`
 - `kdna.json`

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.8.0 (2026-06-27)
+- B2: `--password` now performs real scrypt-based encryption (no longer stub)
+  - Removes fail-early stub; wires password to `exportRuntime.exportRuntimeAsset`
+  - E2E test: 8-step round-trip (export → planLoad → load → wrong-pw fail-closed)
+- Deps: bump @aikdna/kdna-studio-core to ^1.7.0, @aikdna/kdna-core to ^0.15.0
+
 ## v0.7.0 (2026-06-26)
 
 ### Features

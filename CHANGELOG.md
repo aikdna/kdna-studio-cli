@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.8.2 (2026-06-27)
+
+### Changed
+- Bump `@aikdna/kdna-studio-core` dep floor from `^1.7.0` to `^1.7.1`. The
+  1.7.1 release ships the PC-3 fix (`exportRuntimeAsset` no longer
+  injects the legacy placeholder into `core.highest_question` when
+  the author has not set `load_condition`); without the dep bump, the
+  v0.8.1 CLI keeps resolving the bundled 1.7.0 nested copy and the
+  fix never reaches consumers.
+
 ## v0.8.1 (2026-06-27)
 
 ### Fixed

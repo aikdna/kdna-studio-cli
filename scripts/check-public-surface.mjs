@@ -7,23 +7,24 @@
  * showcase/, root-level *.md and *.json) for references that should not
  * be present in a public release:
  *
- *   - Private repo URLs (github.com/aikdna/kdna-x, aikdna/kdna-lab,
- *     aikdna/kdna-writing, aikdna/kdna-prompt_diagnosis, aikdna/kdna-agent_safety,
- *     aikdna/kdna-releases, aikdna/kdna-registry)
- *   - Private repo path references (kdna-x/A-agent-meta/, kdna-x/_strategy/, etc.)
+ *   - Private repo URLs (matched against the allowlist in
+ *     `scripts/private-repo-allowlist.json` — kept out of this file so
+ *     the allowlist can be updated without editing this header)
+ *   - Private repo path references (same allowlist)
  *   - Local filesystem paths leaking the developer's machine
- *     (/Users/AI/K/OPEN/, /private/tmp/)
+ *     (/Users/<user>/OPEN/, /private/tmp/)
  *   - Full (40-char) git commit hashes in audit/spec docs
- *   - Internal code names ("M3 self-eval", "A-agent-meta")
+ *   - Internal code names
  *
  * Exits 0 on a clean run, 1 on any finding. Each finding includes the
  * file, line number, and the offending substring so the fix is
  * mechanical.
  *
  * Run from repo root:  node scripts/check-public-surface.mjs
- *   --strict          also flag the existence of 'kdna-lab' substring
- *                      (some legitimate prose uses "test lab" — strict
- *                      mode is for new PRs that should not add new refs)
+ *   --strict          also flag substrings from the private-repo
+ *                      allowlist (some legitimate prose uses
+ *                      "test lab" — strict mode is for new PRs that
+ *                      should not add new refs)
  */
 
 import { readdirSync, readFileSync, statSync } from 'fs';

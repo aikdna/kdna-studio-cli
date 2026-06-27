@@ -1,0 +1,6 @@
+{
+  "_comment": "Allowlist of substrings that check-public-surface.mjs flags as 'private repo references'. Edit this file (not the script header) when adding or removing entries. Adding to this list means: any file under docs/, specs/, .github/, showcase/, root-level *.md or *.json that contains any of these substrings will be flagged by the public-surface check.",
+  "private_repo_substrings": [],
+  "private_repo_paths": [],
+  "internal_code_names": []
+}

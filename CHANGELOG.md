@@ -1,5 +1,73 @@
 # Changelog
 
+## v0.8.3 (2026-06-28)
+
+This release closes 16 issues filed against the v0.8.x line (issues #36
+through #48, plus one follow-up surfaced by an internal round-trip
+review on the same day). Bumps `@aikdna/kdna-studio-core` from `^1.7.1`
+to `^1.7.2`; that release ships the matching `lockCard` schema gate,
+`buildPayload` completeness fix, and the `JUDGMENT_CARD_TYPES_FOR_COMPILE`
+unification that this CLI's `migrate` / `export --format v1` paths
+relied on. Without the dep bump, the fixes below would only run when
+the CLI happened to load the dev src/ tree, not the published
+artifact.
+
+### Fixed (CLI surface)
+
+- **#36 risk_model "object is not iterable"** — `cardsFromV1Payload` and
+  the `importFromFolder` risk loop now accept `risk_model` as either an
+  array or `{risks: [...]}` instead of blindly doing `arr.risks || []`.
+- **#37 non-standard filenames** — `importFromFolder` now fails fast
+  with a directory listing when none of the expected KDNA_* files are
+  present, instead of silently importing nothing.
+- **#38 `create --from-kdna` dropping 8+ card types** — `importFromKdna`
+  now prefers `payload.kdnab` (v1) over the legacy KDNA_Core.json /
+  KDNA_Patterns.json split, so boundary / risk / aesthetic / ontology /
+  scenario / case / reasoning / evolution_stage / stance / framework /
+  term / banned_term cards round-trip from a v1 asset. Legacy split
+  files are still honoured as a fallback.
+- **#39 candidate promote empty axiom** — `candidate promote` now writes
+  a non-empty placeholder into `full_statement` / `why` / `failure_risk`
+  and empty arrays (not empty strings) into `applies_when` /
+  `does_not_apply_when` so the migrate Human Lock gate stops rejecting
+  every promoted candidate.
+- **#40 feynman command reading the wrong field** — the `feynman` check
+  now reads `card.feynman_restatement` (the field the system actually
+  writes) instead of `card.feynman_text` (which nothing ever wrote).
+- **#42 evidence vs evidence_materials mismatch** — `source classify`
+  now reads `project.evidence_materials` (the field the `import`
+  command writes), falling back to `project.evidence` for legacy data.
+- **#43 reasoning_chains round-trip** — `importFromFolder` now writes
+  the field names that `compileReasoning` actually reads
+  (`axiom` / `chain` / `principle` / `concrete_action`) so reasoning
+  chains survive a `migrate --format v1` round-trip instead of being
+  silently rewritten as fallback axiom-derived chains.
+- **#44 protect help text + recover fallback** — `kdna-cli` `protect`
+  help text and the `recover` fallback now reference `payload.kdnab`
+  (the canonical encryption target) instead of the obsolete
+  `KDNA_Core.json`. (The fix lives in `kdna-cli`; this release keeps
+  the cross-repo behaviour consistent.)
+- **#45 `--password-stdin` TTY hang** — both the `export --format v1`
+  path and the help text now refuse up front on a TTY instead of
+  waiting forever for stdin.
+- **#46 `migrate` tmpDir leak on non-v1 failure** — `cmdMigrate` is
+  wrapped in `try { ... } finally { ... }` so a mid-migrate failure
+  (missing critical axiom fields, gate block, signing error) cleans
+  up `/tmp/kdna-migrate-*` instead of leaking it.
+- **#47 passphrase in `ps aux`** — new `resolvePassphrase` helper
+  accepts `--passphrase-stdin` and `KDNA_PASSPHRASE` env var. The
+  legacy `--passphrase <value>` form is kept for backward compatibility
+  but prints a warning at runtime.
+- **#48 manifestForSigning mismatch** — `manifestForSigning` now strips
+  `_source` and recursively strips `authoring.content_digest` so the
+  signing payload matches `kdna-core#manifestForSignature` /
+  `manifestForDigest`. Prevents false-positive signature rejections.
+
+### Tests
+- `tests/cli.test.js` updated to read `reasoning.self_check` (singular,
+  matches the canonical schema) instead of `self_checks` (legacy
+  schema).
+
 ## v0.8.2 (2026-06-27)
 
 ### Changed

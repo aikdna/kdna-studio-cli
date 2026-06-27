@@ -451,7 +451,7 @@ test('migrate --format v1 exports canonical runtime payload without source entri
   assert.equal(full.payload.core.axioms.length, 1);
   assert.equal(full.payload.scenarios.length, 1);
   assert.equal(full.payload.cases.length, 1);
-  assert.equal(full.payload.reasoning.self_checks.length, 1);
+  assert.equal(full.payload.reasoning.self_check.length, 1);
   assert.equal(full.payload.reasoning.failure_modes.length, 1);
   assert.ok(full.payload.evolution.stages.length >= 1);
   assert.equal(Object.hasOwn(full.payload, 'source_cards'), false);

@@ -99,6 +99,40 @@ function option(args, name, fallback = null) {
   return value;
 }
 
+/**
+ * Resolve a passphrase from CLI flags, environment, or stdin.
+ *
+ * SECURITY: passing a passphrase as `--passphrase <value>` exposes it in
+ * `ps aux` output and shell history. The recommended path is one of:
+ *   1. --passphrase-stdin  — read from stdin (pipe-friendly, no TTY hang)
+ *   2. KDNA_PASSPHRASE env var (less secure but no process-list leak)
+ *   3. --passphrase <pw>   — fallback only; prints a warning
+ *
+ * Returns the passphrase string, or null if none was provided.
+ */
+function resolvePassphrase(args) {
+  if (args.includes('--passphrase-stdin')) {
+    if (process.stdin.isTTY) {
+      fail(
+        '--passphrase-stdin requires the passphrase to be piped in on stdin.\n' +
+        'Example:  read -s PW && echo "$PW" | kdna-studio export ... --sign --passphrase-stdin'
+      );
+    }
+    try {
+      return fs.readFileSync(0, 'utf8').trim();
+    } catch (e) {
+      fail(`Could not read passphrase from stdin: ${e.message}`);
+    }
+  }
+  if (process.env.KDNA_PASSPHRASE) return process.env.KDNA_PASSPHRASE;
+  const fromFlag = option(args, '--passphrase');
+  if (fromFlag) {
+    console.error('Warning: --passphrase <value> exposes the secret in `ps aux` and shell history. Prefer --passphrase-stdin or KDNA_PASSPHRASE env var.');
+    return fromFlag;
+  }
+  return null;
+}
+
 function resolveApiKey(args) {
   // 1. KDNA_API_KEY environment variable (preferred)
   if (process.env.KDNA_API_KEY) return process.env.KDNA_API_KEY;
@@ -287,10 +321,27 @@ function cardsFromV1Payload(payload) {
       failure_risk: ax.failure_risk || '',
     }, ax.id || null);
   }
+  for (const ont of (payload.core?.ontology || [])) {
+    pushImportedCard(cards, 'ontology', ont, ont.id || null);
+  }
+  for (const fw of (payload.core?.frameworks || [])) {
+    pushImportedCard(cards, 'framework', fw, fw.id || null);
+  }
+  for (const stance of (payload.core?.stances || [])) {
+    pushImportedCard(cards, 'stance', stance, stance.id || null);
+  }
+  for (const aesthetic of (payload.core?.aesthetics || [])) {
+    pushImportedCard(cards, 'aesthetic', aesthetic, aesthetic.id || null);
+  }
   for (const boundary of (payload.core?.boundaries || [])) {
     pushImportedCard(cards, 'boundary', boundary, boundary.id || null);
   }
-  for (const risk of (payload.core?.risk_model?.risks || [])) {
+  // risk_model may be either an array of risk items (legacy) or
+  // `{risks: [...]}` (current). Treat both shapes; ignore everything else
+  // rather than crashing with "object is not iterable".
+  const riskModel = payload.core?.risk_model;
+  const riskItems = Array.isArray(riskModel) ? riskModel : (riskModel?.risks || []);
+  for (const risk of riskItems) {
     pushImportedCard(cards, 'risk', risk, risk.id || null);
   }
   for (const pattern of (payload.patterns || [])) {
@@ -304,7 +355,13 @@ function cardsFromV1Payload(payload) {
   for (const item of (payload.cases || [])) {
     pushImportedCard(cards, 'case', item, item.id || null);
   }
-  for (const selfCheck of (payload.reasoning?.self_checks || [])) {
+  // Accept both `self_check` (canonical) and `self_checks` (legacy schema
+  // name) so we round-trip assets written by either version of the
+  // payload-profile schema.
+  const selfCheckArr = payload.reasoning?.self_check
+    || payload.reasoning?.self_checks
+    || [];
+  for (const selfCheck of selfCheckArr) {
     const fields = typeof selfCheck === 'string' ? { question: selfCheck } : selfCheck;
     pushImportedCard(cards, 'self_check', fields, fields.id || null);
   }
@@ -320,7 +377,14 @@ function cardsFromV1Payload(payload) {
     pushImportedCard(cards, 'reasoning', chain, chain.id || null);
   }
   for (const stage of (payload.evolution?.stages || [])) {
-    pushImportedCard(cards, 'evolution_stage', stage, stage.id || null);
+    // Distinguish source-authored stages (preserved identity) from
+    // audit-log-derived stages (synthesised). The compile path tags
+    // source_authored: true; import those verbatim and skip the rest
+    // so the importer doesn't double-count what was already in the
+    // locked judgment cards.
+    if (stage.source_authored === true) {
+      pushImportedCard(cards, 'evolution_stage', stage, stage.id || null);
+    }
   }
   return cards;
 }
@@ -566,52 +630,65 @@ function importFromKdna(kdnaPath) {
     parent_asset_digest: manifest.content_digest || manifest.asset_digest || null,
   };
 
-  // Extract cards from KDNA files
+  // Extract cards. Modern v1 packages carry `kdna.json` + `payload.kdnab`
+  // and use the unified judgment profile. Legacy packages split content
+  // across KDNA_*.json files. Prefer payload.kdnab when present — it
+  // covers all 8+ card types (axiom / boundary / risk / aesthetic /
+  // ontology / misunderstanding / self_check / scenario / case /
+  // reasoning / evolution_stage / stance / framework / term / banned_term)
+  // via cardsFromPayload / cardsFromV1Payload.
   const importedCards = [];
-  if (entries.has('KDNA_Core.json')) {
-    const core = JSON.parse(entries.get('KDNA_Core.json').toString());
-    for (const ax of (core.axioms || [])) {
-      const fields = {};
-      for (const k of ['one_sentence','full_statement','why','applies_when','does_not_apply_when','failure_risk']) {
-        if (k in ax) fields[k] = ax[k];
-      }
-      importedCards.push(cardApi.createCard('axiom', fields));
-    }
-    for (const ont of (core.ontology || [])) {
-      importedCards.push(cardApi.createCard('ontology', {
-        one_sentence: ont.one_sentence || ont.essence || '',
-        essence: ont.essence || '', boundary: ont.boundary || '',
-        trigger_signal: ont.trigger_signal || '',
-      }));
-    }
-    for (const b of (core.boundaries || [])) {
-      importedCards.push(cardApi.createCard('boundary', {
-        scope: b.scope || '', out_of_scope: b.out_of_scope || '',
-        acceptable_exceptions: b.acceptable_exceptions || [],
-      }));
-    }
-  }
-  if (entries.has('KDNA_Patterns.json')) {
-    const pat = JSON.parse(entries.get('KDNA_Patterns.json').toString());
-    for (const ms of (pat.misunderstandings || [])) {
-      importedCards.push(cardApi.createCard('misunderstanding', {
-        wrong: ms.wrong || '', correct: ms.correct || '',
-        key_distinction: ms.key_distinction || '', why: ms.why || '',
-      }));
-    }
-    for (const sc of (pat.self_check || [])) {
-      const q = typeof sc === 'string' ? sc : sc.question || '';
-      importedCards.push(cardApi.createCard('self_check', { question: q }));
-    }
-  }
-
-  if (importedCards.length === 0 && entries.has('payload.kdnab')) {
+  if (entries.has('payload.kdnab')) {
     try {
       const payload = decodePayload(entries.get('payload.kdnab'), manifest);
       importedCards.push(...cardsFromPayload(payload));
     } catch (e) {
       fail(`Could not import cards from payload.kdnab: ${e.message}`);
     }
+  } else if (entries.has('KDNA_Core.json') || entries.has('KDNA_Patterns.json')) {
+    // Legacy fallback — only used when payload.kdnab is absent. This path
+    // intentionally covers a strict subset of card types and is not the
+    // recommended import path.
+    if (entries.has('KDNA_Core.json')) {
+      const core = JSON.parse(entries.get('KDNA_Core.json').toString());
+      for (const ax of (core.axioms || [])) {
+        const fields = {};
+        for (const k of ['one_sentence','full_statement','why','applies_when','does_not_apply_when','failure_risk']) {
+          if (k in ax) fields[k] = ax[k];
+        }
+        importedCards.push(cardApi.createCard('axiom', fields));
+      }
+      for (const ont of (core.ontology || [])) {
+        importedCards.push(cardApi.createCard('ontology', {
+          one_sentence: ont.one_sentence || ont.essence || '',
+          essence: ont.essence || '', boundary: ont.boundary || '',
+          trigger_signal: ont.trigger_signal || '',
+        }));
+      }
+      for (const b of (core.boundaries || [])) {
+        importedCards.push(cardApi.createCard('boundary', {
+          scope: b.scope || '', out_of_scope: b.out_of_scope || '',
+          acceptable_exceptions: b.acceptable_exceptions || [],
+        }));
+      }
+    }
+    if (entries.has('KDNA_Patterns.json')) {
+      const pat = JSON.parse(entries.get('KDNA_Patterns.json').toString());
+      for (const ms of (pat.misunderstandings || [])) {
+        importedCards.push(cardApi.createCard('misunderstanding', {
+          wrong: ms.wrong || '', correct: ms.correct || '',
+          key_distinction: ms.key_distinction || '', why: ms.why || '',
+        }));
+      }
+      for (const sc of (pat.self_check || [])) {
+        const q = typeof sc === 'string' ? sc : sc.question || '';
+        importedCards.push(cardApi.createCard('self_check', { question: q }));
+      }
+    }
+  }
+
+  if (importedCards.length === 0) {
+    fail(`No cards could be extracted from ${absKdna}. Expected payload.kdnab (v1) or KDNA_Core.json + KDNA_Patterns.json (legacy).`);
   }
 
   return { lineage, cards: importedCards, source_manifest: manifest };
@@ -667,6 +744,24 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
   const reasoning = loadJson('KDNA_Reasoning.json');
   const evolution = loadJson('KDNA_Evolution.json');
 
+  // If none of the standard KDNA_*.json files were found, that almost
+  // always means the user pointed at the wrong directory or the source uses
+  // a non-standard filename. Report what was *actually* present so they can
+  // rename or move their files.
+  const expectedFiles = ['KDNA_Core.json', 'KDNA_Patterns.json', 'KDNA_Scenarios.json',
+    'KDNA_Cases.json', 'KDNA_Reasoning.json', 'KDNA_Evolution.json', 'kdna.json'];
+  const loadedCount = audit.filesFound.length;
+  if (loadedCount === 0) {
+    let dirContents = [];
+    try { dirContents = fs.readdirSync(absSource); } catch { /* ignore */ }
+    fail(
+      `No KDNA source files found in ${absSource}.\n` +
+      `Expected one of: ${expectedFiles.join(', ')}\n` +
+      `Directory contains ${dirContents.length} entr${dirContents.length === 1 ? 'y' : 'ies'}: ` +
+      (dirContents.length > 0 ? dirContents.slice(0, 20).join(', ') + (dirContents.length > 20 ? ', ...' : '') : '(empty)')
+    );
+  }
+
   if (core) {
     for (const ax of (core.axioms || [])) {
       const fields = {};
@@ -689,7 +784,15 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
         acceptable_exceptions: b.acceptable_exceptions || [],
       }));
     }
-    for (const r of (core.risks || core.risk_model || [])) {
+    // Accept risks as a top-level array (`risks`) or wrapped in `risk_model`
+    // (either as `{risks: [...]}` or as an array itself).
+    let risksSource = core.risks;
+    if (!Array.isArray(risksSource)) {
+      if (Array.isArray(core.risk_model)) risksSource = core.risk_model;
+      else if (Array.isArray(core.risk_model?.risks)) risksSource = core.risk_model.risks;
+      else risksSource = [];
+    }
+    for (const r of risksSource) {
       importedCards.push(cardApi.createCard('risk', r.fields || r));
     }
     // NEW: import stances
@@ -756,12 +859,23 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
     }
   }
 
-  // NEW: import reasoning chains
+  // NEW: import reasoning chains. Field names must match what compileReasoning
+  // reads (chain/principle/concrete_action/axiom/one_sentence) so the
+  // round-trip preserves the source's structure. Bug: prior code stored
+  // {name, conclusion, so_what}, none of which the compile path recognised,
+  // so the cards were silently rewritten as axiom-derived fallback chains
+  // — looking identical to misunderstanding cards and losing the source's
+  // identity.
   if (reasoning && reasoning.reasoning_chains) {
     for (const rc of reasoning.reasoning_chains) {
       importedCards.push(cardApi.createCard('reasoning', {
-        name: rc.name || rc.id || '', conclusion: rc.conclusion || '',
-        so_what: rc.so_what || '',
+        axiom: rc.axiom || '',
+        one_sentence: rc.one_sentence || rc.conclusion || '',
+        chain: Array.isArray(rc.chain) ? rc.chain : (rc.logic || []),
+        principle: rc.principle || rc.name || '',
+        concrete_action: rc.concrete_action || rc.so_what || '',
+        so_what: rc.so_what || rc.concrete_action || '',
+        conclusion: rc.conclusion || '',
       }));
     }
   }
@@ -1158,10 +1272,10 @@ function cmdCard(args) {
           return null;
         }
         lockPayload.creator_id = identity.creator_id;
-        const passphrase = option(args, '--passphrase');
+        const passphrase = resolvePassphrase(args);
         try {
           if (identity.encrypted && !passphrase) {
-            errors.push(`${card.id}: Private key is encrypted — provide --passphrase`);
+            errors.push(`${card.id}: Private key is encrypted — provide --passphrase-stdin or KDNA_PASSPHRASE`);
             return null;
           }
           lockPayload.signature = creatorApi.signHumanLock(
@@ -1274,6 +1388,12 @@ function cmdMigrate(args) {
   let projectPath = null;
   let project = null;
 
+  // Wrap everything in try / finally so a mid-migrate failure (e.g. missing
+  // critical fields, gate blocked, signing error) still cleans up tmpDir.
+  // Bug: prior code only cleaned up on the v1 and v2 success paths; any
+  // non-v1 export path that threw leaked `/tmp/kdna-migrate-*` entries
+  // indefinitely.
+  try {
   // Step 1: import dev source, or use an existing Studio project directly.
   let creatorIdentity = null;
   try { creatorIdentity = creatorApi.loadIdentity(); } catch { /* proceed without */ }
@@ -1325,7 +1445,7 @@ function cmdMigrate(args) {
       const identity = creatorApi.loadIdentity();
       if (!identity) fail('No creator identity. Run: kdna-studio identity init --name "Your Name"', EXIT.TRUST_FAILED);
       lockPayload.creator_id = identity.creator_id;
-      const passphrase = option(args, '--passphrase');
+      const passphrase = resolvePassphrase(args);
       try {
         lockPayload.signature = creatorApi.signHumanLock(
           card.id, statement, cardApi.cardJudgmentFingerprint(card), null, passphrase,
@@ -1383,6 +1503,17 @@ function cmdMigrate(args) {
   // Cleanup temp
   if (tmpDir) {
     try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* best effort */ }
+    tmpDir = null;
+  }
+  } finally {
+    // Single, guaranteed cleanup point for tmpDir even when an earlier
+    // step (critical-missing check, gate block, signing failure) bails
+    // out via `fail()`. `fail()` ultimately calls process.exit, but
+    // if a future caller swallows that or the runtime traps the throw,
+    // we still leave the filesystem clean.
+    if (tmpDir) {
+      try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* best effort */ }
+    }
   }
 }
 
@@ -1545,11 +1676,27 @@ function stableStringify(value) {
 }
 
 function manifestForSigning(manifest) {
-  const copy = { ...manifest };
+  // Mirrors the kdna-core implementation in
+  // packages/kdna-core/src/asset-reader.js#manifestForSignature /
+  // manifestForDigest. Anything not stripped here will end up in the
+  // signing payload, and a mismatch between producer (this CLI) and
+  // verifier (kdna-core) will cause the signature check to fail.
+  //
+  // Bug: prior version did not strip `_source` (only set by eval/loader
+  // helpers) and did not recursively strip `authoring.content_digest`,
+  // so a payload with either field would diverge from kdna-core's
+  // canonicalisation and report a false-positive verification failure.
+  const copy = { ...(manifest || {}) };
   delete copy.signature;
   delete copy.asset_digest;
   delete copy.container_sha256;
   delete copy.content_digest;
+  delete copy._source;
+  if (copy.authoring && typeof copy.authoring === 'object') {
+    const auth = { ...copy.authoring };
+    delete auth.content_digest;
+    copy.authoring = auth;
+  }
   return copy;
 }
 
@@ -1579,7 +1726,7 @@ function publicKeyFingerprint(publicKeyPem) {
 function applySignature(files, passphrase = null) {
   const paths = identityPaths();
   if (!fs.existsSync(paths.privateKey) || !fs.existsSync(paths.publicKey)) {
-    fail('Signing requires KDNA identity keys. Run: kdna identity init', EXIT.TRUST_FAILED);
+    fail('Signing requires KDNA identity keys. Run: kdna-studio identity init', EXIT.TRUST_FAILED);
   }
   const manifest = JSON.parse(files['kdna.json']);
   const publicKeyPem = fs.readFileSync(paths.publicKey, 'utf8');
@@ -1617,9 +1764,26 @@ function cmdExport(args) {
     // Use args.includes() for --password-stdin since it is a boolean flag
     // (option() rejects it for "missing value").
     const useStdin = args.includes('--password-stdin');
-    const password = useStdin
-      ? fs.readFileSync(0, 'utf8').trim()
-      : option(args, '--password') || option(args, '--passphrase');
+    let password;
+    if (useStdin) {
+      // fs.readFileSync(0) on a TTY waits forever for input and never
+      // returns — the export appears to hang. Refuse up front with a
+      // clear pointer to the right invocation.
+      if (process.stdin.isTTY) {
+        fail(
+          '--password-stdin requires the password to be piped in on stdin.\n' +
+          'Example:  echo "$KDNA_PASSWORD" | kdna-studio export <project> --format v1 --out <file.kdna> --password-stdin\n' +
+          'If you are running interactively, omit --password-stdin and you will be prompted.'
+        );
+      }
+      try {
+        password = fs.readFileSync(0, 'utf8').trim();
+      } catch (e) {
+        fail(`Could not read password from stdin: ${e.message}`);
+      }
+    } else {
+      password = option(args, '--password') || option(args, '--passphrase');
+    }
     exportProjectV1(project, option(args, '--name') || project.name, path.resolve(out), {
       allowIncomplete: args.includes('--allow-incomplete'),
       password,
@@ -1654,7 +1818,7 @@ function cmdExport(args) {
   provenance.content_fingerprint = finalDigest;
   files['reports/provenance-report.json'] = JSON.stringify(provenance, null, 2);
 
-  if (args.includes('--sign')) applySignature(files, option(args, '--passphrase'));
+  if (args.includes('--sign')) applySignature(files, resolvePassphrase(args));
 
   const entries = [['mimetype', files.mimetype]];
   for (const name of Object.keys(files).filter(k => k !== 'mimetype').sort()) {
@@ -1744,7 +1908,7 @@ function cmdIdentity(args) {
   const sub = args[0];
   if (sub === 'init') {
     const name = option(args, '--name', process.env.USER || process.env.USERNAME || '');
-    const passphrase = option(args, '--passphrase');
+    const passphrase = resolvePassphrase(args);
     try {
       const identity = creatorApi.initIdentity(name, null, passphrase);
       console.log(`Creator identity initialized:`);
@@ -1837,7 +2001,11 @@ function cmdSourceClassify(args) {
   const target = project.distillation_target;
   if (!target) fail('Declare a distillation target first: kdna-studio target declare <project>');
 
-  const evidence = project.evidence || [];
+  // Canonical evidence field is `evidence_materials` (set by cmdImport via
+  // evidenceApi.addEvidence). The legacy `project.evidence` field never
+  // receives writes, so reading it always produced an empty list and the
+  // classifier reported "no evidence" even after `kdna-studio import`.
+  const evidence = project.evidence_materials || project.evidence || [];
   const results = evidence.map(e => {
     const text = (e.content || e.title || '').toLowerCase();
     const domainWords = (target.include_areas || []).concat([target.domain_category, target.task_scope]);
@@ -1965,14 +2133,29 @@ function cmdCandidate(args) {
     if (accepted.length === 0) fail('No candidates to promote. Accept some candidates first.');
 
     for (const c of accepted) {
-      const card = cardApi.createCard(c.suggested_card_type, {
-        one_sentence: c.one_sentence,
-        full_statement: c.full_statement,
-        why: '',
-        applies_when: '',
-        does_not_apply_when: '',
-        failure_risk: '',
-      });
+      // Promote candidates to draft cards. For axioms we must populate every
+      // field the Human Lock gate and migrate path require — empty strings
+      // cause migrate to fail ("critical fields missing from axioms"). When
+      // a candidate lacks the field, fall back to the candidate's own
+      // one_sentence/full_statement so the lock gate at least has substance
+      // to verify. Authors are expected to enrich these fields before
+      // locking.
+      const fields = {};
+      if (c.suggested_card_type === 'axiom') {
+        fields.one_sentence = c.one_sentence || '';
+        fields.full_statement = c.full_statement || c.one_sentence || '<TBD: full_statement>';
+        fields.why = c.why || '<TBD: why>';
+        // applies_when / does_not_apply_when are arrays, not strings.
+        // Empty string is invalid; emit an empty array so checkRequiredFields
+        // (which treats `length === 0` as missing) correctly reports them.
+        fields.applies_when = Array.isArray(c.applies_when) ? c.applies_when : [];
+        fields.does_not_apply_when = Array.isArray(c.does_not_apply_when) ? c.does_not_apply_when : [];
+        fields.failure_risk = c.failure_risk || '<TBD: failure_risk>';
+      } else {
+        fields.one_sentence = c.one_sentence || '';
+        fields.full_statement = c.full_statement || c.one_sentence || '';
+      }
+      const card = cardApi.createCard(c.suggested_card_type, fields);
       card.evidence_refs = c.supporting_evidence_ids;
       project.cards = project.cards || [];
       project.cards.push(card);
@@ -2012,7 +2195,12 @@ async function cmdFeynman(args) {
   if (cardIdx < 0) fail(`Card not found: ${cardId}`);
   const card = project.cards[cardIdx];
 
-  if (!card.feynman_text) fail(`Card ${cardId} has no Feynman restatement. Use card approve first with --statement to set it.`);
+  // Canonical field name in the card schema is `feynman_restatement`, not
+  // `feynman_text`. The old check was dead code (nothing writes the wrong
+  // field) and made this command fail on every card.
+  if (!card.feynman_restatement) {
+    fail(`Card ${cardId} has no Feynman restatement. Generate one with the feynman authoring command, or set it via card update --field feynman_restatement='<json>'.`);
+  }
 
   console.log(`Evaluating Feynman restatement for card: ${cardId}`);
   const result = await ai.feynman.evaluate(llm.config(), card, {});

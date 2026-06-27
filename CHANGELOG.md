@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.8.1 (2026-06-27)
+
+### Fixed
+- **BUG-11: `kdna-studio export --password-stdin` was a no-op when used alone.** The previous parser required `--password <value>` to be set before `--password-stdin` would take effect, so callers using the recommended `--password-stdin` path got `password = null` and the export ran unencrypted (the B2 scrypt envelope was bypassed). The parser now resolves the two flags independently: `--password-stdin` alone reads from stdin; `--password <pw>` is the (insecure) inline form; `--passphrase <pw>` is a legacy alias. If both are present, `--password-stdin` wins (explicit intent). Also: `--password-stdin` is now detected via `args.includes()` rather than `option()` so the boolean flag is not rejected with `Missing value for --password-stdin`.
+
 ## v0.8.0 (2026-06-27)
 - B2: `--password` now performs real scrypt-based encryption (no longer stub)
   - Removes fail-early stub; wires password to `exportRuntime.exportRuntimeAsset`

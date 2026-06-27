@@ -1606,11 +1606,20 @@ function cmdExport(args) {
   if (!projectInput || !out) fail('Usage: kdna-studio export <project> --out <file.kdna> [--format v1] [--sign] [--allow-incomplete]');
   if (option(args, '--format') === 'v1') {
     const { project } = readProject(projectInput);
-    const password = option(args, '--password') || option(args, '--passphrase');
-    if (password && option(args, '--password-stdin')) {
-      // Caller piped the password on stdin (avoids it appearing in shell history)
-      password = fs.readFileSync(0, 'utf8').trim();
-    }
+    // BUG-11 (2026-06-27): previous logic required --password to be set
+    // before --password-stdin would take effect. That meant callers using
+    // `--password-stdin` alone (the recommended path) got `password = null`
+    // and the export ran unencrypted. Resolve the two flags independently:
+    //   - --password-stdin  → read password from stdin (preferred)
+    //   - --password <pw>   → take password from the flag (insecure)
+    //   - --passphrase <pw> → legacy alias for --password
+    // If both are given, --password-stdin wins (it is the explicit intent).
+    // Use args.includes() for --password-stdin since it is a boolean flag
+    // (option() rejects it for "missing value").
+    const useStdin = args.includes('--password-stdin');
+    const password = useStdin
+      ? fs.readFileSync(0, 'utf8').trim()
+      : option(args, '--password') || option(args, '--passphrase');
     exportProjectV1(project, option(args, '--name') || project.name, path.resolve(out), {
       allowIncomplete: args.includes('--allow-incomplete'),
       password,

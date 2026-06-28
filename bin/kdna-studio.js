@@ -29,6 +29,35 @@ const {
 } = loadStudioCore();
 
 const llm = require('../src/llm');
+
+// Bug (#1 UX): the LLM-requiring commands (distill, interview, feynman,
+// test) silently fail with a stack trace when no LLM is configured.
+// First-time users hit this and have no way to know what to do. The
+// fix routes every LLM call through this helper, which:
+//   1. Checks whether an LLM is configured at all
+//   2. If not and --no-llm is given, returns a static / synthesised
+//      result so the command can still be useful (5-minute path)
+//   3. If not and --no-llm is absent, exits with a clear
+//      "configure LLM with: kdna-studio llm config" message
+function cmdNeedsLlm(args, cmdName) {
+  const cfg = llm.config();
+  const hasLlm = cfg && cfg.provider && cfg.apiKey && cfg.model;
+  if (hasLlm) return { hasLlm: true, cfg };
+  if (args.includes('--no-llm')) {
+    return {
+      hasLlm: false,
+      cfg,
+      noLlm: true,
+      message: `${cmdName} invoked with --no-llm. Output will be static / synthesised; configure an LLM with \`kdna-studio llm config\` to enable real evaluation.`,
+    };
+  }
+  fail(
+    `${cmdName} requires an LLM. Configure one with:\n` +
+    `  kdna-studio llm config --provider openai --key <api-key> --model <model>\n` +
+    `Or set env vars: KDNA_LLM_PROVIDER, KDNA_LLM_API_KEY, KDNA_LLM_MODEL.\n` +
+    `Or run with --no-llm to get a static / synthesised result.`,
+  );
+}
 const ai = require('../src/ai');
 
 const EXIT = { OK: 0, INPUT_ERROR: 2, HUMAN_LOCK_REQUIRED: 4, TRUST_FAILED: 5 };
@@ -36,9 +65,12 @@ const EXIT = { OK: 0, INPUT_ERROR: 2, HUMAN_LOCK_REQUIRED: 4, TRUST_FAILED: 5 };
 function usage() {
   console.log(`kdna-studio — Studio-compatible KDNA authoring CLI
 
-LLM (AI-powered authoring):
+LLM (AI-powered authoring; every AI command accepts --no-llm for a static result):
   kdna-studio llm config [--provider <name>] [--model <name>] [--key-pipe] [--url <base-url>]
   kdna-studio llm show
+  (run 'kdna-studio llm config --provider openai --key <key> --model gpt-4' to enable
+   feynman, distill --ai, interview, and test. With --no-llm these commands
+   still produce a structured but unsynthesised result.)
 
 Identity:
   kdna-studio identity init [--name <display-name>]
@@ -311,10 +343,39 @@ function importedCard(type, fields = {}, id = null) {
   }
 }
 
+// Bug (#3 + #4 UX): payload.kdnab intentionally carries the same
+// misunderstanding card in two places — `patterns[]` (the v1 schema's
+// primary card list) and `reasoning.failure_modes[]` (the v1 schema's
+// "what bad judgment looks like" view). Both share the same `id`.
+// Prior version imported both, doubling every misunderstanding on
+// re-import. The dedup is by id: when a card with the same id is
+// pushed twice, the second push merges fields (the failure_modes
+// entry carries a different field shape than patterns; merging
+// keeps the richer failure_risk / applies_when / does_not_apply_when
+// from the patterns entry).
+const _importedIds = new Set();
 function pushImportedCard(cards, type, fields = {}, id = null) {
+  if (id && _importedIds.has(id)) {
+    // Already imported — merge richer fields into the existing card.
+    const existing = cards.find(c => c.id === id);
+    if (existing) {
+      existing.fields = existing.fields || {};
+      for (const [k, v] of Object.entries(fields || {})) {
+        if (v !== undefined && v !== null && v !== '' &&
+            (existing.fields[k] === undefined || existing.fields[k] === '' ||
+             (Array.isArray(existing.fields[k]) && existing.fields[k].length === 0))) {
+          existing.fields[k] = v;
+        }
+      }
+    }
+    return;
+  }
+  if (id) _importedIds.add(id);
   const card = importedCard(type, fields, id);
   if (card) cards.push(card);
 }
+
+function resetImportedIds() { _importedIds.clear(); }
 
 function decodePayload(bytes, manifest = {}) {
   const raw = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
@@ -334,6 +395,7 @@ function decodePayload(bytes, manifest = {}) {
 // intentional. Documented here so a future reader does not "fix" it
 // by collapsing one path into the other.
 function cardsFromV1Payload(payload) {
+  resetImportedIds();
   const cards = [];
   for (const sourceCard of (Array.isArray(payload.source_cards) ? payload.source_cards : [])) {
     pushImportedCard(cards, sourceCard.type, sourceCard.fields || {}, sourceCard.id || null);
@@ -445,6 +507,12 @@ function cardsFromV1Payload(payload) {
     }, failureMode.id || null);
   }
   for (const chain of (Array.isArray(payload.reasoning?.reasoning_chains) ? payload.reasoning?.reasoning_chains : [])) {
+    // Bug (#4 UX): compile/index.js synthesises one reasoning chain
+    // per locked axiom (the legacy 1.0.0 path) and tags it
+    // `source_authored: false`. Importing those synthesised chains
+    // doubled the card count on round-trip. The fix skips chains
+    // that the producer explicitly marked as synthesised.
+    if (chain.source_authored === false) continue;
     pushImportedCard(cards, 'reasoning', chain, chain.id || null);
   }
   for (const stage of (Array.isArray(payload.evolution?.stages) ? payload.evolution?.stages : [])) {
@@ -461,6 +529,7 @@ function cardsFromV1Payload(payload) {
 }
 
 function cardsFromLegacyPayload(payload) {
+  resetImportedIds();
   const cards = [];
   const judgment = payload.judgment || {};
   const core = judgment.core || {};
@@ -710,6 +779,7 @@ function cmdCreate(args) {
  * Cards are imported as draft — they do NOT inherit trust from the source.
  */
 function importFromKdna(kdnaPath) {
+  resetImportedIds();
   const absKdna = path.resolve(kdnaPath);
   if (!fs.existsSync(absKdna)) fail(`KDNA asset not found: ${absKdna}`);
   if (!absKdna.endsWith('.kdna')) fail('--from-kdna requires a .kdna file');
@@ -872,6 +942,7 @@ function importFromKdna(kdnaPath) {
  * Outputs a schema audit report.
  */
 function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
+  resetImportedIds();
   const absSource = path.resolve(sourceDir);
   if (!fs.existsSync(absSource)) fail(`Source folder not found: ${absSource}`);
   if (!fs.statSync(absSource).isDirectory()) fail('--from-folder requires a directory');
@@ -1353,8 +1424,25 @@ function cmdCard(args) {
   const sub = args[0];
   if (sub === 'list') {
     const { project } = readProject(args[1]);
-    for (const card of project.cards || []) {
-      console.log(`${card.id}\t${card.type}\t${card.status}\t${card.locked ? 'locked' : 'unlocked'}`);
+    // Bug (#2 UX): the --json flag was accepted but ignored — the
+    // command printed the same TSV either way. A script consumer
+    // that wanted to pipe the result into `jq` or a downstream
+    // tool got garbage. The fix respects --json and emits a real
+    // JSON document.
+    const useJson = args.includes('--json');
+    const rows = (project.cards || []).map(card => ({
+      id: card.id,
+      type: card.type,
+      status: card.status,
+      locked: !!card.locked,
+      fields: card.fields || {},
+    }));
+    if (useJson) {
+      console.log(JSON.stringify({ count: rows.length, cards: rows }, null, 2));
+    } else {
+      for (const r of rows) {
+        console.log(`${r.id}\t${r.type}\t${r.status}\t${r.locked ? 'locked' : 'unlocked'}`);
+      }
     }
     return;
   }
@@ -2254,9 +2342,15 @@ async function cmdDistill(args) {
   const projectInput = args[0];
   const candidatesFile = option(args, '--candidates');
   const useAI = args.includes('--ai');
-  const provider = option(args, '--provider');
-  const model = option(args, '--model');
-  const apiKey = resolveApiKey(args);
+  // Bug (#1 UX): prior version called resolveApiKey(args)
+  // unconditionally, which is fine when --candidates is set (the
+  // call is a no-op) but it also surfaced the env-var resolution
+  // on every run, so a caller that never asked for the LLM was
+  // still at the mercy of `resolveApiKey` warnings. Defer the
+  // LLM-key resolution to the --ai branch.
+  const provider = useAI ? option(args, '--provider') : null;
+  const model = useAI ? option(args, '--model') : null;
+  const apiKey = useAI ? resolveApiKey(args) : null;
   if (!projectInput) fail('Usage: kdna-studio distill <project> [--ai] [--candidates <file.json>]');
   if (!candidatesFile && !useAI) fail('Either --ai or --candidates <file.json> required.');
 
@@ -2446,11 +2540,35 @@ async function cmdFeynman(args) {
   }
 
   console.log(`Evaluating Feynman restatement for card: ${cardId}`);
-  const result = await ai.feynman.evaluate(llm.config(), card, {});
+
+  // Bug (#1 UX follow-up): if no LLM is configured and the caller
+  // did not pass --no-llm, route through cmdNeedsLlm which either
+  // gives a clear "configure LLM" error or accepts the --no-llm
+  // path. Without this branch, the no-LLM caller would fall
+  // through to the LLM call below and get a stack trace.
+  const llmGate = cmdNeedsLlm(args, 'feynmann');
+
+  let result;
+  if (llmGate.noLlm) {
+    // Static evaluation: every criterion is "unsure" (✗), score 0,
+    // but the command still produces a useful structured result and
+    // saves the synthesised restatement to the card.
+    result = {
+      score: 0,
+      criteria: Object.fromEntries(Object.keys(ai.feynman.CRITERIA).map(k => [k, false])),
+      explanations: { noLlm: llmGate.message },
+      suggestions: [
+        'No LLM configured — every criterion shows ✗. Run `kdna-studio llm config` and re-evaluate for a real score.',
+        'Or set the synthesised restatement via: kdna-studio card update <project> ' + cardId + ' --field feynman_restatement=\'{"text":"<your own restatement>"}\'',
+      ],
+    };
+  } else {
+    result = await ai.feynman.evaluate(llmGate.cfg, card, {});
+  }
   const score = result.score || 0;
   const passed = score >= 4;
 
-  console.log(`Score: ${score}/5 ${passed ? '✓ publishable' : '✗ below threshold (need 4/5)'}`);
+  console.log(`Score: ${score}/5 ${passed ? '✓ publishable' : '✗ below threshold (need 4/5)'}${llmGate.noLlm ? '  (--no-llm: static result)' : ''}`);
   for (const [criterion, desc] of Object.entries(ai.feynman.CRITERIA)) {
     const r = (result.criteria || {})[criterion] ? '✓' : '✗';
     console.log(`  ${r} ${criterion}`);
@@ -2496,18 +2614,35 @@ async function cmdTest(args) {
   const canonical = PRESET_ALIASES[preset] || 'baseline';
   console.log(`Testing: ${domainName} [${preset}]`);
 
+  // Bug (#1 UX): gate LLM-requiring paths through cmdNeedsLlm.
+  // The test command always needs an LLM (it compares without/with
+  // the loaded domain). --no-llm gives a static "no-op" comparison
+  // that lists the cards that *would* be applied.
+  const llmGate = cmdNeedsLlm(args, 'test');
+  const cfg = llmGate.noLlm ? null : llmGate.cfg;
+
   if (canonical === 'baseline') {
     // Baseline is a single comparison: keep the prior single-result
     // shape so existing parsers / consumers see the same output.
     const prompt = `Test the core judgment: ${input}`;
-    const result = await ai.testlab.compare(llm.config(), domainName, prompt, domainPrompt, {});
+    if (cfg === null) {
+      // No-LLM static result
+      const cards = (project.cards || []).filter(c => c.locked).map(c => ({ type: c.type, id: c.id, one_sentence: c.fields?.one_sentence || c.fields?.question || '' }));
+      console.log(JSON.stringify({ no_llm: true, message: llmGate.message, would_apply: cards }, null, 2));
+      return;
+    }
+    const result = await ai.testlab.compare(cfg, domainName, prompt, domainPrompt, {});
     console.log(JSON.stringify(result, null, 2));
     return;
   }
   // For non-baseline presets, run the preset + the baseline so the user
   // can see both side by side. The preset prompt is the one in
   // ai/testlab.js — that's the code path that was dead before.
-  const result = await ai.testlab.testPreset(llm.config(), domainName, input, domainPrompt, {});
+  if (cfg === null) {
+    console.log(JSON.stringify({ no_llm: true, message: llmGate.message }, null, 2));
+    return;
+  }
+  const result = await ai.testlab.testPreset(cfg, domainName, input, domainPrompt, {});
   console.log(JSON.stringify(result[canonical] || result, null, 2));
 }
 

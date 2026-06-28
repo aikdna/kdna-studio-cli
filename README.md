@@ -72,6 +72,47 @@ kdna load dist/my_domain.kdna --profile=compact --as=prompt
 runtime control plane for inspecting, validating, packing, unpacking, and
 loading existing `.kdna` assets.
 
+## 5-minute first asset
+
+If you just installed and want to ship a v1 asset without an LLM:
+
+```bash
+# 1. Init identity (required for the export signature)
+kdna-studio identity init --name "Your Name"
+
+# 2. Create a project
+kdna-studio create my_domain --name @yourscope/my_domain
+
+# 3. Add at least one judgment card
+kdna-studio card add . axiom \
+  --field one_sentence='specific evidence outranks broad claims' \
+  --field full_statement='Always cite the specific source that supports a judgment; broad claims without evidence are the most common cause of bad agent advice.' \
+  --field why='because vague advice fails in production' \
+  --field applies_when='["reviewing"]' \
+  --field does_not_apply_when='["formatting"]' \
+  --field failure_risk='praise without diagnosis' \
+  --field confidence='high' \
+  --field evidence_type='observation'
+
+# 4. Approve and lock
+kdna-studio card approve . --all --by me --statement "i confirm"
+
+# 5. Export the v1 asset
+kdna-studio export . --format v1 --out my_domain.kdna
+
+# 6. Verify with the runtime CLI
+kdna load my_domain.kdna --profile=compact
+```
+
+The first three AI commands (feynman, distill --ai, test, interview) work
+without `KDNA_LLM_PROVIDER` / `KDNA_LLM_API_KEY` by passing `--no-llm`. They
+return a structured but unsynthesised result. To enable real evaluation:
+
+```bash
+kdna-studio llm config --provider openai --model gpt-4 --key <your-key>
+# or set KDNA_LLM_PROVIDER, KDNA_LLM_API_KEY, KDNA_LLM_MODEL
+```
+
 ## Runtime Export Contract
 
 `kdna-studio export --format v1` is the canonical runtime export path. It uses

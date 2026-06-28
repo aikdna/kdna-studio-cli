@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.8.8 (2026-06-28)
+
+UX pass — closes 5 first-time-user issues surfaced in audit.
+
+- **#1 LLM 脱依赖** every AI command (`feynmann`, `distill --ai`,
+  `interview`, `test`) now accepts `--no-llm` and produces a
+  structured but unsynthesised result. Without `--no-llm` and
+  without an LLM configured, the command exits with a clear
+  "configure LLM with: kdna-studio llm config" message instead
+  of a stack trace. The `--ai` path of `cmdDistill` no longer
+  resolves an LLM key on every call (only when `--ai` is given).
+- **#2 `--json` output** `card list --json` now emits a real JSON
+  document (`{count, cards: [...]}`) instead of the same TSV
+  text the no-flag version prints.
+- **#3 + #4 卡重复 / 入口不一致** `cardsFromV1Payload` and
+  `cardsFromLegacyPayload` now dedup by `id` and skip
+  `source_authored: false` entries (which the compile path tags
+  on synthesised reasoning chains and audit-log evolution
+  stages). End-to-end verified: a project with 1 axiom + 1
+  misunderstanding + 1 self_check now round-trips to a project
+  with the same 3 cards, not 4 or 5.
+- **#5 5-minute path** `README.md` now has a "5-minute first asset"
+  section that walks through identity init → create → card add →
+  approve → export → kdna load. Every command works without
+  an LLM. A follow-up paragraph documents the `--no-llm` flag
+  and the `kdna-studio llm config` command for the AI commands.
+
 ## v0.8.7 (2026-06-28)
 
 Phase 12 audit follow-up — closes the residual halves of #62

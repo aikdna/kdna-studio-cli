@@ -428,11 +428,20 @@ function cardsFromV1Payload(payload) {
     pushImportedCard(cards, 'self_check', fields, fields.id || null);
   }
   for (const failureMode of (Array.isArray(payload.reasoning?.failure_modes) ? payload.reasoning?.failure_modes : [])) {
+    // Bug (#145 follow-up): the prior version dropped three
+    // judgment fields (failure_risk, applies_when, does_not_apply_when)
+    // when reading failure_modes back out of a v1 asset. A Studio
+    // project that round-tripped through `migrate --format v1` lost
+    // these fields every time. The fix reads them through, matching
+    // the export-side map in kdna-studio-core's buildPayload.
     pushImportedCard(cards, 'misunderstanding', {
       wrong: failureMode.mode || failureMode.wrong || '',
       correct: failureMode.correct || '',
       key_distinction: failureMode.key_distinction || '',
       why: failureMode.why || '',
+      failure_risk: failureMode.failure_risk || '',
+      applies_when: Array.isArray(failureMode.applies_when) ? failureMode.applies_when : [],
+      does_not_apply_when: Array.isArray(failureMode.does_not_apply_when) ? failureMode.does_not_apply_when : [],
     }, failureMode.id || null);
   }
   for (const chain of (Array.isArray(payload.reasoning?.reasoning_chains) ? payload.reasoning?.reasoning_chains : [])) {
@@ -999,6 +1008,15 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
     for (const sc of (Array.isArray(patterns.self_check) ? patterns.self_check : [])) {
       const q = typeof sc === 'string' ? sc : sc.question || '';
       importedCards.push(cardApi.createCard('self_check', { question: q }));
+    }
+    // Bug (aesthetic round-trip): prior version dropped
+    // `patterns.aesthetics` on import. `cardsFromV1Payload` and
+    // `cardsFromLegacyPayload` both read the field, so a domain
+    // that authored aesthetic cards in either format would lose
+    // them when imported through `create --from-folder`. The fix
+    // adds the missing loop here.
+    for (const aesthetic of (Array.isArray(patterns.aesthetics) ? patterns.aesthetics : [])) {
+      importedCards.push(cardApi.createCard('aesthetic', aesthetic.fields || aesthetic));
     }
   }
 
@@ -2401,23 +2419,30 @@ async function cmdFeynman(args) {
   // `feynman_text`. The old check was dead code (nothing writes the wrong
   // field) and made this command fail on every card.
   //
-  // Bug (#62 + #68): the prior error message pointed at "the feynman
-  // authoring command", which does not exist in this CLI. The right
-  // path is either:
-  //   - kdna-studio feynman <project> <card-id>  (evaluate an existing
-  //     restatement; what the caller is already running)
-  //   - kdna-studio card update <project> <card-id> --field feynman_restatement='<json>'
-  //     (set the restatement manually)
-  // The fix makes the second path explicit and gives a working
-  // example. Bug #62 (the field is never populated) is fixed in
-  // feynman.js: a no-restatement card now auto-generates one
-  // before the LLM call, so the bare `kdna-studio feynman` command
-  // works end-to-end.
+  // Bug (#62 + #68 follow-up): the prior `if (!card.feynman_restatement)
+  // fail(...)` block rejected every card that had no human-written
+  // restatement, even when the AI evaluator in feynman.js was
+  // prepared to auto-synthesise one. A caller without a configured
+  // LLM (no `KDNA_API_KEY`, no `kdna-studio llm config`) would
+  // get a `fail` instead of a structured note. The fix removes the
+  // guard: a missing restatement is now handed off to the evaluator
+  // (which either asks the LLM to evaluate a synthesised one or,
+  // without an LLM, returns a structured `synthesised_restatement`
+  // for the caller to use as a starting point). The error message
+  // is kept as a secondary path: only if the evaluator itself fails
+  // does the command exit non-zero, and only then with a clear
+  // pointer to the manual `card update` path.
+  //
+  // We do still need a restatement-shaped object to feed the
+  // evaluator, so we synthesise one in-memory when the card has
+  // none. This does NOT persist the synthesised restatement to the
+  // project (so the user still has to opt in via `card update` to
+  // keep one across runs), but it lets the no-LLM path return a
+  // useful result instead of a hard fail.
   if (!card.feynman_restatement) {
-    fail(
-      `Card ${cardId} has no Feynman restatement. Set it manually:\n` +
-      `  kdna-studio card update <project> ${cardId} --field feynman_restatement='{"text":"<your plain-language restatement>"}'`,
-    );
+    const synthesised = ai.feynman.synthFeynmanRestatement(card.fields || {});
+    card.feynman_restatement = { text: synthesised, synthesised: true };
+    console.warn(`No feynman_restatement on ${cardId}; using synthesised:\n  "${synthesised}"`);
   }
 
   console.log(`Evaluating Feynman restatement for card: ${cardId}`);

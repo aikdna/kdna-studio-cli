@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.8.7 (2026-06-28)
+
+Phase 12 audit follow-up — closes the residual halves of #62
+and a follow-on aesthetic round-trip gap. Bumps
+`@aikdna/kdna-studio-core` to `^1.7.6` (which carries the
+matching #145 fix on the export side).
+
+- **#62** (residual) `cmdFeynman` no longer `fail()`s when the
+  card has no `feynmann_restatement`. The command now hands the
+  card off to the evaluator (which auto-synthesises a restatement
+  from the card's own text via `synthFeynmanRestatement` in
+  feynman.js) and surfaces the synthesised text in a warning.
+  A caller without a configured LLM gets a structured result
+  instead of a hard exit.
+- **#145** (residual) `cardsFromV1Payload` now reads
+  `failure_risk` / `applies_when` / `does_not_apply_when`
+  off the imported `failure_modes` entry, so a Studio project
+  that round-trips a misunderstanding card through
+  `migrate --format v1` and a later `create --from-kdna` keeps
+  all three fields.
+- **#55 (aesthetic round-trip)** `importFromFolder` now imports
+  `patterns.aesthetics`. Prior version dropped the field; the
+  parallel `cardsFromV1Payload` and `cardsFromLegacyPayload`
+  paths both read it, so a domain that authored aesthetic
+  cards in the `KDNA_Patterns.json` shape would lose them
+  on `create --from-folder`.
+
 ## v0.8.6 (2026-06-28)
 
 Phase 12 audit follow-up. Closes 7 issues filed against this

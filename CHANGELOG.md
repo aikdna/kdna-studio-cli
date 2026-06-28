@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.8.4 (2026-06-28)
+
+Phase 10 audit follow-up. Closes 7 issues filed against the
+kdna-studio-cli repo (#49-#55) plus the 17th (P2 #56) that tracks
+doc/help-text drift as a class of bugs.
+
+- **#49 \`feynman.js\` reads the canonical \`feynman_restatement\` field.**
+  Prior version read \`card.feynman_text\` (a field nothing in the
+  codebase ever wrote) and flattened \`card.one_sentence\` / \`card.full_statement\`
+  — both fields actually live under \`card.fields\`. The AI evaluator
+  always received an empty restatement and a blank axiom.
+- **#50 \`cmdTest\` now calls \`ai.testlab.testPreset\`** for the
+  non-baseline presets. The exported \`testPreset\` function was dead
+  code, and the help text advertised names (\`baseline\` / \`edge\` /
+  \`contradiction\`) that did not match the actual preset keys in
+  testlab.js (\`baseline\` / \`edge_case\` / \`contradiction\`). \`--preset edge\`
+  silently ran the contradiction branch before this fix.
+- **#51 \`importFile\` now closes the file descriptor on every exit
+  path.** Prior version closed the fd only on success; a single
+  readSync failure under a 300-file bulk import leaked an fd and could
+  exhaust the per-process limit.
+- **#53 \`for...of\` over \`self_check\` arrays now guards with
+  \`Array.isArray\`.** A truthy non-array field (e.g. a single
+  \`{question: ...}\` object) would crash with "object is not iterable".
+- **#54 \`--allow-incomplete\` now actually bypasses the critical
+  axiom-field check.** Prior version read the flag *after* the
+  check, so the check always rejected the run before bypass could
+  take effect. The flag is now read up front; when present the
+  critical-missing check is downgraded to a warning.
+- **#55 v1 export encryption password now resolves from
+  \`KDNA_PASSPHRASE\` / \`KDNA_PASSWORD\` env vars**, matching the
+  signing path. Prior version only consulted the inline flag, so a
+  caller who set \`KDNA_PASSPHRASE\` for signing found the v1
+  encryption silently null.
+
 ## v0.8.3 (2026-06-28)
 
 This release closes 16 issues filed against the v0.8.x line (issues #36

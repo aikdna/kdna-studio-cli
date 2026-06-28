@@ -357,10 +357,13 @@ function cardsFromV1Payload(payload) {
   }
   // Accept both `self_check` (canonical) and `self_checks` (legacy schema
   // name) so we round-trip assets written by either version of the
-  // payload-profile schema.
-  const selfCheckArr = payload.reasoning?.self_check
-    || payload.reasoning?.self_checks
-    || [];
+  // payload-profile schema. Bug (#53): prior version used
+  // `arr || []`, which would crash with "object is not iterable" if
+  // the field was a truthy non-array (e.g. a single `{question: ...}`
+  // object instead of an array). The fix guards with Array.isArray.
+  const rawSelfCheck = payload.reasoning?.self_check
+    || payload.reasoning?.self_checks;
+  const selfCheckArr = Array.isArray(rawSelfCheck) ? rawSelfCheck : [];
   for (const selfCheck of selfCheckArr) {
     const fields = typeof selfCheck === 'string' ? { question: selfCheck } : selfCheck;
     pushImportedCard(cards, 'self_check', fields, fields.id || null);
@@ -440,7 +443,7 @@ function cardsFromLegacyPayload(payload) {
       failure_risk: ms.failure_risk || '',
     }, ms.id || null);
   }
-  for (const sc of (patterns.self_check || [])) {
+  for (const sc of (Array.isArray(patterns.self_check) ? patterns.self_check : [])) {
     const question = typeof sc === 'string' ? sc : sc.question || '';
     pushImportedCard(cards, 'self_check', { question }, sc.id || null);
   }
@@ -680,7 +683,7 @@ function importFromKdna(kdnaPath) {
           key_distinction: ms.key_distinction || '', why: ms.why || '',
         }));
       }
-      for (const sc of (pat.self_check || [])) {
+      for (const sc of (Array.isArray(pat.self_check) ? pat.self_check : [])) {
         const q = typeof sc === 'string' ? sc : sc.question || '';
         importedCards.push(cardApi.createCard('self_check', { question: q }));
       }
@@ -833,7 +836,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
         key_distinction: ms.key_distinction || '', why: ms.why || '',
       }));
     }
-    for (const sc of (patterns.self_check || [])) {
+    for (const sc of (Array.isArray(patterns.self_check) ? patterns.self_check : [])) {
       const q = typeof sc === 'string' ? sc : sc.question || '';
       importedCards.push(cardApi.createCard('self_check', { question: q }));
     }
@@ -1059,13 +1062,23 @@ function cmdImport(args) {
       return;
     }
     let content;
+    let fd = null;
     try {
-      const fd = fs.openSync(filePath, 'r');
+      fd = fs.openSync(filePath, 'r');
       const buf = Buffer.alloc(120000);
       const bytesRead = fs.readSync(fd, buf, 0, 120000, 0);
-      fs.closeSync(fd);
       content = buf.toString('utf8', 0, bytesRead);
     } catch { console.warn(`Cannot read: ${name}`); skipped++; return; }
+    finally {
+      // Bug (#51): prior version called fs.closeSync only on the
+      // success path, so any readSync failure left the file descriptor
+      // open. Under bulk import (300 files), a single error mid-loop
+      // could exhaust the per-process fd limit and silently break
+      // later imports.
+      if (fd !== null) {
+        try { fs.closeSync(fd); } catch { /* best effort */ }
+      }
+    }
 
     const evidence = evidenceApi.createEvidenceEntry('text', name, content, filePath);
     evidenceApi.addEvidence(project, evidence);
@@ -1409,6 +1422,13 @@ function cmdMigrate(args) {
     projectPath = path.join(tmpDir, 'studio.project.json');
   }
 
+  // Bug (#54): --allow-incomplete used to be read AFTER the critical
+  // fields check, so a caller asking to bypass the gate was rejected
+  // for the wrong reason. Resolve the flag here so the critical-missing
+  // check honours it (and reports the bypass correctly) instead of
+  // always failing.
+  const allowIncompleteEarly = args.includes('--allow-incomplete');
+
   // Reject if critical judgment fields are missing from axioms
   const criticalMissing = [];
   for (const card of (project.cards || [])) {
@@ -1421,13 +1441,21 @@ function cmdMigrate(args) {
     }
   }
   if (criticalMissing.length > 0) {
-    fail(
-      `Cannot migrate: ${criticalMissing.length} critical fields missing from axioms.\n` +
-      `  These fields are required for domain routing (kdna-loader uses them to\n` +
-      `  decide when to load this domain). Add them to your source files first.\n` +
-      `  Missing:\n    ` + criticalMissing.slice(0, 10).join('\n    ') +
-      (criticalMissing.length > 10 ? `\n    ... and ${criticalMissing.length - 10} more` : '')
-    );
+    if (allowIncompleteEarly) {
+      console.warn(
+        `--allow-incomplete: bypassing ${criticalMissing.length} critical axiom-field check(s). ` +
+        `The exported .kdna will load but kdna-loader may not match this domain on those signals.`,
+      );
+    } else {
+      fail(
+        `Cannot migrate: ${criticalMissing.length} critical fields missing from axioms.\n` +
+        `  These fields are required for domain routing (kdna-loader uses them to\n` +
+        `  decide when to load this domain). Add them to your source files first,\n` +
+        `  or pass --allow-incomplete to bypass.\n` +
+        `  Missing:\n    ` + criticalMissing.slice(0, 10).join('\n    ') +
+        (criticalMissing.length > 10 ? `\n    ... and ${criticalMissing.length - 10} more` : '')
+      );
+    }
   }
 
   // Step 2: approve and Human Lock all cards
@@ -1782,7 +1810,15 @@ function cmdExport(args) {
         fail(`Could not read password from stdin: ${e.message}`);
       }
     } else {
-      password = option(args, '--password') || option(args, '--passphrase');
+      // Bug (#55): prior version only consulted --password / --passphrase
+      // here, so a caller who set KDNA_PASSPHRASE for the signing path
+      // (works via resolvePassphrase) found that the v1 encryption
+      // password was silently null. Resolve from the same sources as
+      // the signing path so the two stay in sync.
+      password = process.env.KDNA_PASSPHRASE
+        || process.env.KDNA_PASSWORD
+        || option(args, '--password')
+        || option(args, '--passphrase');
     }
     exportProjectV1(project, option(args, '--name') || project.name, path.resolve(out), {
       allowIncomplete: args.includes('--allow-incomplete'),
@@ -2231,12 +2267,41 @@ async function cmdTest(args) {
   const domainName = project.name || 'Untitled Project';
   const domainPrompt = `Domain: ${domainName}\n${project.description || ''}`;
 
+  // Bug (#50): prior version hand-rolled the prompt for the 3 preset
+  // names and bypassed ai.testlab.testPreset entirely. The exported
+  // testPreset function was dead code, and the help text advertised
+  // names (baseline / edge / contradiction) that did not match the
+  // actual preset keys in testlab.js (baseline / edge_case /
+  // contradiction). Result: --preset edge silently ran the
+  // contradiction branch, and any caller that asked for "edge_case"
+  // fell through to the contradiction branch too.
+  //
+  // The fix routes the call through testPreset when a known preset is
+  // given, and accepts both help-text names (baseline / edge /
+  // contradiction) and the canonical testlab names (baseline / edge_case
+  // / contradiction).
+  const PRESET_ALIASES = {
+    baseline: 'baseline',
+    edge: 'edge_case',
+    edge_case: 'edge_case',
+    contradiction: 'contradiction',
+  };
+  const canonical = PRESET_ALIASES[preset] || 'baseline';
   console.log(`Testing: ${domainName} [${preset}]`);
-  const prompt = preset === 'baseline' ? `Test the core judgment: ${input}`
-    : preset === 'edge' ? `Test a boundary case: ${input}`
-    : `Test for contradiction: ${input}`;
-  const result = await ai.testlab.compare(llm.config(), domainName, prompt, domainPrompt, {});
-  console.log(JSON.stringify(result, null, 2));
+
+  if (canonical === 'baseline') {
+    // Baseline is a single comparison: keep the prior single-result
+    // shape so existing parsers / consumers see the same output.
+    const prompt = `Test the core judgment: ${input}`;
+    const result = await ai.testlab.compare(llm.config(), domainName, prompt, domainPrompt, {});
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  // For non-baseline presets, run the preset + the baseline so the user
+  // can see both side by side. The preset prompt is the one in
+  // ai/testlab.js — that's the code path that was dead before.
+  const result = await ai.testlab.testPreset(llm.config(), domainName, input, domainPrompt, {});
+  console.log(JSON.stringify(result[canonical] || result, null, 2));
 }
 
 const args = process.argv.slice(2);

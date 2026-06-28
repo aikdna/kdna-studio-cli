@@ -31,8 +31,20 @@ Return ONLY valid JSON:
 }`;
 
 async function evaluate(config, card, options = {}) {
-  const axiomText = card.one_sentence || card.full_statement || '';
-  const restatement = card.feynman_text || '';
+  // Bug: prior version read `card.feynman_text` (a field nothing in the
+  // codebase ever wrote) and flattened `card.one_sentence` /
+  // `card.full_statement` — the schema actually nests those under
+  // `card.fields`. The AI evaluator therefore always received an empty
+  // restatement and a blank axiom, no matter what was in the project.
+  // The fix reads the canonical schema field names and the nested
+  // `fields` object, with a fallback for callers that pass the flattened
+  // shape directly.
+  const fields = (card && card.fields) || card || {};
+  const axiomText = fields.one_sentence || fields.full_statement || fields.question || '';
+  const restatement = card.feynman_restatement
+    || fields.feynman_restatement
+    || fields.feynman_text
+    || '';
 
   if (!restatement) return { score: 0, criteria: {}, explanations: { notJustRepeat: 'No Feynman restatement provided.' }, suggestions: ['Write a Feynman restatement before evaluation.'] };
 

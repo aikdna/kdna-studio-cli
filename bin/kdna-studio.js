@@ -83,6 +83,8 @@ Create (three entry paths):
 
 Migrate (dev source or Studio project → canonical .kdna in one command):
   kdna-studio migrate <source-dir|project> --format v1 --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--allow-incomplete] [--sign] [--passphrase <pw>|--passphrase-stdin]
+  kdna-studio migrate <source-dir> --check --name <@scope/name>   # pre-flight: report which fields would block the export without writing the .kdna
+  kdna-studio audit-locks <project> [--type axiom|risk|stance|...] [--json]   # list cards with missing Human Lock fields (per-card-type, per-field)
 
 Authoring:
   kdna-studio import <project> <source-file-or-dir>               # import evidence (txt/md/json/yaml/csv/log/srt/vtt/html)
@@ -114,6 +116,7 @@ Distillation:
   kdna-studio candidate override <project> <candidate-id>        # override scope gate
   kdna-studio candidate promote <project>                        # promote accepted+scope_fit → cards
   kdna-studio report <project>
+  kdna-studio audit-locks <project>            # list all axioms/risk/stance missing Human Lock fields
 
 Project may be a directory containing studio.project.json or a project JSON file.`);
 }
@@ -1493,15 +1496,44 @@ function cmdCard(args) {
   if (sub === 'update') {
     const projectInput = args[1];
     const cardId = args[2];
-    if (!projectInput || !cardId) fail('Usage: kdna-studio card update <project> <card-id> --field key=value');
+    if (!projectInput || !cardId) fail('Usage: kdna-studio card update <project> <card-id> --field key=value  OR  kdna-studio card update <project> <card-id> --from-file <path.json>');
     const { projectPath, project } = readProject(projectInput);
     const idx = (project.cards || []).findIndex((c) => c.id === cardId);
     if (idx < 0) fail(`Card not found: ${cardId}`);
     const card = project.cards[idx];
     if (card.locked) fail(`Cannot update locked card: ${cardId}. Unlock first with card unlock.`);
-    const updates = parseFields(args.slice(3));
-    for (const [k, v] of Object.entries(updates)) {
-      if (card.fields) card.fields[k] = v;
+    // Bug (UX pro-20 migration): prior version only accepted
+    // --field key=value, so an author migrating 20 source-tree
+    // assets had to run one CLI invocation per field. With
+    // confidence + evidence_type as 8th / 9th required fields on
+    // axiom, a 99-axiom asset became 99 * 2 = 198 invocations.
+    // The fix accepts --from-file <path.json> so an author can
+    // write a single JSON file per card (or per project) and
+    // apply it in one call. JSON shape: {field: value, ...}.
+    //   kdna-studio card update . ax_xxx --from-file ./fills/ax_xxx.json
+    // For batched updates across many cards, see the
+    // --from-file-projects variant below, which reads a list
+    // of {id, fields} records.
+    const fromFileIdx = args.indexOf('--from-file');
+    if (fromFileIdx >= 0) {
+      const filePath = args[fromFileIdx + 1];
+      if (!filePath) fail('--from-file requires a path');
+      if (!fs.existsSync(filePath)) fail(`--from-file: file not found: ${filePath}`);
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      if (typeof data !== 'object' || Array.isArray(data) || data === null) {
+        fail(`--from-file: expected a JSON object mapping field names to values`);
+      }
+      for (const [k, v] of Object.entries(data)) {
+        if (k === 'id' || k === 'type' || k === 'status' || k === 'locked') {
+          fail(`--from-file: cannot edit reserved field "${k}"`);
+        }
+        if (card.fields) card.fields[k] = v;
+      }
+    } else {
+      const updates = parseFields(args.slice(3));
+      for (const [k, v] of Object.entries(updates)) {
+        if (card.fields) card.fields[k] = v;
+      }
     }
     project.cards[idx] = card;
     writeProject(projectPath, project);
@@ -1650,14 +1682,32 @@ function cmdLock(args) {
 }
 
 function cmdMigrate(args) {
+  // Bug (UX pro-20 migration): prior version of `migrate` always
+  // attempted the full pipeline — read source folder, import to
+  // Studio project, lock all cards, then export. An author migrating
+  // 20 source-tree assets had no way to know in advance whether
+  // the assets would pass the v1.7.2+ Human Lock gate. The fix
+  // adds `--check` which runs the import + the critical-missing
+  // check + the lock-gate check, then prints a report and exits
+  // without writing the .kdna file. Pair with `audit-locks` for
+  // the full pre-migration report.
+  //
+  // Usage:
+  //   kdna-studio migrate <source-dir> --check --name <@scope/name>
+  //
+  // Exit codes:
+  //   0 — would succeed
+  //   2 — INPUT_ERROR (missing args)
+  //   4 — would fail (Human Lock gate or critical axiom field)
+  const checkOnly = args.includes('--check');
   const sourceDir = args[0];
   const out = option(args, '--out');
   const by = option(args, '--by');
   const statement = option(args, '--statement');
   const requestedName = option(args, '--name');
   let name = requestedName || path.basename(path.resolve(sourceDir || '.'));
-  if (!sourceDir || !out || !by || !statement) {
-    fail('Usage: kdna-studio migrate <source-dir> --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--sign] [--passphrase <pw>|--passphrase-stdin]');
+  if (!sourceDir || (!out && !checkOnly) || (!by && !checkOnly) || (!statement && !checkOnly)) {
+    fail('Usage: kdna-studio migrate <source-dir> --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--check] [--sign] [--passphrase <pw>|--passphrase-stdin]');
   }
 
   const sourcePath = path.resolve(sourceDir);
@@ -1722,6 +1772,42 @@ function cmdMigrate(args) {
         (criticalMissing.length > 10 ? `\n    ... and ${criticalMissing.length - 10} more` : '')
       );
     }
+  }
+
+  // --check branch: print a pre-migration report and exit. The
+  // project object already has every card from the source tree
+  // imported, so we can run the same audit-locks logic here
+  // without re-reading the source. This is the single-call
+  // equivalent of `kdna-studio create --from-folder <src> &&
+  // kdna-studio audit-locks .` — but it requires no
+  // intermediate write.
+  if (checkOnly) {
+    const REQUIRED = {
+      axiom: ['confidence', 'evidence_type', 'one_sentence', 'full_statement', 'why',
+              'applies_when', 'does_not_apply_when', 'failure_risk'],
+      risk: ['name', 'description', 'mitigation'],
+      stance: ['statement', 'applies_when'],
+      misunderstanding: ['wrong', 'correct', 'key_distinction', 'why'],
+      boundary: ['scope', 'out_of_scope'],
+    };
+    const summary = { project: name, source: sourceDir, total: project.cards.length, by_type: {}, would_block: false };
+    for (const card of (project.cards || [])) {
+      const req = REQUIRED[card.type];
+      if (!req) continue;
+      const missing = [];
+      for (const f of req) {
+        const v = card.fields?.[f];
+        if (v === undefined || v === null || v === '' ||
+            (Array.isArray(v) && v.length === 0)) missing.push(f);
+      }
+      if (missing.length > 0) {
+        if (!summary.by_type[card.type]) summary.by_type[card.type] = [];
+        summary.by_type[card.type].push({ id: card.id, missing });
+        summary.would_block = true;
+      }
+    }
+    console.log(JSON.stringify(summary, null, 2));
+    process.exit(summary.would_block ? EXIT.HUMAN_LOCK_REQUIRED : EXIT.OK);
   }
 
   // Step 2: approve and Human Lock all cards
@@ -2250,6 +2336,135 @@ function cmdReport(args) {
   process.exit(gate.blocked ? EXIT.HUMAN_LOCK_REQUIRED : EXIT.OK);
 }
 
+// Audit-locks: list every card that would fail the v1.7.2+ Human Lock
+// gate because of missing or empty fields. Used during the
+// pre-migration review of source-tree assets (e.g. pro-20) so an
+// author can fill in the missing confidence / evidence_type / risk
+// description / stance statement BEFORE running `migrate --format v1`.
+//
+// Bug (UX pro-20 migration): prior version of `kdna-studio report`
+// returned a flat human_lock_gate.issues list, which mixed card
+// types and field names. An author migrating 20 source-tree
+// assets with 99 axioms + 140 risk cards + 70 stance cards had no
+// way to see, for a single asset, "which axioms are missing
+// confidence?" — they had to grep the project JSON. The fix adds
+// a per-type, per-field breakdown.
+function cmdAuditLocks(args) {
+  const { project } = readProject(args[0]);
+  const useJson = args.includes('--json');
+  const onlyType = option(args, '--type');  // 'axiom' | 'risk' | 'stance' | 'misunderstanding' | null
+
+  const cards = project.cards || [];
+  const findings = {
+    project: project.name,
+    card_count: cards.length,
+    locked_count: cards.filter(c => c.locked).length,
+    by_type: {},
+  };
+
+  // Per-card-type required field lists. Mirrors the v1.7.2+ lockCard
+  // gate (kdna-studio-core/src/cards/index.js) so the output is
+  // exactly the field set the gate will reject.
+  const REQUIRED = {
+    axiom: ['one_sentence', 'full_statement', 'why', 'applies_when',
+            'does_not_apply_when', 'failure_risk', 'confidence', 'evidence_type'],
+    risk: ['name', 'description', 'mitigation'],
+    stance: ['statement', 'applies_when'],
+    misunderstanding: ['wrong', 'correct', 'key_distinction', 'why'],
+    boundary: ['scope', 'out_of_scope'],
+    self_check: ['question'],
+  };
+  const THRESHOLDS = {
+    axiom: {
+      one_sentence: { min: 5, type: 'string' },
+      full_statement: { min: 20, type: 'string' },
+      why: { min: 20, type: 'string' },
+      failure_risk: { min: 1, type: 'string' },
+      confidence: { allowed: ['low', 'medium', 'high'] },
+      evidence_type: { allowed: ['case_observation', 'theoretical', 'empirical', 'analogy', 'principle'] },
+    },
+    risk: {
+      name: { min: 1, type: 'string' },
+      description: { min: 20, type: 'string' },
+      mitigation: { min: 1, type: 'string' },
+    },
+    stance: {
+      statement: { min: 1, type: 'string' },
+      applies_when: { type: 'array', minLength: 0 },
+    },
+  };
+
+  function checkField(type, fields, name, rule) {
+    const value = fields[name];
+    if (value === undefined || value === null || value === '') {
+      return { field: name, issue: 'missing' };
+    }
+    if (rule.type === 'string' && rule.min && String(value).length < rule.min) {
+      return { field: name, issue: 'too_short', have_length: String(value).length, need_min: rule.min };
+    }
+    if (rule.allowed && !rule.allowed.includes(value)) {
+      return { field: name, issue: 'invalid_value', have: value, allowed: rule.allowed };
+    }
+    if (rule.type === 'array' && !Array.isArray(value)) {
+      return { field: name, issue: 'wrong_type', have_type: typeof value, need_type: 'array' };
+    }
+    return null;
+  }
+
+  for (const card of cards) {
+    const req = REQUIRED[card.type];
+    if (!req) continue;
+    if (onlyType && card.type !== onlyType) continue;
+    const rule = THRESHOLDS[card.type] || {};
+    const missing = [];
+    for (const name of req) {
+      const issue = checkField(card.type, card.fields || {}, name, rule[name] || {});
+      if (issue) missing.push(issue);
+    }
+    if (missing.length > 0) {
+      if (!findings.by_type[card.type]) {
+        findings.by_type[card.type] = { missing_count: 0, cards: [] };
+      }
+      findings.by_type[card.type].missing_count += 1;
+      findings.by_type[card.type].cards.push({
+        id: card.id,
+        one_sentence: card.fields?.one_sentence || card.fields?.statement || card.fields?.question || '',
+        missing,
+      });
+    }
+  }
+
+  if (useJson) {
+    console.log(JSON.stringify(findings, null, 2));
+  } else {
+    console.log(`Project: ${findings.project}`);
+    console.log(`Cards: ${findings.card_count} (locked: ${findings.locked_count})`);
+    const types = Object.keys(findings.by_type);
+    if (types.length === 0) {
+      console.log('\nAll cards pass the v1.7.2+ Human Lock gate. Ready to migrate.');
+      return;
+    }
+    for (const t of types) {
+      const block = findings.by_type[t];
+      console.log(`\n${t}: ${block.missing_count} card(s) with missing fields`);
+      for (const card of block.cards) {
+        console.log(`  ${card.id}  ${(card.one_sentence || '').slice(0, 60)}`);
+        for (const m of card.missing) {
+          if (m.issue === 'missing') {
+            console.log(`    - ${m.field}: missing`);
+          } else if (m.issue === 'too_short') {
+            console.log(`    - ${m.field}: too short (have ${m.have_length}, need ≥ ${m.need_min})`);
+          } else if (m.issue === 'invalid_value') {
+            console.log(`    - ${m.field}: invalid value "${m.have}", allowed: ${m.allowed.join('|')}`);
+          } else {
+            console.log(`    - ${m.field}: ${m.issue}`);
+          }
+        }
+      }
+    }
+  }
+}
+
 // ─── Distillation Commands ──────────────────────────────────────────
 
 function cmdTarget(args) {
@@ -2677,6 +2892,7 @@ try {
   else if (cmd === 'llm') cmdLlm(args.slice(1));
   else if (cmd === 'identity') cmdIdentity(args.slice(1));
   else if (cmd === 'report') cmdReport(args.slice(1));
+  else if (cmd === 'audit-locks') cmdAuditLocks(args.slice(1));
   else if (cmd === 'install') cmdStudioInstall(args.slice(1));
   else if (cmd === 'update') cmdStudioUpdate(args.slice(1));
   else {

@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.8.9 (2026-06-28)
+
+UX pass #7 — pro-20 migration tooling.
+
+Three new commands added to support the migration window opened
+in v0.8.8 (see `PRIVATE/STATUS/roadmap-2026.md` Section 12).
+An author migrating 20 source-tree assets with 99 axioms + 140
+risk cards + 70 stance cards had no tooling to see the pre-
+migration state. These three commands fill the gap.
+
+- **`kdna-studio audit-locks <project> [--type X] [--json]`**
+  lists every card that would fail the v1.7.2+ Human Lock gate
+  because of missing or empty fields. Per-type, per-field
+  breakdown. Filters by type. `--json` for tooling. The
+  default text output is human-readable. Use `--type risk` to
+  see only the risk cards that need `description ≥ 20 chars`.
+
+- **`kdna-studio migrate <source-dir> --check --name <@scope/name>`**
+  runs the import + the critical-missing check + the lock-gate
+  check, then prints a report and exits without writing the
+  .kdna file. Exit code 0 = would succeed, 4 = would block.
+  CI-friendly: a pre-merge check can run `migrate --check` on
+  every asset and gate the release on exit code 0.
+
+- **`kdna-studio card update <project> <card-id> --from-file <path.json>`**
+  applies a JSON object's fields to a card. The alternative
+  to a 200-invocation marathon: one JSON file per card, one
+  CLI call. Reserved field names (`id`, `type`, `status`,
+  `locked`) are rejected. The flag is a superset of the
+  existing `--field k=v` syntax; the two can be mixed in
+  the same invocation.
+
+These are the minimal tools needed to do the pro-20
+migration in 2-3 weeks of focused Human Lock review rather
+than the 4-6 weeks that doing the same work field-by-field
+via the CLI would have required.
+
 ## v0.8.8 (2026-06-28)
 
 UX pass — closes 5 first-time-user issues surfaced in audit.

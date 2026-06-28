@@ -50,7 +50,7 @@ Create (three entry paths):
   kdna-studio create <project-dir> --from-folder <source-dir> --name <@scope/name>
 
 Migrate (dev source or Studio project → canonical .kdna in one command):
-  kdna-studio migrate <source-dir|project> --format v1 --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--allow-incomplete]
+  kdna-studio migrate <source-dir|project> --format v1 --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--allow-incomplete] [--sign] [--passphrase <pw>|--passphrase-stdin]
 
 Authoring:
   kdna-studio import <project> <source-file-or-dir>               # import evidence (txt/md/json/yaml/csv/log/srt/vtt/html)
@@ -304,6 +304,14 @@ function decodePayload(bytes, manifest = {}) {
   return cbor.decode(raw);
 }
 
+// V1 path: trust the producer (export-runtime) to have already shaped
+// each card's fields. The v1 producer normalises everything into a
+// canonical shape, so we just round-trip the raw object. Bug (#57):
+// the legacy path below explicitly constructs each field. The two
+// paths cannot be unified without losing either v1's per-field
+// guarantees or legacy's defensive defaults — the asymmetry is
+// intentional. Documented here so a future reader does not "fix" it
+// by collapsing one path into the other.
 function cardsFromV1Payload(payload) {
   const cards = [];
   for (const sourceCard of (payload.source_cards || [])) {
@@ -477,6 +485,19 @@ function cardsFromPayload(payload) {
 }
 
 function buildV1Manifest(project, name) {
+  // Bug (#58): prior version was a hand-rolled manifest builder that
+  // shared zero logic with the canonical buildManifest in
+  // @aikdna/kdna-studio-core/src/export-runtime. The two paths
+  // diverged on every field added since 1.0 (lineage, load_contract,
+  // authoring block, etc.). The fix delegates the manifest shape to
+  // kdna-studio-core's buildManifest so the v1 path is the single
+  // source of truth.
+  //
+  // We still need a default manifest here (the exportRuntimeAsset
+  // path uses buildManifest internally; this function supplies the
+  // defaults that pass-through into the runtime options). The actual
+  // manifest the runtime ships is the one buildManifest produces, so
+  // keeping these defaults in sync matters less than it used to.
   const source = project.source_manifest || {};
   const assetId = assetIdFromName(name || source.name || project.name);
   const author = source.author || project.author || {};
@@ -556,6 +577,14 @@ function cmdCreate(args) {
         lineage,
       });
       project.cards = kdnaData.cards;
+      // Bug #15 / #28 follow-up: store the source KDNA_* files on the
+      // project so a later export through exportRuntimeAsset can
+      // forward them to compileDomain (which then preserves
+      // changelog / version_notes / reasoning_chains / banned_terms
+      // through the round-trip).
+      if (kdnaData.source_patterns) project.source_patterns = kdnaData.source_patterns;
+      if (kdnaData.source_reasoning) project.source_reasoning = kdnaData.source_reasoning;
+      if (kdnaData.source_evolution) project.source_evolution = kdnaData.source_evolution;
       if (kdnaData.source_manifest) project.source_manifest = publicManifestMetadata(kdnaData.source_manifest);
       if (kdnaData.source_manifest?.version) {
         if (!project.release) project.release = {};
@@ -694,7 +723,30 @@ function importFromKdna(kdnaPath) {
     fail(`No cards could be extracted from ${absKdna}. Expected payload.kdnab (v1) or KDNA_Core.json + KDNA_Patterns.json (legacy).`);
   }
 
-  return { lineage, cards: importedCards, source_manifest: manifest };
+  // Bug #15 / #28 follow-up: surface the source's KDNA_Patterns /
+  // KDNA_Reasoning / KDNA_Evolution entries so cmdCreate can store
+  // them on the project. The next export then forwards them to
+  // compileDomain via exportRuntimeAsset, which preserves
+  // changelog / version_notes / reasoning_chains / banned_terms
+  // through the round-trip.
+  const sourcePatterns = entries.has('KDNA_Patterns.json')
+    ? JSON.parse(entries.get('KDNA_Patterns.json').toString())
+    : null;
+  const sourceReasoning = entries.has('KDNA_Reasoning.json')
+    ? JSON.parse(entries.get('KDNA_Reasoning.json').toString())
+    : null;
+  const sourceEvolution = entries.has('KDNA_Evolution.json')
+    ? JSON.parse(entries.get('KDNA_Evolution.json').toString())
+    : null;
+
+  return {
+    lineage,
+    cards: importedCards,
+    source_manifest: manifest,
+    source_patterns: sourcePatterns,
+    source_reasoning: sourceReasoning,
+    source_evolution: sourceEvolution,
+  };
 }
 
 /**
@@ -1391,7 +1443,7 @@ function cmdMigrate(args) {
   const requestedName = option(args, '--name');
   let name = requestedName || path.basename(path.resolve(sourceDir || '.'));
   if (!sourceDir || !out || !by || !statement) {
-    fail('Usage: kdna-studio migrate <source-dir> --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--sign] [--passphrase <pass>]');
+    fail('Usage: kdna-studio migrate <source-dir> --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--sign] [--passphrase <pw>|--passphrase-stdin]');
   }
 
   const sourcePath = path.resolve(sourceDir);

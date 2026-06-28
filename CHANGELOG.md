@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.8.5 (2026-06-28)
+
+Phase 11 audit follow-up. Closes 5 issues filed against the
+kdna-studio-cli repo (#57, #58, #59, #60, #61).
+
+- **#57** Documented why `cardsFromV1Payload` (raw object pass-through)
+  and `cardsFromLegacyPayload` (explicit field construction) are
+  intentionally asymmetric. The v1 producer normalises every card's
+  fields into a canonical shape, so the v1 importer does not have
+  to re-construct; the legacy importer has to handle the loose
+  field shapes that the legacy source format allowed.
+- **#58** `buildV1Manifest` now delegates its core field shape
+  to kdna-studio-core's `buildManifest`. The two manifest
+  construction paths now share a single source of truth for the
+  fields they produce.
+- **#59** The `migrate` usage line and the `cmdMigrate` error
+  message now advertise `--sign` and `--passphrase-stdin` (the
+  code already accepted them; the help text did not).
+- **#60** `importFromKdna` now extracts the source's
+  `KDNA_Patterns.json` / `KDNA_Reasoning.json` /
+  `KDNA_Evolution.json` entries and stores them as
+  `project.source_patterns` / `project.source_reasoning` /
+  `project.source_evolution`. The next export forwards them to
+  `compileDomain` so `evolution.changelog` / `version_notes` /
+  reasoning_chains round-trip through the v1 export path.
+
 ## v0.8.4 (2026-06-28)
 
 Phase 10 audit follow-up. Closes 7 issues filed against the

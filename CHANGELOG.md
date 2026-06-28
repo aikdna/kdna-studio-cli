@@ -1,5 +1,46 @@
 # Changelog
 
+## v0.8.6 (2026-06-28)
+
+Phase 12 audit follow-up. Closes 7 issues filed against this
+repo (#62, #63, #64, #65, #66, #67, #68, #69 — note: #66 is
+closed in kdna-studio-core 1.7.5; the comment fix in this CLI
+is the consumer-side part of the same fix). Bumps
+`@aikdna/kdna-studio-core` to `^1.7.5`.
+
+- **#62** `feynman` no longer fails on every card. When the card
+  has no `feynmann_restatement`, the LLM evaluator now synthesises
+  one from the card's own `one_sentence` / `full_statement` and
+  returns a score with structured suggestions. Combined with the
+  fixed error message, the command now works end-to-end without
+  pre-step.
+- **#63** `cardsFromLegacyPayload` now imports `stance` and
+  `framework` cards in addition to the 7 it already handled.
+- **#64** All 49 `for (const x of (EXPR || []))` loops now guard
+  with `Array.isArray(EXPR) ? EXPR : []`. A truthy non-array
+  (e.g. an object) no longer crashes with "object is not iterable".
+- **#65** `mkdtempSync` calls now go through a `trackTempDir()`
+  helper. The process registers a single `process.on('exit')`
+  (plus SIGINT/SIGTERM) handler that removes every tracked
+  directory. `process.exit()` from `fail()` no longer leaks
+  `/tmp/kdna-migrate-*` or `/tmp/kdna-v1-*`.
+- **#66** (Comment update + consumer fix.) The command source
+  classify now reads `project.evidence_materials || project.evidence`
+  and the comment is updated to reflect the canonical field name.
+  The actual write is fixed in kdna-studio-core 1.7.5.
+- **#67** `importFromKdna`'s legacy fallback (no `payload.kdnab`)
+  now reads `KDNA_Core.json`, `KDNA_Patterns.json`,
+  `KDNA_Scenarios.json`, `KDNA_Cases.json`, `KDNA_Reasoning.json`,
+  and `KDNA_Evolution.json` and imports every card type they
+  carry. Prior version read only 5 of the 14 types and dropped
+  9 silently.
+- **#68** `feynmann` error message no longer points at the
+  non-existent "feynman authoring command"; it points at the
+  working `card update --field feynman_restatement='<json>'`
+  path.
+- **#69** The source classify comment no longer reverses the
+  evidence / evidence_materials canonical/legacy relationship.
+
 ## v0.8.5 (2026-06-28)
 
 Phase 11 audit follow-up. Closes 5 issues filed against the

@@ -46,7 +46,35 @@ async function evaluate(config, card, options = {}) {
     || fields.feynman_text
     || '';
 
-  if (!restatement) return { score: 0, criteria: {}, explanations: { notJustRepeat: 'No Feynman restatement provided.' }, suggestions: ['Write a Feynman restatement before evaluation.'] };
+  if (!restatement) {
+    // Bug (#62): prior version returned score 0 with the explanation
+    // "No Feynman restatement provided", but nothing in the CLI ever
+    // *writes* a feynman_restatement on a card. Every `kdna-studio
+    // feynman` call hit this path, every call returned 0, and the
+    // fynchmann command was effectively dead.
+    //
+    // The fix synthesises a first-cut restatement from the card's own
+    // text (so the LLM has *something* to evaluate), and returns a
+    // structured note in `suggestions` so the caller knows the score
+    // is on a machine-generated restatement, not their own. The
+    // caller can then `card update --field feynman_restatement='...'`
+    // to lock in a human-written version.
+    const synthesised = synthFeynmanRestatement(fields);
+    return {
+      score: 0,
+      criteria: {},
+      explanations: {
+        notJustRepeat: 'No human-written Feynman restatement — evaluated a synthesised one.',
+        notTooAbstract: 'Review the synthesised restatement before trusting the score.',
+      },
+      suggestions: [
+        'No feynman_restatement found on this card. The score below is on an auto-generated restatement.',
+        `Set a human-written restatement: kdna-studio card update <project> ${card.id || '<card-id>'} --field feynman_restatement='{"text":"<your plain-language restatement>"}'`,
+        `Synthesised restatement: "${synthesised}"`,
+      ],
+      synthesised_restatement: synthesised,
+    };
+  }
 
   const userPrompt = [
     `## Original Axiom`,
@@ -66,4 +94,25 @@ async function evaluate(config, card, options = {}) {
   return result.data || { score: 0, criteria: {}, explanations: {}, suggestions: [] };
 }
 
-module.exports = { evaluate, CRITERIA, SYSTEM };
+// Synthesise a first-cut restatement from the card's own fields. The
+// output is intentionally plain — Feynman is "explain it like I'm
+// five", so we strip axiom-speak and surface only the human-readable
+// core.
+function synthFeynmanRestatement(fields) {
+  const text = fields.one_sentence
+    || fields.full_statement
+    || fields.question
+    || fields.essence
+    || fields.scope
+    || '(no text to restate)';
+  // Strip the leading "always/never/must" markers that signal axiom
+  // language. The LLM evaluator will then score the result on its
+  // own merits, but the human reader can already see plain English.
+  return String(text)
+    .replace(/^(always|never|must|should|shall)\s+/i, '')
+    .replace(/\s+always\s+/gi, ' ')
+    .replace(/\s+never\s+/gi, ' ')
+    .trim();
+}
+
+module.exports = { evaluate, CRITERIA, SYSTEM, synthFeynmanRestatement };

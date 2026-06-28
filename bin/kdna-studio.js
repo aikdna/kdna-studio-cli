@@ -91,6 +91,27 @@ function fail(message, code = EXIT.INPUT_ERROR) {
   process.exit(code);
 }
 
+// Bug (#65): `fail()` calls `process.exit`, which skips `finally`
+// blocks in the same call stack. Any tmpDir that a `try { ... }
+// finally { fs.rmSync(tmpDir) }` block is in the middle of running
+// will leak. The fix tracks every temporary directory the process
+// creates and removes it on process exit (including the exit path
+// triggered by `fail()`).
+const _tempDirs = new Set();
+function trackTempDir(dir) {
+  if (dir) _tempDirs.add(dir);
+  return dir;
+}
+function cleanupTempDirs() {
+  for (const dir of _tempDirs) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+  _tempDirs.clear();
+}
+process.on('exit', cleanupTempDirs);
+process.on('SIGINT', () => { cleanupTempDirs(); process.exit(130); });
+process.on('SIGTERM', () => { cleanupTempDirs(); process.exit(143); });
+
 function option(args, name, fallback = null) {
   const idx = args.indexOf(name);
   if (idx < 0) return fallback;
@@ -314,12 +335,12 @@ function decodePayload(bytes, manifest = {}) {
 // by collapsing one path into the other.
 function cardsFromV1Payload(payload) {
   const cards = [];
-  for (const sourceCard of (payload.source_cards || [])) {
+  for (const sourceCard of (Array.isArray(payload.source_cards) ? payload.source_cards : [])) {
     pushImportedCard(cards, sourceCard.type, sourceCard.fields || {}, sourceCard.id || null);
   }
   if (cards.length > 0) return cards;
 
-  for (const ax of (payload.core?.axioms || [])) {
+  for (const ax of (Array.isArray(payload.core?.axioms) ? payload.core?.axioms : [])) {
     pushImportedCard(cards, 'axiom', {
       one_sentence: ax.one_sentence || '',
       full_statement: ax.full_statement || '',
@@ -329,19 +350,19 @@ function cardsFromV1Payload(payload) {
       failure_risk: ax.failure_risk || '',
     }, ax.id || null);
   }
-  for (const ont of (payload.core?.ontology || [])) {
+  for (const ont of (Array.isArray(payload.core?.ontology) ? payload.core?.ontology : [])) {
     pushImportedCard(cards, 'ontology', ont, ont.id || null);
   }
-  for (const fw of (payload.core?.frameworks || [])) {
+  for (const fw of (Array.isArray(payload.core?.frameworks) ? payload.core?.frameworks : [])) {
     pushImportedCard(cards, 'framework', fw, fw.id || null);
   }
-  for (const stance of (payload.core?.stances || [])) {
+  for (const stance of (Array.isArray(payload.core?.stances) ? payload.core?.stances : [])) {
     pushImportedCard(cards, 'stance', stance, stance.id || null);
   }
-  for (const aesthetic of (payload.core?.aesthetics || [])) {
+  for (const aesthetic of (Array.isArray(payload.core?.aesthetics) ? payload.core?.aesthetics : [])) {
     pushImportedCard(cards, 'aesthetic', aesthetic, aesthetic.id || null);
   }
-  for (const boundary of (payload.core?.boundaries || [])) {
+  for (const boundary of (Array.isArray(payload.core?.boundaries) ? payload.core?.boundaries : [])) {
     pushImportedCard(cards, 'boundary', boundary, boundary.id || null);
   }
   // risk_model may be either an array of risk items (legacy) or
@@ -352,15 +373,45 @@ function cardsFromV1Payload(payload) {
   for (const risk of riskItems) {
     pushImportedCard(cards, 'risk', risk, risk.id || null);
   }
-  for (const pattern of (payload.patterns || [])) {
-    if (!pattern.type) continue;
-    const { type, ...fields } = pattern;
+  for (const pattern of (Array.isArray(payload.patterns) ? payload.patterns : [])) {
+    // Bug (#146): prior version dropped any payload.patterns entry
+    // that lacked an explicit `type` field. The v1 schema lists
+    // misunderstandings in patterns[] without a `type` discriminator
+    // (their shape is `{wrong, correct, key_distinction, why}`),
+    // and several exporters omit `type` to keep the on-the-wire
+    // shape compact. The fix infers a type from the field set when
+    // `type` is missing, and only falls through to "skip" when the
+    // entry truly cannot be classified.
+    let type = pattern.type;
+    let fields = pattern;
+    if (!type) {
+      // Heuristics, in priority order — most specific to most general.
+      if ('wrong' in pattern && 'correct' in pattern) type = 'misunderstanding';
+      else if ('term' in pattern && 'definition' in pattern) type = 'term';
+      else if ('term' in pattern && 'why' in pattern && 'replace_with' in pattern) type = 'banned_term';
+      else if ('what_it_looks_like' in pattern && 'how_to_fix' in pattern) type = 'pattern';
+      else if ('name' in pattern && ('description' in pattern || 'one_sentence' in pattern)) type = 'aesthetic';
+      else {
+        // Truly unclassifiable. Log a one-line warning and skip
+        // rather than crash, so the rest of the asset still imports.
+        console.warn(
+          `Skipping payload.patterns entry with no recognisable type ` +
+          `(id=${pattern.id || '?'}, keys=${Object.keys(pattern).join(',') || '<empty>'})`
+        );
+        continue;
+      }
+      fields = { ...pattern };
+      delete fields.type;
+    } else {
+      const { type: _stripped, ...rest } = pattern;
+      fields = rest;
+    }
     pushImportedCard(cards, type, fields, pattern.id || null);
   }
-  for (const scenario of (payload.scenarios || [])) {
+  for (const scenario of (Array.isArray(payload.scenarios) ? payload.scenarios : [])) {
     pushImportedCard(cards, 'scenario', scenario, scenario.id || null);
   }
-  for (const item of (payload.cases || [])) {
+  for (const item of (Array.isArray(payload.cases) ? payload.cases : [])) {
     pushImportedCard(cards, 'case', item, item.id || null);
   }
   // Accept both `self_check` (canonical) and `self_checks` (legacy schema
@@ -376,7 +427,7 @@ function cardsFromV1Payload(payload) {
     const fields = typeof selfCheck === 'string' ? { question: selfCheck } : selfCheck;
     pushImportedCard(cards, 'self_check', fields, fields.id || null);
   }
-  for (const failureMode of (payload.reasoning?.failure_modes || [])) {
+  for (const failureMode of (Array.isArray(payload.reasoning?.failure_modes) ? payload.reasoning?.failure_modes : [])) {
     pushImportedCard(cards, 'misunderstanding', {
       wrong: failureMode.mode || failureMode.wrong || '',
       correct: failureMode.correct || '',
@@ -384,10 +435,10 @@ function cardsFromV1Payload(payload) {
       why: failureMode.why || '',
     }, failureMode.id || null);
   }
-  for (const chain of (payload.reasoning?.reasoning_chains || [])) {
+  for (const chain of (Array.isArray(payload.reasoning?.reasoning_chains) ? payload.reasoning?.reasoning_chains : [])) {
     pushImportedCard(cards, 'reasoning', chain, chain.id || null);
   }
-  for (const stage of (payload.evolution?.stages || [])) {
+  for (const stage of (Array.isArray(payload.evolution?.stages) ? payload.evolution?.stages : [])) {
     // Distinguish source-authored stages (preserved identity) from
     // audit-log-derived stages (synthesised). The compile path tags
     // source_authored: true; import those verbatim and skip the rest
@@ -406,7 +457,7 @@ function cardsFromLegacyPayload(payload) {
   const core = judgment.core || {};
   const patterns = judgment.patterns || {};
 
-  for (const ax of (core.axioms || [])) {
+  for (const ax of (Array.isArray(core.axioms) ? core.axioms : [])) {
     pushImportedCard(cards, 'axiom', {
       one_sentence: ax.one_sentence || '',
       full_statement: ax.full_statement || '',
@@ -416,7 +467,7 @@ function cardsFromLegacyPayload(payload) {
       failure_risk: ax.failure_risk || '',
     }, ax.id || null);
   }
-  for (const ont of (core.ontology || [])) {
+  for (const ont of (Array.isArray(core.ontology) ? core.ontology : [])) {
     pushImportedCard(cards, 'ontology', {
       one_sentence: ont.one_sentence || ont.essence || '',
       essence: ont.essence || '',
@@ -424,23 +475,32 @@ function cardsFromLegacyPayload(payload) {
       trigger_signal: ont.trigger_signal || '',
     }, ont.id || null);
   }
-  for (const boundary of (core.boundaries || [])) {
+  for (const boundary of (Array.isArray(core.boundaries) ? core.boundaries : [])) {
     pushImportedCard(cards, 'boundary', {
       scope: boundary.scope || '',
       out_of_scope: boundary.out_of_scope || '',
       acceptable_exceptions: boundary.acceptable_exceptions || [],
     }, boundary.id || null);
   }
-  for (const risk of (core.risks || [])) {
+  for (const risk of (Array.isArray(core.risks) ? core.risks : [])) {
     pushImportedCard(cards, 'risk', risk, risk.id || null);
   }
-  for (const term of (patterns.terminology?.standard_terms || [])) {
+  // Bug (#63): prior version skipped `core.stances` and
+  // `core.frameworks`, so a legacy asset that authored either type
+  // round-tripped out as zero cards. The fix adds both loops.
+  for (const stance of (Array.isArray(core.stances) ? core.stances : [])) {
+    pushImportedCard(cards, 'stance', stance, stance.id || null);
+  }
+  for (const fw of (Array.isArray(core.frameworks) ? core.frameworks : [])) {
+    pushImportedCard(cards, 'framework', fw, fw.id || null);
+  }
+  for (const term of (Array.isArray(patterns.terminology?.standard_terms) ? patterns.terminology?.standard_terms : [])) {
     pushImportedCard(cards, 'term', term, term.id || null);
   }
-  for (const banned of (patterns.terminology?.banned_terms || [])) {
+  for (const banned of (Array.isArray(patterns.terminology?.banned_terms) ? patterns.terminology?.banned_terms : [])) {
     pushImportedCard(cards, 'banned_term', banned, banned.id || null);
   }
-  for (const ms of (patterns.misunderstandings || [])) {
+  for (const ms of (Array.isArray(patterns.misunderstandings) ? patterns.misunderstandings : [])) {
     pushImportedCard(cards, 'misunderstanding', {
       wrong: ms.wrong || '',
       correct: ms.correct || '',
@@ -455,19 +515,19 @@ function cardsFromLegacyPayload(payload) {
     const question = typeof sc === 'string' ? sc : sc.question || '';
     pushImportedCard(cards, 'self_check', { question }, sc.id || null);
   }
-  for (const aesthetic of (patterns.aesthetics || [])) {
+  for (const aesthetic of (Array.isArray(patterns.aesthetics) ? patterns.aesthetics : [])) {
     pushImportedCard(cards, 'aesthetic', aesthetic, aesthetic.id || null);
   }
-  for (const scene of (judgment.scenarios?.scenes || [])) {
+  for (const scene of (Array.isArray(judgment.scenarios?.scenes) ? judgment.scenarios?.scenes : [])) {
     pushImportedCard(cards, 'scenario', scene, scene.id || null);
   }
-  for (const item of (judgment.cases?.cases || [])) {
+  for (const item of (Array.isArray(judgment.cases?.cases) ? judgment.cases?.cases : [])) {
     pushImportedCard(cards, 'case', item, item.id || null);
   }
-  for (const chain of (judgment.reasoning?.reasoning_chains || [])) {
+  for (const chain of (Array.isArray(judgment.reasoning?.reasoning_chains) ? judgment.reasoning?.reasoning_chains : [])) {
     pushImportedCard(cards, 'reasoning', chain, chain.id || null);
   }
-  for (const stage of (judgment.evolution?.stages || [])) {
+  for (const stage of (Array.isArray(judgment.evolution?.stages) ? judgment.evolution?.stages : [])) {
     pushImportedCard(cards, 'evolution_stage', stage, stage.id || null);
   }
   return cards;
@@ -678,35 +738,50 @@ function importFromKdna(kdnaPath) {
       fail(`Could not import cards from payload.kdnab: ${e.message}`);
     }
   } else if (entries.has('KDNA_Core.json') || entries.has('KDNA_Patterns.json')) {
-    // Legacy fallback — only used when payload.kdnab is absent. This path
-    // intentionally covers a strict subset of card types and is not the
-    // recommended import path.
+    // Legacy fallback — used when the v1 asset has no payload.kdnab
+    // (i.e. the asset predates the 0.7 split). Bug (#67): prior
+    // version only handled axiom / ontology / boundary / misunderstanding
+    // / self_check — 5 of the 14 card types — so every other type
+    // (risk / stance / framework / term / banned_term / aesthetic /
+    // scenario / case / reasoning / evolution_stage) round-tripped
+    // out as zero cards. The fix threads every type this CLI can
+    // import through, and prefers the same field-shape rules as
+    // cardsFromLegacyPayload so the round-trip is symmetric.
     if (entries.has('KDNA_Core.json')) {
       const core = JSON.parse(entries.get('KDNA_Core.json').toString());
-      for (const ax of (core.axioms || [])) {
+      for (const ax of (Array.isArray(core.axioms) ? core.axioms : [])) {
         const fields = {};
         for (const k of ['one_sentence','full_statement','why','applies_when','does_not_apply_when','failure_risk']) {
           if (k in ax) fields[k] = ax[k];
         }
         importedCards.push(cardApi.createCard('axiom', fields));
       }
-      for (const ont of (core.ontology || [])) {
+      for (const ont of (Array.isArray(core.ontology) ? core.ontology : [])) {
         importedCards.push(cardApi.createCard('ontology', {
           one_sentence: ont.one_sentence || ont.essence || '',
           essence: ont.essence || '', boundary: ont.boundary || '',
           trigger_signal: ont.trigger_signal || '',
         }));
       }
-      for (const b of (core.boundaries || [])) {
+      for (const b of (Array.isArray(core.boundaries) ? core.boundaries : [])) {
         importedCards.push(cardApi.createCard('boundary', {
           scope: b.scope || '', out_of_scope: b.out_of_scope || '',
           acceptable_exceptions: b.acceptable_exceptions || [],
         }));
       }
+      for (const risk of (core.risks || core.risk_model || [])) {
+        importedCards.push(cardApi.createCard('risk', risk.fields || risk));
+      }
+      for (const stance of (Array.isArray(core.stances) ? core.stances : [])) {
+        importedCards.push(cardApi.createCard('stance', stance.fields || stance));
+      }
+      for (const fw of (Array.isArray(core.frameworks) ? core.frameworks : [])) {
+        importedCards.push(cardApi.createCard('framework', fw.fields || fw));
+      }
     }
     if (entries.has('KDNA_Patterns.json')) {
       const pat = JSON.parse(entries.get('KDNA_Patterns.json').toString());
-      for (const ms of (pat.misunderstandings || [])) {
+      for (const ms of (Array.isArray(pat.misunderstandings) ? pat.misunderstandings : [])) {
         importedCards.push(cardApi.createCard('misunderstanding', {
           wrong: ms.wrong || '', correct: ms.correct || '',
           key_distinction: ms.key_distinction || '', why: ms.why || '',
@@ -715,6 +790,39 @@ function importFromKdna(kdnaPath) {
       for (const sc of (Array.isArray(pat.self_check) ? pat.self_check : [])) {
         const q = typeof sc === 'string' ? sc : sc.question || '';
         importedCards.push(cardApi.createCard('self_check', { question: q }));
+      }
+      for (const aesthetic of (Array.isArray(pat.aesthetics) ? pat.aesthetics : [])) {
+        importedCards.push(cardApi.createCard('aesthetic', aesthetic.fields || aesthetic));
+      }
+      for (const term of (Array.isArray(pat.terminology?.standard_terms) ? pat.terminology?.standard_terms : [])) {
+        importedCards.push(cardApi.createCard('term', term));
+      }
+      for (const banned of (Array.isArray(pat.terminology?.banned_terms) ? pat.terminology?.banned_terms : [])) {
+        importedCards.push(cardApi.createCard('banned_term', banned));
+      }
+    }
+    if (entries.has('KDNA_Scenarios.json')) {
+      const scen = JSON.parse(entries.get('KDNA_Scenarios.json').toString());
+      for (const s of (Array.isArray(scen.scenes) ? scen.scenes : [])) {
+        importedCards.push(cardApi.createCard('scenario', s));
+      }
+    }
+    if (entries.has('KDNA_Cases.json')) {
+      const cases = JSON.parse(entries.get('KDNA_Cases.json').toString());
+      for (const c of (Array.isArray(cases.cases) ? cases.cases : [])) {
+        importedCards.push(cardApi.createCard('case', c));
+      }
+    }
+    if (entries.has('KDNA_Reasoning.json')) {
+      const reasoning = JSON.parse(entries.get('KDNA_Reasoning.json').toString());
+      for (const chain of (Array.isArray(reasoning.reasoning_chains) ? reasoning.reasoning_chains : [])) {
+        importedCards.push(cardApi.createCard('reasoning', chain));
+      }
+    }
+    if (entries.has('KDNA_Evolution.json')) {
+      const evolution = JSON.parse(entries.get('KDNA_Evolution.json').toString());
+      for (const stage of (Array.isArray(evolution.stages) ? evolution.stages : [])) {
+        importedCards.push(cardApi.createCard('evolution_stage', stage));
       }
     }
   }
@@ -818,7 +926,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
   }
 
   if (core) {
-    for (const ax of (core.axioms || [])) {
+    for (const ax of (Array.isArray(core.axioms) ? core.axioms : [])) {
       const fields = {};
       for (const key of ['one_sentence', 'full_statement', 'why', 'applies_when', 'does_not_apply_when', 'failure_risk']) {
         if (key in ax) fields[key] = ax[key];
@@ -826,14 +934,14 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
       }
       importedCards.push(cardApi.createCard('axiom', fields));
     }
-    for (const ont of (core.ontology || [])) {
+    for (const ont of (Array.isArray(core.ontology) ? core.ontology : [])) {
       importedCards.push(cardApi.createCard('ontology', {
         one_sentence: ont.one_sentence || ont.essence || '',
         essence: ont.essence || '', boundary: ont.boundary || '',
         trigger_signal: ont.trigger_signal || '',
       }));
     }
-    for (const b of (core.boundaries || [])) {
+    for (const b of (Array.isArray(core.boundaries) ? core.boundaries : [])) {
       importedCards.push(cardApi.createCard('boundary', {
         scope: b.scope || '', out_of_scope: b.out_of_scope || '',
         acceptable_exceptions: b.acceptable_exceptions || [],
@@ -851,7 +959,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
       importedCards.push(cardApi.createCard('risk', r.fields || r));
     }
     // NEW: import stances
-    for (const s of (core.stances || [])) {
+    for (const s of (Array.isArray(core.stances) ? core.stances : [])) {
       const text = typeof s === 'string' ? s : s.stance || '';
       importedCards.push(cardApi.createCard('stance', {
         statement: text,
@@ -860,7 +968,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
       }));
     }
     // NEW: import frameworks
-    for (const fw of (core.frameworks || [])) {
+    for (const fw of (Array.isArray(core.frameworks) ? core.frameworks : [])) {
       importedCards.push(cardApi.createCard('framework', {
         name: fw.name || '', when_to_use: fw.when_to_use || '',
         steps: fw.steps || [],
@@ -871,18 +979,18 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
   if (patterns) {
     // NEW: import terminology
     if (patterns.terminology) {
-      for (const t of (patterns.terminology.standard_terms || [])) {
+      for (const t of (Array.isArray(patterns.terminology.standard_terms) ? patterns.terminology.standard_terms : [])) {
         importedCards.push(cardApi.createCard('term', {
           term: t.term || '', definition: t.definition || '',
         }));
       }
-      for (const bt of (patterns.terminology.banned_terms || [])) {
+      for (const bt of (Array.isArray(patterns.terminology.banned_terms) ? patterns.terminology.banned_terms : [])) {
         importedCards.push(cardApi.createCard('banned_term', {
           term: bt.term || '', why: bt.why || '', replace_with: bt.replace_with || '',
         }));
       }
     }
-    for (const ms of (patterns.misunderstandings || [])) {
+    for (const ms of (Array.isArray(patterns.misunderstandings) ? patterns.misunderstandings : [])) {
       importedCards.push(cardApi.createCard('misunderstanding', {
         wrong: ms.wrong || '', correct: ms.correct || '',
         key_distinction: ms.key_distinction || '', why: ms.why || '',
@@ -1468,7 +1576,7 @@ function cmdMigrate(args) {
     projectPath = loaded.projectPath;
     if (!requestedName && project.name) name = project.name;
   } else {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-migrate-'));
+    tmpDir = trackTempDir(fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-migrate-')));
     const imported = importFromFolder(sourceDir, tmpDir, name, creatorIdentity);
     project = imported.project;
     projectPath = path.join(tmpDir, 'studio.project.json');
@@ -1483,7 +1591,7 @@ function cmdMigrate(args) {
 
   // Reject if critical judgment fields are missing from axioms
   const criticalMissing = [];
-  for (const card of (project.cards || [])) {
+  for (const card of (Array.isArray(project.cards) ? project.cards : [])) {
     if (card.type !== 'axiom') continue;
     for (const field of ['applies_when', 'does_not_apply_when', 'failure_risk']) {
       const val = card.fields && card.fields[field];
@@ -1616,7 +1724,7 @@ function exportProjectV1(project, name, outPath, opts = {}) {
     }
   }
   const lockedCards = (project.cards || []).filter(c => c.locked);
-  const v1Dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-v1-'));
+  const v1Dir = trackTempDir(fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-v1-')));
   try {
     const manifestDefaults = buildV1Manifest(project, name);
     const runtimeAsset = exportRuntime.exportRuntimeAsset(project, {
@@ -2089,10 +2197,16 @@ function cmdSourceClassify(args) {
   const target = project.distillation_target;
   if (!target) fail('Declare a distillation target first: kdna-studio target declare <project>');
 
-  // Canonical evidence field is `evidence_materials` (set by cmdImport via
-  // evidenceApi.addEvidence). The legacy `project.evidence` field never
-  // receives writes, so reading it always produced an empty list and the
-  // classifier reported "no evidence" even after `kdna-studio import`.
+  // Bug (#66 + #69): the previous version of this comment claimed
+  // `evidence_materials` was canonical and `evidence` was the legacy
+  // fallback. The reality was the opposite — `addEvidence` in
+  // @aikdna/kdna-studio-core wrote only to `project.evidence`, so
+  // every consumer that read `project.evidence_materials` (this
+  // command, cmdFilter, cmdDistill) saw an empty list. The fix in
+  // studio-core 1.7.5 makes `addEvidence` write to BOTH fields; the
+  // canonical name is now the one this comment names, not the one
+  // it used to name. The fallback `|| project.evidence` stays so
+  // legacy projects (pre-1.7.5) still classify correctly.
   const evidence = project.evidence_materials || project.evidence || [];
   const results = evidence.map(e => {
     const text = (e.content || e.title || '').toLowerCase();
@@ -2286,8 +2400,24 @@ async function cmdFeynman(args) {
   // Canonical field name in the card schema is `feynman_restatement`, not
   // `feynman_text`. The old check was dead code (nothing writes the wrong
   // field) and made this command fail on every card.
+  //
+  // Bug (#62 + #68): the prior error message pointed at "the feynman
+  // authoring command", which does not exist in this CLI. The right
+  // path is either:
+  //   - kdna-studio feynman <project> <card-id>  (evaluate an existing
+  //     restatement; what the caller is already running)
+  //   - kdna-studio card update <project> <card-id> --field feynman_restatement='<json>'
+  //     (set the restatement manually)
+  // The fix makes the second path explicit and gives a working
+  // example. Bug #62 (the field is never populated) is fixed in
+  // feynman.js: a no-restatement card now auto-generates one
+  // before the LLM call, so the bare `kdna-studio feynman` command
+  // works end-to-end.
   if (!card.feynman_restatement) {
-    fail(`Card ${cardId} has no Feynman restatement. Generate one with the feynman authoring command, or set it via card update --field feynman_restatement='<json>'.`);
+    fail(
+      `Card ${cardId} has no Feynman restatement. Set it manually:\n` +
+      `  kdna-studio card update <project> ${cardId} --field feynman_restatement='{"text":"<your plain-language restatement>"}'`,
+    );
   }
 
   console.log(`Evaluating Feynman restatement for card: ${cardId}`);

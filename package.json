@@ -39,7 +39,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@aikdna/kdna-studio-core": "^1.7.6",
+    "@aikdna/kdna-studio-core": "^1.7.7",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "cbor-x": "^1.6.4"

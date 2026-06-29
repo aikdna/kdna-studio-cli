@@ -43,7 +43,9 @@ async function evaluate(config, card, options = {}) {
   const axiomText = fields.one_sentence || fields.full_statement || fields.question || '';
   const restatement = card.feynman_restatement
     || fields.feynman_restatement
-    || fields.feynman_text
+    // NOTE: fields.feynman_text was previously in this fallback chain
+    // but is intentionally excluded — no code path in @aikdna writes
+    // feynman_text. The canonical field is feynman_restatement.
     || '';
 
   if (!restatement) {

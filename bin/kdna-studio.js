@@ -451,7 +451,8 @@ function cardsFromV1Payload(payload) {
     let fields = pattern;
     if (!type) {
       // Heuristics, in priority order — most specific to most general.
-      if ('wrong' in pattern && 'correct' in pattern) type = 'misunderstanding';
+      if ('logic' in pattern && ('so_what' in pattern || 'conclusion' in pattern)) type = 'reasoning';
+      else if ('wrong' in pattern && 'correct' in pattern) type = 'misunderstanding';
       else if ('term' in pattern && 'definition' in pattern) type = 'term';
       else if ('term' in pattern && 'why' in pattern && 'replace_with' in pattern) type = 'banned_term';
       else if ('what_it_looks_like' in pattern && 'how_to_fix' in pattern) type = 'pattern';
@@ -851,7 +852,16 @@ function importFromKdna(kdnaPath) {
           acceptable_exceptions: b.acceptable_exceptions || [],
         }));
       }
-      for (const risk of (core.risks || core.risk_model || [])) {
+      // Accept risks as a top-level array (`risks`) or wrapped in `risk_model`
+      // (either as `{risks: [...]}` or as an array itself). Uses the same
+      // Array.isArray ladder pattern as the safe path at lines 1033-1040.
+      let risksSource = core.risks;
+      if (!Array.isArray(risksSource)) {
+        if (Array.isArray(core.risk_model)) risksSource = core.risk_model;
+        else if (Array.isArray(core.risk_model?.risks)) risksSource = core.risk_model.risks;
+        else risksSource = [];
+      }
+      for (const risk of risksSource) {
         importedCards.push(cardApi.createCard('risk', risk.fields || risk));
       }
       for (const stance of (Array.isArray(core.stances) ? core.stances : [])) {
@@ -1095,7 +1105,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
   }
 
   // NEW: import scenarios
-  if (scenarios && scenarios.scenes) {
+  if (scenarios && Array.isArray(scenarios.scenes)) {
     for (const scene of scenarios.scenes) {
       importedCards.push(cardApi.createCard('scenario', {
         name: scene.name || scene.id || '',
@@ -1105,7 +1115,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
   }
 
   // NEW: import cases
-  if (cases && cases.cases) {
+  if (cases && Array.isArray(cases.cases)) {
     for (const c of cases.cases) {
       importedCards.push(cardApi.createCard('case', {
         title: c.title || c.id || '',
@@ -1121,7 +1131,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
   // so the cards were silently rewritten as axiom-derived fallback chains
   // — looking identical to misunderstanding cards and losing the source's
   // identity.
-  if (reasoning && reasoning.reasoning_chains) {
+  if (reasoning && Array.isArray(reasoning.reasoning_chains)) {
     for (const rc of reasoning.reasoning_chains) {
       importedCards.push(cardApi.createCard('reasoning', {
         axiom: rc.axiom || '',
@@ -1136,7 +1146,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
   }
 
   // NEW: import evolution stages
-  if (evolution && evolution.stages) {
+  if (evolution && Array.isArray(evolution.stages)) {
     for (const stage of evolution.stages) {
       importedCards.push(cardApi.createCard('evolution_stage', {
         name: stage.name || stage.id || '',
@@ -2082,7 +2092,7 @@ function manifestForSigning(manifest) {
 
 function canonicalPayload(files) {
   return ['mimetype', ...Object.keys(files).filter((k) => k !== 'mimetype').sort()]
-    .filter((name) => name !== 'signature.json' && name !== '.DS_Store')
+    .filter((name) => name !== 'signature.json' && name !== '.DS_Store' && name !== 'build-receipt.json' && !name.startsWith('reports/'))
     .map((name) => {
       let content = name === 'mimetype' ? 'application/vnd.aikdna.kdna+zip' : files[name];
       if (name.endsWith('.json')) {
@@ -2253,15 +2263,16 @@ function cmdStudioInstall(args) {
 function cmdStudioUpdate(args) {
   const target = args[0];
   if (!target) fail('Usage: kdna-studio update <@scope/name>');
-  try {
-    const result = require('child_process').spawnSync('kdna', ['update', target], {
-      stdio: 'inherit', encoding: 'utf8',
-    });
-    if (result.status !== 0) process.exit(result.status);
-  } catch (e) {
-    console.error('Error spawning kdna CLI:', e.message);
-    fail('kdna CLI not found. Install with: npm install -g @aikdna/kdna-cli');
-  }
+  // kdna update does not exist in kdna-cli v0.28.x. The correct
+  // path is to re-install via npm or use kdna install to pull
+  // the latest published version of the asset.
+  console.log(`To update ${target}, run:`);
+  console.log(`  npm install -g @aikdna/kdna-cli@latest`);
+  console.log(`  kdna install ${target}`);
+  console.log(``);
+  console.log(`Or for a project-local install:`);
+  console.log(`  cd <project-dir> && npm install @aikdna/kdna-cli@latest`);
+  process.exit(0);
 }
 
 function cmdLlm(args) {

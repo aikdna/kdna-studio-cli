@@ -45,6 +45,6 @@
     "cbor-x": "^1.6.4"
   },
   "devDependencies": {
-    "@aikdna/kdna-core": "^0.15.5"
+    "@aikdna/kdna-core": "^0.15.9"
   }
 }

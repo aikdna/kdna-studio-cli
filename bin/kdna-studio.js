@@ -258,23 +258,41 @@ function writeFiles(outDir, files) {
   }
 }
 
+const ARRAY_FIELD_NAMES = new Set([
+  'applies_when',
+  'does_not_apply_when',
+  'acceptable_exceptions',
+]);
+
 function parseFields(args) {
   const fields = {};
   for (const pair of optionsAll(args, '--field')) {
     const eq = pair.indexOf('=');
     if (eq < 1) fail(`Invalid --field "${pair}". Use key=value.`);
-    const key = pair.slice(0, eq);
+    let key = pair.slice(0, eq);
+    const appendArray = key.endsWith('[]');
+    if (appendArray) key = key.slice(0, -2);
     const raw = pair.slice(eq + 1);
+    let value;
     if (raw.startsWith('[') || raw.startsWith('{')) {
       try {
-        fields[key] = JSON.parse(raw);
+        value = JSON.parse(raw);
       } catch (_) {
-        fields[key] = raw;
+        value = raw;
       }
     } else if (raw.includes('|')) {
-      fields[key] = raw.split('|').map((s) => s.trim()).filter(Boolean);
+      value = raw.split('|').map((s) => s.trim()).filter(Boolean);
     } else {
-      fields[key] = raw;
+      value = raw;
+    }
+
+    if (appendArray) {
+      const values = Array.isArray(value) ? value : [value];
+      fields[key] = [...(Array.isArray(fields[key]) ? fields[key] : []), ...values];
+    } else if (ARRAY_FIELD_NAMES.has(key) && typeof value === 'string') {
+      fields[key] = value.trim() ? [value.trim()] : [];
+    } else {
+      fields[key] = value;
     }
   }
   return fields;
@@ -413,6 +431,8 @@ function cardsFromV1Payload(payload) {
       applies_when: ax.applies_when || [],
       does_not_apply_when: ax.does_not_apply_when || [],
       failure_risk: ax.failure_risk || '',
+      confidence: ax.confidence || '',
+      evidence_type: ax.evidence_type || '',
     }, ax.id || null);
   }
   for (const ont of (Array.isArray(payload.core?.ontology) ? payload.core?.ontology : [])) {
@@ -834,7 +854,7 @@ function importFromKdna(kdnaPath) {
       const core = JSON.parse(entries.get('KDNA_Core.json').toString());
       for (const ax of (Array.isArray(core.axioms) ? core.axioms : [])) {
         const fields = {};
-        for (const k of ['one_sentence','full_statement','why','applies_when','does_not_apply_when','failure_risk']) {
+        for (const k of ['one_sentence','full_statement','why','applies_when','does_not_apply_when','failure_risk','confidence','evidence_type']) {
           if (k in ax) fields[k] = ax[k];
         }
         importedCards.push(cardApi.createCard('axiom', fields));
@@ -954,7 +974,7 @@ function importFromKdna(kdnaPath) {
  * Reads KDNA_*.json files and converts entries to draft judgment cards.
  * Outputs a schema audit report.
  */
-function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
+function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, opts = {}) {
   resetImportedIds();
   const absSource = path.resolve(sourceDir);
   if (!fs.existsSync(absSource)) fail(`Source folder not found: ${absSource}`);
@@ -1021,7 +1041,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
   if (core) {
     for (const ax of (Array.isArray(core.axioms) ? core.axioms : [])) {
       const fields = {};
-      for (const key of ['one_sentence', 'full_statement', 'why', 'applies_when', 'does_not_apply_when', 'failure_risk']) {
+      for (const key of ['one_sentence', 'full_statement', 'why', 'applies_when', 'does_not_apply_when', 'failure_risk', 'confidence', 'evidence_type']) {
         if (key in ax) fields[key] = ax[key];
         else audit.missingFields.push(`axiom.${ax.id || '?'}.${key}`);
       }
@@ -1053,7 +1073,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
     }
     // NEW: import stances
     for (const s of (Array.isArray(core.stances) ? core.stances : [])) {
-      const text = typeof s === 'string' ? s : s.stance || '';
+      const text = typeof s === 'string' ? s : s.statement || s.stance || '';
       importedCards.push(cardApi.createCard('stance', {
         statement: text,
         applies_when: s.applies_when || [],
@@ -1190,7 +1210,9 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity) {
 
   fs.mkdirSync(projectDir, { recursive: true });
   writeProject(path.join(projectDir, 'studio.project.json'), project);
-  console.log(JSON.stringify({ audit, imported: importedCards.length, source_mode: 'source_folder' }, null, 2));
+  if (!opts.silent) {
+    console.log(JSON.stringify({ audit, imported: importedCards.length, source_mode: 'source_folder' }, null, 2));
+  }
   return { project, projectPath: path.join(projectDir, 'studio.project.json'), audit };
 }
 
@@ -1405,18 +1427,74 @@ const CARD_REQUIRED_FIELDS = {
   pattern: ['type', 'name', 'one_sentence', 'what_it_looks_like', 'how_to_fix', 'failure_risk'],
 };
 
+const CARD_FIELD_RULES = {
+  axiom: {
+    applies_when: { type: 'array' },
+    does_not_apply_when: { type: 'array' },
+    confidence: { allowed: ['low', 'medium', 'high'] },
+    evidence_type: { allowed: ['case_observation', 'theoretical', 'empirical', 'analogy', 'principle', 'practice'] },
+  },
+  boundary: {
+    acceptable_exceptions: { type: 'array', optional: true },
+  },
+  stance: {
+    applies_when: { type: 'array', optional: true },
+  },
+  misunderstanding: {
+    applies_when: { type: 'array', optional: true },
+    does_not_apply_when: { type: 'array', optional: true },
+  },
+};
+
+function fieldIssue(fields, name, rule = {}) {
+  const val = fields[name];
+  if (val === undefined || val === null || val === '' ||
+      (Array.isArray(val) && val.length === 0)) {
+    return rule.optional ? null : { field: name, issue: 'missing' };
+  }
+  if (rule.type === 'array' && !Array.isArray(val)) {
+    return { field: name, issue: 'wrong_type', have_type: typeof val, need_type: 'array' };
+  }
+  if (rule.allowed && !rule.allowed.includes(val)) {
+    return { field: name, issue: 'invalid_value', have: val, allowed: rule.allowed };
+  }
+  return null;
+}
+
+function formatFieldIssue(issue) {
+  if (issue.issue === 'missing') return issue.field;
+  if (issue.issue === 'wrong_type') return `${issue.field} (must be ${issue.need_type})`;
+  if (issue.issue === 'invalid_value') return `${issue.field} (must be one of: ${issue.allowed.join('|')})`;
+  return `${issue.field} (${issue.issue})`;
+}
+
 function checkRequiredFields(type, fields) {
   const required = CARD_REQUIRED_FIELDS[type];
   if (!required) return [];
-  const missing = [];
+  const issues = [];
   for (const f of required) {
-    const val = fields[f];
-    if (val === undefined || val === null || val === '' ||
-        (Array.isArray(val) && val.length === 0)) {
-      missing.push(f);
+    const issue = fieldIssue(fields, f, CARD_FIELD_RULES[type]?.[f] || {});
+    if (issue) issues.push(formatFieldIssue(issue));
+  }
+  for (const [name, rule] of Object.entries(CARD_FIELD_RULES[type] || {})) {
+    if (required.includes(name)) continue;
+    const issue = fieldIssue(fields, name, rule);
+    if (issue) issues.push(formatFieldIssue(issue));
+  }
+  return issues;
+}
+
+function criticalAxiomIssues(project) {
+  const issues = [];
+  for (const card of (Array.isArray(project.cards) ? project.cards : [])) {
+    if (card.type !== 'axiom') continue;
+    const fields = card.fields || {};
+    for (const field of ['applies_when', 'does_not_apply_when', 'failure_risk']) {
+      const issue = fieldIssue(fields, field, CARD_FIELD_RULES.axiom[field] || {});
+      if (issue) issues.push(`${card.id}: ${formatFieldIssue(issue)}`);
     }
   }
-  return missing;
+  return issues;
 }
 
 function cardStrictTemplate(type, fields) {
@@ -1500,7 +1578,11 @@ function cmdCard(args) {
       project.stages.judgment_cards.status = 'in_progress';
     }
     writeProject(projectPath, project);
-    console.log(`Added card: ${card.id}`);
+    if (args.includes('--json')) {
+      console.log(JSON.stringify({ added: true, card }, null, 2));
+    } else {
+      console.log(`Added card: ${card.id}`);
+    }
     return;
   }
   if (sub === 'update') {
@@ -1743,7 +1825,7 @@ function cmdMigrate(args) {
     if (!requestedName && project.name) name = project.name;
   } else {
     tmpDir = trackTempDir(fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-migrate-')));
-    const imported = importFromFolder(sourceDir, tmpDir, name, creatorIdentity);
+    const imported = importFromFolder(sourceDir, tmpDir, name, creatorIdentity, { silent: true });
     project = imported.project;
     projectPath = path.join(tmpDir, 'studio.project.json');
   }
@@ -1755,17 +1837,8 @@ function cmdMigrate(args) {
   // always failing.
   const allowIncompleteEarly = args.includes('--allow-incomplete');
 
-  // Reject if critical judgment fields are missing from axioms
-  const criticalMissing = [];
-  for (const card of (Array.isArray(project.cards) ? project.cards : [])) {
-    if (card.type !== 'axiom') continue;
-    for (const field of ['applies_when', 'does_not_apply_when', 'failure_risk']) {
-      const val = card.fields && card.fields[field];
-      if (!val || (Array.isArray(val) && val.length === 0) || val === '') {
-        criticalMissing.push(`${card.id}: missing ${field}`);
-      }
-    }
-  }
+  // Reject if critical judgment fields are missing or malformed on axioms.
+  const criticalMissing = criticalAxiomIssues(project);
   if (criticalMissing.length > 0) {
     if (allowIncompleteEarly) {
       console.warn(
@@ -1806,9 +1879,8 @@ function cmdMigrate(args) {
       if (!req) continue;
       const missing = [];
       for (const f of req) {
-        const v = card.fields?.[f];
-        if (v === undefined || v === null || v === '' ||
-            (Array.isArray(v) && v.length === 0)) missing.push(f);
+        const issue = fieldIssue(card.fields || {}, f, CARD_FIELD_RULES[card.type]?.[f] || {});
+        if (issue) missing.push(formatFieldIssue(issue));
       }
       if (missing.length > 0) {
         if (!summary.by_type[card.type]) summary.by_type[card.type] = [];
@@ -1914,6 +1986,25 @@ function exportProjectV1(project, name, outPath, opts = {}) {
   }
   if (!exportRuntime || typeof exportRuntime.exportRuntimeAsset !== 'function') {
     fail('@aikdna/kdna-studio-core with exportRuntime.exportRuntimeAsset is required for v1 export.', 2);
+  }
+  const criticalIssues = criticalAxiomIssues(project);
+  if (criticalIssues.length > 0) {
+    if (opts.allowIncomplete) {
+      console.warn(
+        `--allow-incomplete: bypassing ${criticalIssues.length} critical axiom-field check(s). ` +
+        `The exported .kdna will load but kdna-loader may not match this domain on those signals.`,
+      );
+    } else {
+      fail(
+        `Cannot export v1: ${criticalIssues.length} critical axiom field issue(s).\n` +
+        `  These fields are required for domain routing (kdna-loader uses them to\n` +
+        `  decide when to load this domain). Fix them first, or pass\n` +
+        `  --allow-incomplete to bypass.\n` +
+        `  Issues:\n    ` + criticalIssues.slice(0, 10).join('\n    ') +
+        (criticalIssues.length > 10 ? `\n    ... and ${criticalIssues.length - 10} more` : ''),
+        EXIT.HUMAN_LOCK_REQUIRED,
+      );
+    }
   }
   const gate = projectApi.checkHumanLockGate(project);
   if (gate.blocked) {
@@ -2189,6 +2280,25 @@ function cmdExport(args) {
     return;
   }
   const { project, result } = compileProject(projectInput);
+  const criticalIssues = criticalAxiomIssues(project);
+  if (criticalIssues.length > 0) {
+    if (args.includes('--allow-incomplete')) {
+      console.warn(
+        `--allow-incomplete: bypassing ${criticalIssues.length} critical axiom-field check(s). ` +
+        `The exported .kdna will load but kdna-loader may not match this domain on those signals.`,
+      );
+    } else {
+      fail(
+        `Cannot export: ${criticalIssues.length} critical axiom field issue(s).\n` +
+        `  These fields are required for domain routing (kdna-loader uses them to\n` +
+        `  decide when to load this domain). Fix them first, or pass\n` +
+        `  --allow-incomplete to bypass.\n` +
+        `  Issues:\n    ` + criticalIssues.slice(0, 10).join('\n    ') +
+        (criticalIssues.length > 10 ? `\n    ... and ${criticalIssues.length - 10} more` : ''),
+        EXIT.HUMAN_LOCK_REQUIRED,
+      );
+    }
+  }
   const files = { ...result.files };
   files['README.md'] = compileApi.generateReadme(project);
   files.LICENSE = project.license?.type || 'UNSPECIFIED';
@@ -2390,9 +2500,11 @@ function cmdAuditLocks(args) {
       one_sentence: { min: 5, type: 'string' },
       full_statement: { min: 20, type: 'string' },
       why: { min: 20, type: 'string' },
+      applies_when: { type: 'array', minLength: 1 },
+      does_not_apply_when: { type: 'array', minLength: 1 },
       failure_risk: { min: 1, type: 'string' },
       confidence: { allowed: ['low', 'medium', 'high'] },
-      evidence_type: { allowed: ['case_observation', 'theoretical', 'empirical', 'analogy', 'principle'] },
+      evidence_type: { allowed: ['case_observation', 'theoretical', 'empirical', 'analogy', 'principle', 'practice'] },
     },
     risk: {
       name: { min: 1, type: 'string' },
@@ -2418,6 +2530,9 @@ function cmdAuditLocks(args) {
     }
     if (rule.type === 'array' && !Array.isArray(value)) {
       return { field: name, issue: 'wrong_type', have_type: typeof value, need_type: 'array' };
+    }
+    if (rule.type === 'array' && rule.minLength && value.length < rule.minLength) {
+      return { field: name, issue: 'too_short', have_length: value.length, need_min: rule.minLength };
     }
     return null;
   }
@@ -2730,6 +2845,7 @@ async function cmdFeynman(args) {
   const projectInput = args[0];
   const cardId = args[1];
   if (!projectInput || !cardId) fail('Usage: kdna-studio feynman <project> <card-id>');
+  const useJson = args.includes('--json');
   const { projectPath, project } = readProject(projectInput);
   const cardIdx = (project.cards || []).findIndex(c => c.id === cardId);
   if (cardIdx < 0) fail(`Card not found: ${cardId}`);
@@ -2765,7 +2881,7 @@ async function cmdFeynman(args) {
     console.warn(`No feynman_restatement on ${cardId}; using synthesised:\n  "${synthesised}"`);
   }
 
-  console.log(`Evaluating Feynman restatement for card: ${cardId}`);
+  if (!useJson) console.log(`Evaluating Feynman restatement for card: ${cardId}`);
 
   // Bug (#1 UX follow-up): if no LLM is configured and the caller
   // did not pass --no-llm, route through cmdNeedsLlm which either
@@ -2794,14 +2910,26 @@ async function cmdFeynman(args) {
   const score = result.score || 0;
   const passed = score >= 4;
 
-  console.log(`Score: ${score}/5 ${passed ? '✓ publishable' : '✗ below threshold (need 4/5)'}${llmGate.noLlm ? '  (--no-llm: static result)' : ''}`);
-  for (const [criterion, desc] of Object.entries(ai.feynman.CRITERIA)) {
-    const r = (result.criteria || {})[criterion] ? '✓' : '✗';
-    console.log(`  ${r} ${criterion}`);
-  }
-  if (result.suggestions && result.suggestions.length > 0) {
-    console.log('\nSuggestions:');
-    result.suggestions.forEach(s => console.log(`  - ${s}`));
+  if (useJson) {
+    console.log(JSON.stringify({
+      card_id: cardId,
+      score,
+      passed,
+      no_llm: !!llmGate.noLlm,
+      criteria: result.criteria || {},
+      suggestions: result.suggestions || [],
+      feynman_restatement: card.feynman_restatement,
+    }, null, 2));
+  } else {
+    console.log(`Score: ${score}/5 ${passed ? '✓ publishable' : '✗ below threshold (need 4/5)'}${llmGate.noLlm ? '  (--no-llm: static result)' : ''}`);
+    for (const [criterion, desc] of Object.entries(ai.feynman.CRITERIA)) {
+      const r = (result.criteria || {})[criterion] ? '✓' : '✗';
+      console.log(`  ${r} ${criterion}`);
+    }
+    if (result.suggestions && result.suggestions.length > 0) {
+      console.log('\nSuggestions:');
+      result.suggestions.forEach(s => console.log(`  - ${s}`));
+    }
   }
 
   card.feynman_evaluation = { score, criteria: result.criteria, suggestions: result.suggestions, evaluated_at: new Date().toISOString() };

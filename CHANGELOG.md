@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.11 (2026-07-01)
 
 - Preserve `KDNA_Evolution.json.stages[].id` and numeric `level: 0` when
   importing a source folder, so source-authored evolution stages keep stable

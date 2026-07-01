@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Preserve `KDNA_Evolution.json.stages[].id` and numeric `level: 0` when
+  importing a source folder, so source-authored evolution stages keep stable
+  card identity through Studio migration.
+
 ## 0.8.10 (2026-07-01)
 
 Harden Studio routing field lifecycle — append-array --field key[]=value syntax, confidence/evidence_type cards, normalize applies_when/does_not_apply_when/acceptable_exceptions to arrays, allow stances with statement field (#72).

@@ -1168,10 +1168,11 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
   // NEW: import evolution stages
   if (evolution && Array.isArray(evolution.stages)) {
     for (const stage of evolution.stages) {
-      importedCards.push(cardApi.createCard('evolution_stage', {
+      pushImportedCard(importedCards, 'evolution_stage', {
         name: stage.name || stage.id || '',
-        level: stage.level || '', description: stage.description || '',
-      }));
+        level: stage.level != null ? stage.level : '',
+        description: stage.description || '',
+      }, stage.id || null);
     }
   }
 

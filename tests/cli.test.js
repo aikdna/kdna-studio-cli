@@ -438,6 +438,9 @@ test('create --from-folder imports legacy JSON source, outputs audit', (t) => {
     misunderstandings: [{ id: 'ms_legacy', wrong: 'Legacy wrong belief.', correct: 'Correct understanding.', key_distinction: 'The key distinction between wrong and correct.' }],
     self_check: ['Did I verify the legacy import?'],
   }));
+  fs.writeFileSync(path.join(sourceDir, 'KDNA_Evolution.json'), JSON.stringify({
+    stages: [{ id: 'ev_legacy', name: 'Legacy Stage', level: 0, description: 'The source-authored legacy stage.' }],
+  }));
 
   const projectDir = path.join(tmp, 'project');
   const result = run(['create', projectDir, '--from-folder', sourceDir, '--name', '@test/legacy-import'], { tmp });
@@ -447,6 +450,7 @@ test('create --from-folder imports legacy JSON source, outputs audit', (t) => {
   assert.ok(output.audit, 'must have audit info');
   assert.ok(output.audit.filesFound.includes('KDNA_Core.json'));
   assert.ok(output.audit.filesFound.includes('KDNA_Patterns.json'));
+  assert.ok(output.audit.filesFound.includes('KDNA_Evolution.json'));
   assert.ok(output.imported > 0, `imported cards: ${output.imported}`);
   assert.equal(output.source_mode, 'source_folder');
 
@@ -456,6 +460,10 @@ test('create --from-folder imports legacy JSON source, outputs audit', (t) => {
   const project = JSON.parse(fs.readFileSync(projectPath, 'utf8'));
   assert.equal(project.source_mode, 'source_folder');
   assert.ok(project.cards.length > 0);
+  const importedStage = project.cards.find((card) => card.type === 'evolution_stage');
+  assert.ok(importedStage, 'imports source-authored evolution stage');
+  assert.equal(importedStage.id, 'ev_legacy', 'preserves source stage id');
+  assert.equal(importedStage.fields.level, 0, 'preserves level 0');
   assert.equal(project.lineage.type, 'migrated');
 });
 

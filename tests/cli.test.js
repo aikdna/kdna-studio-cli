@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 
@@ -34,6 +35,25 @@ function assertCanonicalRuntimeContainer(outFile) {
   assert.equal(names.includes('KDNA_Core.json'), false);
   assert.equal(names.includes('KDNA_Patterns.json'), false);
   return layout;
+}
+
+const JUDGMENT_FIELDS = new Set([
+  'one_sentence', 'full_statement', 'why', 'essence', 'boundary',
+  'wrong', 'correct', 'key_distinction', 'question', 'scope',
+  'out_of_scope', 'applies_when', 'does_not_apply_when', 'failure_risk',
+  'acceptable_exceptions', 'trigger_signal', 'when_to_use', 'steps',
+  'name', 'description', 'mitigation',
+]);
+
+function cardJudgmentFingerprint(card) {
+  const fields = card.fields || {};
+  const relevant = {};
+  for (const key of JUDGMENT_FIELDS) {
+    if (key in fields) relevant[key] = fields[key];
+  }
+  return crypto.createHash('sha256')
+    .update(card.type + ':' + JSON.stringify(relevant, Object.keys(relevant).sort()))
+    .digest('hex');
 }
 
 function createLockedProject(t) {
@@ -248,6 +268,71 @@ test('runs the trusted authoring workflow through compile and export', (t) => {
     'content_digest must be sha256: + 64 hex chars');
 });
 
+test('card add --json returns machine-readable card and normalizes routing fields', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const projectDir = path.join(tmp, 'project');
+  let result = run(['create', projectDir, '--name', '@test/json-card'], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+
+  result = run([
+    'card',
+    'add',
+    projectDir,
+    'axiom',
+    '--json',
+    '--field',
+    'one_sentence=Prefer specific evidence over broad claims',
+    '--field',
+    'full_statement=When evaluating a claim the agent must weigh the specificity of the supporting evidence.',
+    '--field',
+    'why=Without this axiom the agent may accept broad plausible-sounding claims as equally credible.',
+    '--field',
+    'applies_when=reviewing content',
+    '--field',
+    'does_not_apply_when[]=pure formatting',
+    '--field',
+    'does_not_apply_when[]=grammar only',
+    '--field',
+    'failure_risk=generic advice',
+    '--field',
+    'confidence=high',
+    '--field',
+    'evidence_type=practice',
+  ], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.added, true);
+  assert.equal(parsed.card.type, 'axiom');
+  assert.deepEqual(parsed.card.fields.applies_when, ['reviewing content']);
+  assert.deepEqual(parsed.card.fields.does_not_apply_when, ['pure formatting', 'grammar only']);
+});
+
+test('export rejects malformed axiom routing fields before publishing v1', (t) => {
+  const { tmp, projectDir } = createLockedProject(t);
+  const projectPath = path.join(projectDir, 'studio.project.json');
+  const project = JSON.parse(fs.readFileSync(projectPath, 'utf8'));
+  project.cards[0].fields.applies_when = 'reviewing content';
+  project.cards[0].human_lock.judgment_fingerprint = cardJudgmentFingerprint(project.cards[0]);
+  fs.writeFileSync(projectPath, JSON.stringify(project, null, 2));
+
+  const outFile = path.join(tmp, 'dist', 'malformed.kdna');
+  const result = run(['export', projectDir, '--out', outFile], { tmp });
+  assert.equal(result.status, 4);
+  assert.match(result.stderr, /applies_when \(must be array\)/);
+});
+
+test('feynman --json emits parseable JSON in no-LLM mode', (t) => {
+  const { tmp, projectDir, cardId } = createLockedProject(t);
+  const result = run(['feynman', projectDir, cardId, '--no-llm', '--json'], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.card_id, cardId);
+  assert.equal(parsed.score, 0);
+  assert.equal(parsed.no_llm, true);
+  assert.ok(parsed.feynman_restatement);
+});
+
 test('refuses signing without runtime identity keys', (t) => {
   const { tmp, projectDir } = createLockedProject(t);
   const outFile = path.join(tmp, 'dist', 'signed.kdna');
@@ -372,6 +457,71 @@ test('create --from-folder imports legacy JSON source, outputs audit', (t) => {
   assert.equal(project.source_mode, 'source_folder');
   assert.ok(project.cards.length > 0);
   assert.equal(project.lineage.type, 'migrated');
+});
+
+test('migrate --check --json handles risk_model object and preserves axiom evidence fields', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const sourceDir = path.join(tmp, 'legacy-source');
+  fs.mkdirSync(sourceDir, { recursive: true });
+  fs.writeFileSync(path.join(sourceDir, 'kdna.json'), JSON.stringify({
+    format: 'kdna',
+    format_version: '1.0',
+    name: '@test/risk-object',
+    version: '0.1.0',
+    judgment_version: '0.1.0',
+  }));
+  fs.writeFileSync(path.join(sourceDir, 'KDNA_Core.json'), JSON.stringify({
+    meta: { domain: 'risk_object', version: '0.1.0', purpose: 'risk object migration' },
+    axioms: [{
+      id: 'ax_risk_object',
+      one_sentence: 'Migration checks must preserve evidence metadata.',
+      full_statement: 'Migration checks must preserve evidence metadata so source assets do not become invalid Studio projects.',
+      why: 'Without preserving these fields a valid source folder is blocked by a false missing-field report.',
+      applies_when: ['migrating source folders'],
+      does_not_apply_when: ['editing only prose'],
+      failure_risk: 'Valid sources may be rejected during migration.',
+      confidence: 'high',
+      evidence_type: 'practice',
+    }],
+    risk_model: {
+      risks: [{
+        name: 'Routing loss',
+        description: 'Routing fields can disappear during migration.',
+        mitigation: 'Check imported card fields before export.',
+      }],
+    },
+    stances: [{ statement: 'Preserve source evidence fields.', applies_when: ['migration'] }],
+  }));
+  fs.writeFileSync(path.join(sourceDir, 'KDNA_Patterns.json'), JSON.stringify({
+    misunderstandings: [{
+      wrong: 'Validation equals usability.',
+      correct: 'Installed consumption must be tested.',
+      key_distinction: 'A valid package can still be undiscoverable after install.',
+      why: 'Agents depend on discovery and routing metadata.',
+    }],
+    self_check: ['Can a user load it?'],
+  }));
+
+  const result = run([
+    'migrate',
+    sourceDir,
+    '--out',
+    path.join(tmp, 'migrated.kdna'),
+    '--name',
+    '@test/risk-object',
+    '--by',
+    'auditor',
+    '--statement',
+    'I confirm this migration check.',
+    '--check',
+    '--json',
+  ], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.total, 5);
+  assert.equal(parsed.would_block, false);
+  assert.equal(parsed.by_type.axiom, undefined);
 });
 
 test('migrate --format v1 exports canonical runtime payload without source entries', (t) => {

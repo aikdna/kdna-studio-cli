@@ -9,6 +9,8 @@
   "files": [
     "bin/",
     "src/",
+    "LICENSE",
+    "NOTICE",
     "README.md"
   ],
   "scripts": {

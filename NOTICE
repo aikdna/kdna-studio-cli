@@ -1,0 +1,12 @@
+kdna-studio-cli
+Copyright 2026 KDNA Authors
+
+This product includes software developed at
+https://github.com/aikdna/kdna-studio-cli
+
+kdna-studio-cli is the official command-line authoring tool for
+creating, reviewing, compiling, and exporting `.kdna` judgment assets
+through the KDNA toolchain.
+
+See LICENSE for the full Apache 2.0 license text. See README.md
+for the authoring guide and command reference.

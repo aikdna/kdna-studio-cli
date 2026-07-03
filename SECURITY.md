@@ -2,11 +2,29 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in KDNA, please **do not** open a public issue.
+Please **do not** report security vulnerabilities through public GitHub issues.
 
-Email: **security@aikdna.com**
+Instead, use one of these private channels:
 
-We will respond within 48 hours and work with you on a coordinated disclosure timeline.
+- **GitHub Private Vulnerability Reporting**: Go to the [Security Advisories](https://github.com/aikdna/kdna-studio-cli/security/advisories/new) page
+- **Email**: security@aikdna.com
+
+We aim to respond within 72 hours and provide a timeline for resolution within
+1 week. Please do not disclose the vulnerability publicly until we have had a
+chance to address it.
+
+## Supported Versions
+
+We actively support the latest mainline release for security updates.
+
+| Component | Supported Versions |
+|-----------|-------------------|
+| KDNA Protocol | Latest tagged release in `aikdna/kdna` |
+| kdna-studio-cli | Latest mainline release |
+| kdna-studio-core | Latest mainline release |
+| kdna-cli | Latest minor release |
+
+Older versions may receive critical security patches on a case-by-case basis.
 
 ## About This Package
 
@@ -15,7 +33,10 @@ This package (`kdna-studio-cli`) is a **CLI authoring tool** for creating, migra
 - **`aikdna/kdna-core`** — crypto profiles, container validation, LoadPlan authorization
 - **`aikdna/kdna-cli`** — protect/unlock/recover/license commands via Core
 
-This package does NOT implement cryptographic primitives directly. For the canonical security model, see `aikdna/kdna`.
+This package does NOT implement cryptographic primitives directly. For the
+canonical security model, see
+[GOVERNANCE.md](https://github.com/aikdna/kdna/blob/main/docs/GOVERNANCE.md)
+in the main protocol repository.
 
 ### API Key Handling
 

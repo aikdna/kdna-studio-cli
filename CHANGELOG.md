@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.12 (2026-07-03)
+
+- Add NOTICE file for Apache 2.0 attribution
+- Expand SECURITY.md with private vulnerability reporting, supported versions, and governance link
+- Include LICENSE and NOTICE in published tarball
+
+
 ## 0.8.11 (2026-07-01)
 
 - Preserve `KDNA_Evolution.json.stages[].id` and numeric `level: 0` when

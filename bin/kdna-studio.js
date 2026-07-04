@@ -2393,7 +2393,7 @@ function cmdLlm(args) {
     console.log(`Provider : ${cfg.provider || '(not set)'}`);
     console.log(`Model    : ${cfg.model || '(not set)'}`);
     console.log(`Base URL : ${cfg.baseURL || '(not set)'}`);
-    console.log(`API Key  : ${cfg.apiKey ? '********' + cfg.apiKey.slice(-4) : '(not set)'}`);
+    console.log(`API Key  : ${cfg.apiKey ? '(set)' : '(not set)'}`);
     return;
   }
   if (sub === 'config') {

@@ -98,6 +98,8 @@ Authoring:
   kdna-studio card unlock <project> <card-id> --by <id> --statement <text>
   kdna-studio compile <project> --out <dir>
   kdna-studio export <project> --format v1 --out <file.kdna> [--allow-incomplete] [--password <pw>|--password-stdin]
+  kdna-studio export-route-card <domain-id> [--out=<path>]          # Export route-card sidecar skeleton
+  kdna-studio export-consumer-index [--entries=<domain-ids>] [--out=<path>]     # Export consumer-index skeleton
 
 AI Authoring (requires LLM config: kdna-studio llm config):
   kdna-studio distill <project> --ai                             # AI-driven candidate extraction from evidence
@@ -3035,6 +3037,8 @@ try {
   else if (cmd === 'audit-locks') cmdAuditLocks(args.slice(1));
   else if (cmd === 'install') cmdStudioInstall(args.slice(1));
   else if (cmd === 'update') cmdStudioUpdate(args.slice(1));
+  else if (cmd === 'export-route-card') cmdExportRouteCard(args.slice(1));
+  else if (cmd === 'export-consumer-index') cmdExportConsumerIndex(args.slice(1));
   else {
     usage();
     fail(`Unknown command: ${cmd}`);
@@ -3043,3 +3047,68 @@ try {
   fail(err.message || String(err));
 }
 })();
+
+function cmdExportRouteCard(args) {
+  const domainId = args[0];
+  if (!domainId) fail('Usage: kdna-studio export-route-card <domain-id> [--out=<path>]');
+  const outArg = option(args, '--out');
+  const outPath = outArg || `${slugSegment(domainId, 'domain')}.route-card.json`;
+
+  const card = {
+    route_card: "0.1.0",
+    domain_id: domainId,
+    role: "primary",
+    boundaries: {
+      applies_when: [],
+      does_not_apply_when: [],
+    },
+    neighbors: [],
+    advisor_edges: [],
+    provenance: {
+      generated_by: "kdna-studio",
+      generated_at: new Date().toISOString(),
+      input_hash: crypto.createHash("sha256").update(domainId).digest("hex").slice(0, 12),
+      review_status: "draft_generated",
+    },
+  };
+
+  const absOut = path.resolve(outPath);
+  fs.mkdirSync(path.dirname(absOut), { recursive: true });
+  fs.writeFileSync(absOut, JSON.stringify(card, null, 2) + "\n");
+  console.log(`Route card skeleton written: ${absOut}`);
+}
+
+function cmdExportConsumerIndex(args) {
+  const entriesArg = option(args, '--entries');
+  const outArg = option(args, '--out');
+  const outPath = outArg || 'consumer-index.json';
+
+  const domainIds = entriesArg
+    ? entriesArg.split(",").map((s) => s.trim()).filter(Boolean)
+    : [];
+
+  const index = {
+    consumer_index: "0.1.0",
+    entries: domainIds.map((domainId) => ({
+      domain_id: domainId,
+      status: "draft_generated",
+      enabled: false,
+      route_preference: {
+        primary_for: [],
+        advisor_for: [],
+        never_for: [],
+      },
+      provenance: {
+        generated_by: "kdna-studio",
+        generated_at: new Date().toISOString(),
+        input_hash: crypto.createHash("sha256").update(domainId).digest("hex").slice(0, 12),
+        source: "studio-export",
+      },
+    })),
+  };
+
+  const absOut = path.resolve(outPath);
+  fs.mkdirSync(path.dirname(absOut), { recursive: true });
+  fs.writeFileSync(absOut, JSON.stringify(index, null, 2) + "\n");
+  console.log(`Consumer index skeleton written: ${absOut}`);
+}

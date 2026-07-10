@@ -23,7 +23,7 @@ Harden Studio routing field lifecycle — append-array --field key[]=value synta
 UX pass #7 — pro-20 migration tooling.
 
 Three new commands added to support the migration window opened
-in v0.8.8 (see `PRIVATE/STATUS/roadmap-2026.md` Section 12).
+in v0.8.8.
 An author migrating 20 source-tree assets with 99 axioms + 140
 risk cards + 70 stance cards had no tooling to see the pre-
 migration state. These three commands fill the gap.
@@ -214,8 +214,8 @@ doc/help-text drift as a class of bugs.
 ## v0.8.3 (2026-06-28)
 
 This release closes 16 issues filed against the v0.8.x line (issues #36
-through #48, plus one follow-up surfaced by an internal round-trip
-review on the same day). Bumps `@aikdna/kdna-studio-core` from `^1.7.1`
+through #48, plus one follow-up identified during compatibility testing).
+Bumps `@aikdna/kdna-studio-core` from `^1.7.1`
 to `^1.7.2`; that release ships the matching `lockCard` schema gate,
 `buildPayload` completeness fix, and the `JUDGMENT_CARD_TYPES_FOR_COMPILE`
 unification that this CLI's `migrate` / `export --format v1` paths

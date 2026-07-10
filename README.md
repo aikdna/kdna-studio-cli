@@ -135,6 +135,16 @@ Being part of the official toolchain means this package is maintained by the
 KDNA project. It does not make any specific asset endorsed or suitable for
 every use case.
 
+## Consumption sidecars
+
+Studio can export route-card and consumer-index drafts for applications that
+use the consumption runtime. These files are separate from the `.kdna` export
+and are disabled by default. They are review inputs, not claims that an asset
+is automatically suitable for a task or ready for a production runtime.
+
+Use the KDNA CLI review and evaluation commands before an application enables
+a sidecar entry.
+
 ## Identity
 
 ```bash

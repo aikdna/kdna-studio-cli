@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.13 (2026-07-10)
+
+- Add `kdna-studio export-route-card` and `kdna-studio export-consumer-index` sidecar skeleton commands. Emitted entries are `enabled: false` with `review_status: draft_generated` — disabled-by-default candidates for downstream compose-review workflow.
+- Remove a `PRIVATE/STATUS/roadmap-2026.md` reference from CHANGELOG and replace an "internal round-trip review" wording with "identified during compatibility testing" to keep the public CHANGELOG safe.
+
 ## 0.8.12 (2026-07-03)
 
 - Add NOTICE file for Apache 2.0 attribution

@@ -9,6 +9,7 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const cbor = require('cbor-x');
 
 const studioBin = path.join(__dirname, '..', 'bin', 'kdna-studio.js');
 
@@ -48,10 +49,10 @@ test('e2e: pattern → approve → export → patterns in payload', () => {
     });
     const approveR = run(['card', 'approve', pDir, '--all', '--by', 'me', '--statement', 'ok']);
     assert.equal(approveR.status, 0, approveR.stderr);
-    const exportR = run(['export', pDir, '--format', 'v1', '--out', path.join(tmp, 'out.kdna')]);
+    const exportR = run(['export', pDir, '--out', path.join(tmp, 'out.kdna')]);
     assert.equal(exportR.status, 0, exportR.stderr);
     runKdna(['unpack', path.join(tmp, 'out.kdna'), path.join(tmp, 'unpacked')]);
-    const payload = JSON.parse(fs.readFileSync(path.join(tmp, 'unpacked', 'payload.kdnab'), 'utf8'));
+    const payload = cbor.decode(fs.readFileSync(path.join(tmp, 'unpacked', 'payload.kdnab')));
     const patternCards = (payload.patterns || []).filter(p => p.type === 'test_pattern');
     assert.ok(patternCards.length > 0, `Expected >0 pattern cards in payload patterns, got ${patternCards.length}`);
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
@@ -71,9 +72,9 @@ test('e2e: stances → approve → export → stances in payload', () => {
     addCard(pDir, 'stance', { statement: 'Stance one: Always diagnose before prescribing.' });
     addCard(pDir, 'stance', { statement: 'Stance two: Trust burns slowly and is lost quickly.' });
     run(['card', 'approve', pDir, '--all', '--by', 'me', '--statement', 'ok']);
-    run(['export', pDir, '--format', 'v1', '--out', path.join(tmp, 'out.kdna')]);
+    run(['export', pDir, '--out', path.join(tmp, 'out.kdna')]);
     runKdna(['unpack', path.join(tmp, 'out.kdna'), path.join(tmp, 'unpacked')]);
-    const payload = JSON.parse(fs.readFileSync(path.join(tmp, 'unpacked', 'payload.kdnab'), 'utf8'));
+    const payload = cbor.decode(fs.readFileSync(path.join(tmp, 'unpacked', 'payload.kdnab')));
     assert.equal((payload.core?.stances || []).length, 2, 'Expected 2 stances in payload');
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });

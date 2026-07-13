@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.14 (2026-07-13)
+
+- Make `export` and `migrate` use the single current KDNA runtime format by
+  default; remove the alternate distribution branch and reject `--format`.
+- Emit strict CBOR payloads and encrypted envelopes through Studio Core
+  1.7.11, then validate and pack with KDNA Core 0.15.12.
+- Replace versioned Core API calls in tests and runtime integration with the
+  current `load`/Runtime Capsule contract.
+- Keep `compile` as an authoring intermediate; only `export` produces a
+  distributable `.kdna` asset.
+
 ## 0.8.13 (2026-07-10)
 
 - Add `kdna-studio export-route-card` and `kdna-studio export-consumer-index` sidecar skeleton commands. Emitted entries are `enabled: false` with `review_status: draft_generated` — disabled-by-default candidates for downstream compose-review workflow.

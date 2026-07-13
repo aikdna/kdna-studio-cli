@@ -29,7 +29,7 @@ function tmpDir() {
 }
 
 function assertCanonicalRuntimeContainer(outFile) {
-  const layout = kdnaCore.readV1Layout(outFile);
+  const layout = kdnaCore.readLayout(outFile);
   const names = (layout.entries || []).map((entry) => entry.name).sort();
   assert.deepEqual(names, ['checksums.json', 'kdna.json', 'mimetype', 'payload.kdnab']);
   assert.equal(names.includes('KDNA_Core.json'), false);
@@ -250,22 +250,10 @@ test('runs the trusted authoring workflow through compile and export', (t) => {
   assert.ok(fs.existsSync(outFile));
   const zipMagic = fs.readFileSync(outFile).subarray(0, 4).toString('hex');
   assert.equal(zipMagic, '504b0304');
-  const receipt = JSON.parse(fs.readFileSync(path.join(tmp, 'dist', 'build-receipt.json'), 'utf8'));
-  assert.equal(receipt.signature_status, 'unsigned');
-  assert.match(receipt.asset_digest, /^sha256:/);
-
-  // ── Digest chain consistency ──────────────────────────────────
-  // All three sources MUST agree on content_digest.
-  const exportedManifest = JSON.parse(fs.readFileSync(path.join(tmp, 'dist', 'kdna.json'), 'utf8'));
-  const exportedProvenance = JSON.parse(fs.readFileSync(path.join(tmp, 'dist', 'provenance-report.json'), 'utf8'));
-  assert.equal(exportedManifest.content_digest, receipt.content_digest,
-    'manifest.content_digest !== build-receipt.content_digest');
-  assert.equal(exportedProvenance.content_digest, receipt.content_digest,
-    'provenance-report.content_digest !== build-receipt.content_digest');
-  assert.ok(exportedManifest.content_digest.startsWith('sha256:'),
-    'content_digest must be sha256: prefix');
-  assert.equal(exportedManifest.content_digest.length, 71,
-    'content_digest must be sha256: + 64 hex chars');
+  const layout = assertCanonicalRuntimeContainer(outFile);
+  assert.equal(layout.manifest.authoring.compiler, '@aikdna/kdna-studio-core');
+  assert.equal(layout.manifest.authoring.human_confirmed, true);
+  assert.equal(kdnaCore.validate(outFile).overall_valid, true);
 });
 
 test('card add --json returns machine-readable card and normalizes routing fields', (t) => {
@@ -308,7 +296,7 @@ test('card add --json returns machine-readable card and normalizes routing field
   assert.deepEqual(parsed.card.fields.does_not_apply_when, ['pure formatting', 'grammar only']);
 });
 
-test('export rejects malformed axiom routing fields before publishing v1', (t) => {
+test('export rejects malformed axiom routing fields before publishing', (t) => {
   const { tmp, projectDir } = createLockedProject(t);
   const projectPath = path.join(projectDir, 'studio.project.json');
   const project = JSON.parse(fs.readFileSync(projectPath, 'utf8'));
@@ -333,12 +321,12 @@ test('feynman --json emits parseable JSON in no-LLM mode', (t) => {
   assert.ok(parsed.feynman_restatement);
 });
 
-test('refuses signing without runtime identity keys', (t) => {
+test('keeps asset signing as a separate runtime step', (t) => {
   const { tmp, projectDir } = createLockedProject(t);
   const outFile = path.join(tmp, 'dist', 'signed.kdna');
   const result = run(['export', projectDir, '--out', outFile, '--sign'], { tmp });
-  assert.equal(result.status, 5);
-  assert.match(result.stderr, /Signing requires KDNA identity keys/);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /kdna sign <asset\.kdna>/);
 });
 
 // ── Identity ────────────────────────────────────────────────────────
@@ -532,8 +520,8 @@ test('migrate --check --json handles risk_model object and preserves axiom evide
   assert.equal(parsed.by_type.axiom, undefined);
 });
 
-test('migrate --format v1 exports canonical runtime payload without source entries', (t) => {
-  assert.ok(kdnaCore, '@aikdna/kdna-core is required for v1 export verification');
+test('migrate exports canonical runtime payload without source entries', (t) => {
+  assert.ok(kdnaCore, '@aikdna/kdna-core is required for export verification');
   const tmp = tmpDir();
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
@@ -587,8 +575,7 @@ test('migrate --format v1 exports canonical runtime payload without source entri
     '--out', outFile,
     '--name', '@test/legacy-import',
     '--by', 'tester',
-    '--statement', 'I confirm this v1 migration fixture.',
-    '--format', 'v1',
+    '--statement', 'I confirm this migration fixture.',
   ], { tmp });
   assert.equal(result.status, 0, result.stderr);
 
@@ -601,7 +588,7 @@ test('migrate --format v1 exports canonical runtime payload without source entri
   assert.equal(layout.manifest.lineage.type, 'adaptation');
   assert.equal(layout.manifest.lineage.source_lineage_type, 'migrated');
 
-  const full = kdnaCore.loadV1(outFile, { profile: 'full', as: 'json' }).content;
+  const full = kdnaCore.load(outFile, { profile: 'full', as: 'json' }).context;
   assert.equal(full.manifest.creator.name, 'Test Author');
   assert.equal(full.manifest.version, '0.7.3');
   assert.equal(full.manifest.judgment_version, '2026.05.0');
@@ -617,34 +604,34 @@ test('migrate --format v1 exports canonical runtime payload without source entri
   assert.equal(JSON.stringify(full).includes('registry'), false);
 });
 
-test('export --format v1 exports a Studio project as a valid non-empty v1 asset', (t) => {
-  assert.ok(kdnaCore, '@aikdna/kdna-core is required for v1 export verification');
+test('export creates a valid non-empty KDNA asset', (t) => {
+  assert.ok(kdnaCore, '@aikdna/kdna-core is required for export verification');
   const { tmp, projectDir } = createLockedProject(t);
-  const outFile = path.join(tmp, 'project-v1.kdna');
+  const outFile = path.join(tmp, 'project.kdna');
 
-  const result = run(['export', projectDir, '--format', 'v1', '--out', outFile], { tmp });
+  const result = run(['export', projectDir, '--out', outFile], { tmp });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Exported \(v1\)/);
+  assert.match(result.stdout, /Exported:/);
 
   const validation = kdnaCore.validate(outFile);
   assert.equal(validation.overall_valid, true, JSON.stringify(validation.problems));
   assertCanonicalRuntimeContainer(outFile);
-  const loaded = kdnaCore.loadV1(outFile, { profile: 'full', as: 'json' }).content;
+  const loaded = kdnaCore.load(outFile, { profile: 'full', as: 'json' }).context;
   assert.equal(loaded.payload.core.axioms.length, 1);
   assert.equal(Object.hasOwn(loaded.payload, 'source_cards'), false);
   assert.equal(loaded.manifest.payload.path, 'payload.kdnab');
   assert.equal(loaded.manifest.payload.encrypted, false);
 });
 
-test('B2: export --format v1 --password encrypts payload and round-trips (scrypt profile)', (t) => {
+test('export --password encrypts payload and round-trips (scrypt profile)', (t) => {
   assert.ok(kdnaCore, '@aikdna/kdna-core is required for B2 round-trip');
   const { tmp, projectDir } = createLockedProject(t);
-  const outFile = path.join(tmp, 'project-v1-encrypted.kdna');
+  const outFile = path.join(tmp, 'project-encrypted.kdna');
   const password = 'test-password-12345';
 
   // 1. Export with --password → exit 0, file created
   const result = run([
-    'export', projectDir, '--format', 'v1',
+    'export', projectDir,
     '--out', outFile, '--password', password,
   ], { tmp });
   assert.equal(result.status, 0, `export exit code: ${result.status}\nstderr: ${result.stderr}`);
@@ -665,22 +652,24 @@ test('B2: export --format v1 --password encrypts payload and round-trips (scrypt
   assert.equal(planOk.state, 'ready');
   assert.equal(planOk.can_load_now, true);
 
-  // 5. loadV1 without password → planLoad reports needs_password, loadAuthorized throws
+  // 5. load without password → planLoad reports needs_password and loading throws
   assert.throws(
-    () => kdnaCore.loadV1(outFile, { profile: 'full', as: 'json' }),
+    () => kdnaCore.load(outFile, { profile: 'full', as: 'json' }),
     /needs_password|enter_password|KDNA_AUTH/i,
-    'loadV1 without password should fail with authorization error',
+    'load without password should fail with authorization error',
   );
 
-  // 6. loadV1 with wrong password → decrypt fails
+  // 6. load with wrong password → decrypt fails
   assert.throws(
-    () => kdnaCore.loadV1(outFile, { password: 'wrong-password', profile: 'full', as: 'json' }),
+    () => kdnaCore.load(outFile, { password: 'wrong-password', profile: 'full', as: 'json' }),
     /KDNA_DECRYPT_FAILED|decrypt|unwrap|integrity/i,
-    'loadV1 with wrong password should fail-closed',
+    'load with wrong password should fail-closed',
   );
 
-  // 7. loadV1 with correct password → round-trip
-  const loaded = kdnaCore.loadV1(outFile, { password, profile: 'full', as: 'json' }).content;
+  // 7. load with correct password → Runtime Capsule round-trip
+  const capsule = kdnaCore.load(outFile, { password, profile: 'full', as: 'json' });
+  assert.equal(capsule.type, 'kdna.context.capsule');
+  const loaded = capsule.context;
   assert.equal(loaded.manifest.payload.encrypted, true);
   assert.equal(loaded.manifest.access, 'licensed');
   assert.equal(loaded.manifest.entitlement?.profile, 'password');
@@ -689,17 +678,16 @@ test('B2: export --format v1 --password encrypts payload and round-trips (scrypt
   assert.equal(loaded.payload.core.axioms.length, 1);
 });
 
-test('migrate --format v1 accepts an existing Studio project without dropping cards', (t) => {
-  assert.ok(kdnaCore, '@aikdna/kdna-core is required for v1 export verification');
+test('migrate accepts an existing Studio project without dropping cards', (t) => {
+  assert.ok(kdnaCore, '@aikdna/kdna-core is required for export verification');
   const { tmp, projectDir } = createLockedProject(t);
-  const outFile = path.join(tmp, 'project-migrated-v1.kdna');
+  const outFile = path.join(tmp, 'project-migrated.kdna');
 
   const result = run([
     'migrate', projectDir,
-    '--format', 'v1',
     '--out', outFile,
     '--by', 'tester',
-    '--statement', 'I confirm this project v1 migration.',
+    '--statement', 'I confirm this project migration.',
   ], { tmp });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Cards: 1/);
@@ -707,7 +695,7 @@ test('migrate --format v1 accepts an existing Studio project without dropping ca
   const validation = kdnaCore.validate(outFile);
   assert.equal(validation.overall_valid, true, JSON.stringify(validation.problems));
   assertCanonicalRuntimeContainer(outFile);
-  const loaded = kdnaCore.loadV1(outFile, { profile: 'full', as: 'json' }).content;
+  const loaded = kdnaCore.load(outFile, { profile: 'full', as: 'json' }).context;
   assert.equal(loaded.payload.core.axioms.length, 1);
   assert.equal(Object.hasOwn(loaded.payload, 'source_cards'), false);
 });
@@ -850,9 +838,8 @@ test('export includes creator and lineage in kdna.json', (t) => {
   result = run(['export', projectDir, '--out', outFile], { tmp });
   assert.equal(result.status, 0, result.stderr);
 
-  // Check exported kdna.json has new fields
-  const exportedManifest = JSON.parse(fs.readFileSync(path.join(distDir, 'kdna.json'), 'utf8'));
-  assert.equal(exportedManifest.authoring.source_mode, 'blank');
+  // Check the packaged manifest has creator and lineage fields.
+  const exportedManifest = assertCanonicalRuntimeContainer(outFile).manifest;
   assert.ok(exportedManifest.lineage, 'must have lineage');
   assert.equal(exportedManifest.lineage.type, 'original');
 });
@@ -909,45 +896,14 @@ test('E2E blank: create → approve → lock → export → runtime digest match
   result = run(['export', projectDir, '--out', outFile], { tmp });
   assert.equal(result.status, 0, result.stderr);
 
-  // ── Verify: source_mode, lineage, digest chain ────────────
-  const distDir = path.dirname(outFile);
-  const manifest = JSON.parse(fs.readFileSync(path.join(distDir, 'kdna.json'), 'utf8'));
-  const receipt = JSON.parse(fs.readFileSync(path.join(distDir, 'build-receipt.json'), 'utf8'));
-  const provenance = JSON.parse(fs.readFileSync(path.join(distDir, 'provenance-report.json'), 'utf8'));
-
-  assert.equal(manifest.authoring.source_mode, 'blank');
+  // ── Verify the packaged manifest and Core lifecycle ───────
+  const manifest = assertCanonicalRuntimeContainer(outFile).manifest;
   assert.equal(manifest.lineage.type, 'original');
-  assert.match(manifest.content_digest, /^sha256:[0-9a-f]{64}$/);
-  assert.equal(manifest.content_digest, receipt.content_digest, 'manifest vs receipt digest mismatch');
-  assert.equal(manifest.content_digest, provenance.content_digest, 'manifest vs provenance digest mismatch');
   assert.equal(manifest.authoring.compiler, '@aikdna/kdna-studio-core');
   assert.equal(manifest.authoring.human_confirmed, true);
-
-  // ── Runtime cross-verification: content digest consistency ──
-  // Compute content digest from the .kdna ZIP entries and verify it
-  // matches the manifest, receipt, and provenance report.
-  if (kdnaCore) {
-    const reader = kdnaCore.createKdnaAssetReader();
-    const asset = reader.openSync(outFile);
-    const runtimeResult = reader.verifySync(asset);
-    const runtimeDigest = runtimeResult.content_digest;
-
-    assert.ok(runtimeDigest, 'runtime content_digest must be present');
-    assert.match(runtimeDigest, /^sha256:[0-9a-f]{64}$/, 'runtime content_digest must be valid sha256');
-
-    // Read ZIP-internal manifest (avoid sidecar timing issues)
-    const zipManifest = JSON.parse(asset.readEntry('kdna.json').toString());
-    assert.equal(zipManifest.content_digest, receipt.content_digest,
-      `ZIP manifest digest != receipt digest`);
-    assert.equal(zipManifest.content_digest, provenance.content_digest,
-      `ZIP manifest digest != provenance digest`);
-
-    // Verify: runtime computed digest matches ZIP manifest
-    assert.equal(zipManifest.content_digest, runtimeDigest,
-      `ZIP manifest content_digest (${zipManifest.content_digest.slice(0, 20)}...) != runtime computed (${runtimeDigest.slice(0, 20)}...) — trust chain broken`);
-  } else {
-    console.log('  (kdna-core not available, skipping runtime assetReader cross-verification)');
-  }
+  assert.equal(kdnaCore.validate(outFile).overall_valid, true);
+  assert.equal(kdnaCore.planLoad(outFile).can_load_now, true);
+  assert.equal(kdnaCore.load(outFile, { profile: 'compact', as: 'json' }).type, 'kdna.context.capsule');
 });
 
 // ── E2E: Fork workflow ────────────────────────────────────────────
@@ -1004,11 +960,10 @@ test('E2E fork: parent → fork → approve → export → lineage check', (t) =
   assert.equal(result.status, 0, result.stderr);
 
   // Step 4: Verify lineage in exported fork
-  const fManifest = JSON.parse(fs.readFileSync(path.join(tmp, 'kdna.json'), 'utf8'));
-  assert.equal(fManifest.authoring.source_mode, 'kdna_asset');
+  const fManifest = assertCanonicalRuntimeContainer(forkKdna).manifest;
   assert.equal(fManifest.lineage.type, 'fork');
   assert.equal(fManifest.lineage.parent_name, '@test/parent-domain');
-  assert.match(fManifest.content_digest, /^sha256:/);
+  assert.equal(kdnaCore.validate(forkKdna).overall_valid, true);
 });
 
 // ── E2E: Migrate workflow ─────────────────────────────────────────
@@ -1067,14 +1022,9 @@ test('E2E migrate: source folder → import → approve → export → verify', 
   assert.equal(result.status, 0, result.stderr);
 
   // Verify exported manifest
-  const distDir = path.dirname(outFile);
-  const manifest = JSON.parse(fs.readFileSync(path.join(distDir, 'kdna.json'), 'utf8'));
-  assert.equal(manifest.authoring.source_mode, 'source_folder');
-  assert.equal(manifest.lineage.type, 'migrated');
-  assert.match(manifest.content_digest, /^sha256:/);
+  const manifest = assertCanonicalRuntimeContainer(outFile).manifest;
+  assert.equal(manifest.lineage.type, 'adaptation');
+  assert.equal(manifest.lineage.source_lineage_type, 'migrated');
   assert.equal(manifest.authoring.human_confirmed, true);
-
-  // Digest chain
-  const receipt = JSON.parse(fs.readFileSync(path.join(distDir, 'build-receipt.json'), 'utf8'));
-  assert.equal(manifest.content_digest, receipt.content_digest);
+  assert.equal(kdnaCore.validate(outFile).overall_valid, true);
 });

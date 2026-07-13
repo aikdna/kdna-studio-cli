@@ -82,7 +82,7 @@ Create (three entry paths):
   kdna-studio create <project-dir> --from-folder <source-dir> --name <@scope/name>
 
 Migrate (dev source or Studio project → canonical .kdna in one command):
-  kdna-studio migrate <source-dir|project> --format v1 --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--allow-incomplete] [--sign] [--passphrase <pw>|--passphrase-stdin]
+  kdna-studio migrate <source-dir|project> --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--allow-incomplete] [--sign] [--passphrase <pw>|--passphrase-stdin]
   kdna-studio migrate <source-dir> --check --name <@scope/name>   # pre-flight: report which fields would block the export without writing the .kdna
   kdna-studio audit-locks <project> [--type axiom|risk|stance|...] [--json]   # list cards with missing Human Lock fields (per-card-type, per-field)
 
@@ -97,7 +97,7 @@ Authoring:
   kdna-studio card approve <project> <card-id|--all> --by <id> --statement <text> [--sign] [--passphrase <pass>]
   kdna-studio card unlock <project> <card-id> --by <id> --statement <text>
   kdna-studio compile <project> --out <dir>
-  kdna-studio export <project> --format v1 --out <file.kdna> [--allow-incomplete] [--password <pw>|--password-stdin]
+  kdna-studio export <project> --out <file.kdna> [--allow-incomplete] [--password <pw>|--password-stdin]
   kdna-studio export-route-card <domain-id> [--out=<path>]          # Export route-card sidecar skeleton
   kdna-studio export-consumer-index [--entries=<domain-ids>] [--out=<path>]     # Export consumer-index skeleton
 
@@ -341,6 +341,13 @@ function titleFromName(name, assetId) {
   return assetId;
 }
 
+function packageNameFromManifest(manifest = {}) {
+  if (manifest.name) return manifest.name;
+  const match = String(manifest.asset_id || '').match(/^kdna:([^:]+):(.+)$/);
+  if (match) return `@${match[1]}/${match[2]}`;
+  return manifest.title || manifest.asset_id || null;
+}
+
 function publicManifestMetadata(raw = {}) {
   const copy = { ...raw };
   delete copy.registry;
@@ -367,8 +374,8 @@ function importedCard(type, fields = {}, id = null) {
 }
 
 // Bug (#3 + #4 UX): payload.kdnab intentionally carries the same
-// misunderstanding card in two places — `patterns[]` (the v1 schema's
-// primary card list) and `reasoning.failure_modes[]` (the v1 schema's
+// misunderstanding card in two places — `patterns[]` (the runtime schema's
+// primary card list) and `reasoning.failure_modes[]` (the runtime schema's
 // "what bad judgment looks like" view). Both share the same `id`.
 // Prior version imported both, doubling every misunderstanding on
 // re-import. The dedup is by id: when a card with the same id is
@@ -409,15 +416,15 @@ function decodePayload(bytes, manifest = {}) {
   return cbor.decode(raw);
 }
 
-// V1 path: trust the producer (export-runtime) to have already shaped
-// each card's fields. The v1 producer normalises everything into a
+// Runtime path: trust the producer (export-runtime) to have already shaped
+// each card's fields. The producer normalises everything into a
 // canonical shape, so we just round-trip the raw object. Bug (#57):
 // the legacy path below explicitly constructs each field. The two
-// paths cannot be unified without losing either v1's per-field
+// paths cannot be unified without losing either runtime per-field
 // guarantees or legacy's defensive defaults — the asymmetry is
 // intentional. Documented here so a future reader does not "fix" it
 // by collapsing one path into the other.
-function cardsFromV1Payload(payload) {
+function cardsFromRuntimePayload(payload) {
   resetImportedIds();
   const cards = [];
   for (const sourceCard of (Array.isArray(payload.source_cards) ? payload.source_cards : [])) {
@@ -462,7 +469,7 @@ function cardsFromV1Payload(payload) {
   }
   for (const pattern of (Array.isArray(payload.patterns) ? payload.patterns : [])) {
     // Bug (#146): prior version dropped any payload.patterns entry
-    // that lacked an explicit `type` field. The v1 schema lists
+    // that lacked an explicit `type` field. The runtime schema lists
     // misunderstandings in patterns[] without a `type` discriminator
     // (their shape is `{wrong, correct, key_distinction, why}`),
     // and several exporters omit `type` to keep the on-the-wire
@@ -518,8 +525,8 @@ function cardsFromV1Payload(payload) {
   for (const failureMode of (Array.isArray(payload.reasoning?.failure_modes) ? payload.reasoning?.failure_modes : [])) {
     // Bug (#145 follow-up): the prior version dropped three
     // judgment fields (failure_risk, applies_when, does_not_apply_when)
-    // when reading failure_modes back out of a v1 asset. A Studio
-    // project that round-tripped through `migrate --format v1` lost
+    // when reading failure_modes back out of an asset. A Studio
+    // project that round-tripped through `migrate` lost
     // these fields every time. The fix reads them through, matching
     // the export-side map in kdna-studio-core's buildPayload.
     pushImportedCard(cards, 'misunderstanding', {
@@ -640,7 +647,7 @@ function cardsFromLegacyPayload(payload) {
 function cardsFromPayload(payload) {
   if (!payload || typeof payload !== 'object') return [];
   if (payload.profile === 'judgment-profile-v1' || payload.core || payload.source_cards) {
-    return cardsFromV1Payload(payload);
+    return cardsFromRuntimePayload(payload);
   }
   if (payload.kind === 'kdna.payload' || payload.judgment) {
     return cardsFromLegacyPayload(payload);
@@ -648,13 +655,13 @@ function cardsFromPayload(payload) {
   return [];
 }
 
-function buildV1Manifest(project, name) {
+function buildManifest(project, name) {
   // Bug (#58): prior version was a hand-rolled manifest builder that
   // shared zero logic with the canonical buildManifest in
   // @aikdna/kdna-studio-core/src/export-runtime. The two paths
   // diverged on every field added since 1.0 (lineage, load_contract,
   // authoring block, etc.). The fix delegates the manifest shape to
-  // kdna-studio-core's buildManifest so the v1 path is the single
+  // kdna-studio-core's buildManifest so runtime export has a single
   // source of truth.
   //
   // We still need a default manifest here (the exportRuntimeAsset
@@ -821,19 +828,19 @@ function importFromKdna(kdnaPath) {
   const manifest = JSON.parse(entries.get('kdna.json').toString());
   const lineage = {
     type: 'fork',
-    parent_name: manifest.name || manifest.title || manifest.asset_id || null,
+    parent_name: packageNameFromManifest(manifest),
     parent_asset_uid: manifest.asset_uid || null,
     parent_version: manifest.version || null,
     parent_asset_digest: manifest.content_digest || manifest.asset_digest || null,
   };
 
-  // Extract cards. Modern v1 packages carry `kdna.json` + `payload.kdnab`
+  // Extract cards. Current packages carry `kdna.json` + `payload.kdnab`
   // and use the unified judgment profile. Legacy packages split content
   // across KDNA_*.json files. Prefer payload.kdnab when present — it
   // covers all 8+ card types (axiom / boundary / risk / aesthetic /
   // ontology / misunderstanding / self_check / scenario / case /
   // reasoning / evolution_stage / stance / framework / term / banned_term)
-  // via cardsFromPayload / cardsFromV1Payload.
+  // via cardsFromRuntimePayload / cardsFromLegacyPayload.
   const importedCards = [];
   if (entries.has('payload.kdnab')) {
     try {
@@ -843,7 +850,7 @@ function importFromKdna(kdnaPath) {
       fail(`Could not import cards from payload.kdnab: ${e.message}`);
     }
   } else if (entries.has('KDNA_Core.json') || entries.has('KDNA_Patterns.json')) {
-    // Legacy fallback — used when the v1 asset has no payload.kdnab
+    // Source-tree fallback — used when an imported source has no payload.kdnab
     // (i.e. the asset predates the 0.7 split). Bug (#67): prior
     // version only handled axiom / ontology / boundary / misunderstanding
     // / self_check — 5 of the 14 card types — so every other type
@@ -942,7 +949,7 @@ function importFromKdna(kdnaPath) {
   }
 
   if (importedCards.length === 0) {
-    fail(`No cards could be extracted from ${absKdna}. Expected payload.kdnab (v1) or KDNA_Core.json + KDNA_Patterns.json (legacy).`);
+    fail(`No cards could be extracted from ${absKdna}. Expected payload.kdnab or an importable KDNA_Core.json + KDNA_Patterns.json source tree.`);
   }
 
   // Bug #15 / #28 follow-up: surface the source's KDNA_Patterns /
@@ -1116,7 +1123,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
       importedCards.push(cardApi.createCard('self_check', { question: q }));
     }
     // Bug (aesthetic round-trip): prior version dropped
-    // `patterns.aesthetics` on import. `cardsFromV1Payload` and
+    // `patterns.aesthetics` on import. `cardsFromRuntimePayload` and
     // `cardsFromLegacyPayload` both read the field, so a domain
     // that authored aesthetic cards in either format would lose
     // them when imported through `create --from-folder`. The fix
@@ -1781,7 +1788,7 @@ function cmdMigrate(args) {
   // attempted the full pipeline — read source folder, import to
   // Studio project, lock all cards, then export. An author migrating
   // 20 source-tree assets had no way to know in advance whether
-  // the assets would pass the v1.7.2+ Human Lock gate. The fix
+  // the assets would pass the current Human Lock gate. The fix
   // adds `--check` which runs the import + the critical-missing
   // check + the lock-gate check, then prints a report and exits
   // without writing the .kdna file. Pair with `audit-locks` for
@@ -1806,7 +1813,9 @@ function cmdMigrate(args) {
   }
 
   const sourcePath = path.resolve(sourceDir);
-  const format = option(args, '--format');
+  if (option(args, '--format')) {
+    fail('The --format option is not supported. KDNA has one current asset format.');
+  }
   const isStudioProject = fs.existsSync(path.join(sourcePath, 'studio.project.json'));
   let tmpDir = null;
   let projectPath = null;
@@ -1814,14 +1823,14 @@ function cmdMigrate(args) {
 
   // Wrap everything in try / finally so a mid-migrate failure (e.g. missing
   // critical fields, gate blocked, signing error) still cleans up tmpDir.
-  // Bug: prior code only cleaned up on the v1 and v2 success paths; any
-  // non-v1 export path that threw leaked `/tmp/kdna-migrate-*` entries
+  // Bug: prior code only cleaned up on its success paths; any
+  // older export path that threw leaked `/tmp/kdna-migrate-*` entries
   // indefinitely.
   try {
   // Step 1: import dev source, or use an existing Studio project directly.
   let creatorIdentity = null;
   try { creatorIdentity = creatorApi.loadIdentity(); } catch { /* proceed without */ }
-  if (format === 'v1' && isStudioProject) {
+  if (isStudioProject) {
     const loaded = readProject(sourcePath);
     project = loaded.project;
     projectPath = loaded.projectPath;
@@ -1938,34 +1947,8 @@ function cmdMigrate(args) {
 
   const absOut = path.resolve(out);
   const allowIncomplete = args.includes('--allow-incomplete');
-  // Step 4: v1 export or v2 compile + export
-  if (format === 'v1') {
-    exportProjectV1(project, name, absOut, { allowIncomplete });
-    if (tmpDir) {
-      try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* cleanup */ }
-    }
-    return;
-  }
-  const { result } = compileProject(tmpDir);
-  const files = { ...result.files };
-  files['README.md'] = compileApi.generateReadme(project);
-  files.LICENSE = project.license?.type || 'UNSPECIFIED';
-  files.mimetype = 'application/vnd.aikdna.kdna+zip';
-
-  const entries = [['mimetype', files.mimetype]];
-  for (const name of Object.keys(files).filter(k => k !== 'mimetype').sort()) {
-    entries.push([name, files[name]]);
-  }
-  const zip = buildZip(entries);
-  fs.mkdirSync(path.dirname(absOut), { recursive: true });
-  fs.writeFileSync(absOut, zip);
-  console.log(`Exported: ${absOut}`);
-  console.log(`  Name: ${name}`);
-  console.log(`  Cards: ${project.cards.length} (${locked} locked)`);
-  console.log(`  Files: ${Object.keys(files).length}`);
-  console.log(`  Build ID: ${result.identity.build_id}`);
-
-  // Cleanup temp
+  // Step 4: export the canonical runtime asset.
+  exportProject(project, name, absOut, { allowIncomplete });
   if (tmpDir) {
     try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* best effort */ }
     tmpDir = null;
@@ -1982,13 +1965,13 @@ function cmdMigrate(args) {
   }
 }
 
-function exportProjectV1(project, name, outPath, opts = {}) {
+function exportProject(project, name, outPath, opts = {}) {
   let core;
   try { core = require('@aikdna/kdna-core'); } catch (e) {
-    fail('@aikdna/kdna-core@0.11.0+ is required for v1 export.', 2);
+    fail('@aikdna/kdna-core is required for runtime export.', 2);
   }
   if (!exportRuntime || typeof exportRuntime.exportRuntimeAsset !== 'function') {
-    fail('@aikdna/kdna-studio-core with exportRuntime.exportRuntimeAsset is required for v1 export.', 2);
+    fail('@aikdna/kdna-studio-core with exportRuntime.exportRuntimeAsset is required for runtime export.', 2);
   }
   const criticalIssues = criticalAxiomIssues(project);
   if (criticalIssues.length > 0) {
@@ -1999,7 +1982,7 @@ function exportProjectV1(project, name, outPath, opts = {}) {
       );
     } else {
       fail(
-        `Cannot export v1: ${criticalIssues.length} critical axiom field issue(s).\n` +
+        `Cannot export: ${criticalIssues.length} critical axiom field issue(s).\n` +
         `  These fields are required for domain routing (kdna-loader uses them to\n` +
         `  decide when to load this domain). Fix them first, or pass\n` +
         `  --allow-incomplete to bypass.\n` +
@@ -2016,13 +1999,13 @@ function exportProjectV1(project, name, outPath, opts = {}) {
       for (const issue of gate.issues) console.warn(`  - ${issue.cardId}: ${issue.reason}`);
     } else {
       const reasons = gate.issues.map((i) => `${i.cardId}: ${i.reason}`).join('\n  - ');
-      fail(`Human Lock Gate blocked v1 export:\n  - ${reasons}\nUse --allow-incomplete to bypass.`, EXIT.HUMAN_LOCK_REQUIRED);
+      fail(`Human Lock Gate blocked export:\n  - ${reasons}\nUse --allow-incomplete to bypass.`, EXIT.HUMAN_LOCK_REQUIRED);
     }
   }
   const lockedCards = (project.cards || []).filter(c => c.locked);
-  const v1Dir = trackTempDir(fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-v1-')));
+  const runtimeDir = trackTempDir(fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-runtime-')));
   try {
-    const manifestDefaults = buildV1Manifest(project, name);
+    const manifestDefaults = buildManifest(project, name);
     const runtimeAsset = exportRuntime.exportRuntimeAsset(project, {
       asset_id: manifestDefaults.asset_id,
       asset_uid: manifestDefaults.asset_uid,
@@ -2032,15 +2015,15 @@ function exportProjectV1(project, name, outPath, opts = {}) {
       access: project.release?.access || project.source_manifest?.access || 'public',
       password: opts.password || undefined,
     });
-    writeFiles(v1Dir, runtimeAsset.files);
+    writeFiles(runtimeDir, runtimeAsset.files);
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
-    core.pack(v1Dir, outPath);
+    core.pack(runtimeDir, outPath);
     const vr = core.validate(outPath);
-    if (!vr.overall_valid) fail('v1 export validation failed: ' + (vr.problems || []).join('; '));
-    console.log('Exported (v1): ' + outPath);
+    if (!vr.overall_valid) fail('runtime export validation failed: ' + (vr.problems || []).join('; '));
+    console.log('Exported: ' + outPath);
     console.log('  Name: ' + name + '  Cards: ' + lockedCards.length + '  Validated: all gates pass');
   } finally {
-    try { fs.rmSync(v1Dir, { recursive: true }); } catch { /* cleanup */ }
+    try { fs.rmSync(runtimeDir, { recursive: true }); } catch { /* cleanup */ }
   }
 }
 
@@ -2064,178 +2047,17 @@ function cmdCompile(args) {
   console.log(`Build ID: ${result.identity.build_id}`);
 }
 
-function crc32(data) {
-  let crc = ~0;
-  for (const byte of data) {
-    crc ^= byte;
-    for (let k = 0; k < 8; k++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-  }
-  return (~crc) >>> 0;
-}
-
-function u16(parts, n) {
-  const b = Buffer.alloc(2);
-  b.writeUInt16LE(n);
-  parts.push(b);
-}
-
-function u32(parts, n) {
-  const b = Buffer.alloc(4);
-  b.writeUInt32LE(n >>> 0);
-  parts.push(b);
-}
-
-function buildZip(entries) {
-  const chunks = [];
-  const central = [];
-  let offset = 0;
-  for (const [name, content] of entries) {
-    const nameBuf = Buffer.from(name);
-    const raw = Buffer.isBuffer(content) ? content : Buffer.from(String(content));
-    const compressed = name === 'mimetype' ? raw : zlib.deflateRawSync(raw);
-    const method = name === 'mimetype' ? 0 : 8;
-    const crc = crc32(raw);
-    const local = [];
-    u32(local, 0x04034b50);
-    u16(local, 20);
-    u16(local, 0x0800);
-    u16(local, method);
-    u16(local, 0);
-    u16(local, 0);
-    u32(local, crc);
-    u32(local, compressed.length);
-    u32(local, raw.length);
-    u16(local, nameBuf.length);
-    u16(local, 0);
-    local.push(nameBuf, compressed);
-    const localBuf = Buffer.concat(local);
-    chunks.push(localBuf);
-    central.push({ nameBuf, method, crc, compressedSize: compressed.length, size: raw.length, offset });
-    offset += localBuf.length;
-  }
-  const centralStart = offset;
-  for (const entry of central) {
-    const cd = [];
-    u32(cd, 0x02014b50);
-    u16(cd, 20);
-    u16(cd, 20);
-    u16(cd, 0x0800);
-    u16(cd, entry.method);
-    u16(cd, 0);
-    u16(cd, 0);
-    u32(cd, entry.crc);
-    u32(cd, entry.compressedSize);
-    u32(cd, entry.size);
-    u16(cd, entry.nameBuf.length);
-    u16(cd, 0);
-    u16(cd, 0);
-    u16(cd, 0);
-    u16(cd, 0);
-    u32(cd, 0);
-    u32(cd, entry.offset);
-    cd.push(entry.nameBuf);
-    const cdBuf = Buffer.concat(cd);
-    chunks.push(cdBuf);
-    offset += cdBuf.length;
-  }
-  const eocd = [];
-  u32(eocd, 0x06054b50);
-  u16(eocd, 0);
-  u16(eocd, 0);
-  u16(eocd, central.length);
-  u16(eocd, central.length);
-  u32(eocd, offset - centralStart);
-  u32(eocd, centralStart);
-  u16(eocd, 0);
-  chunks.push(Buffer.concat(eocd));
-  return Buffer.concat(chunks);
-}
-
-function stableStringify(value) {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
-  if (value && typeof value === 'object') {
-    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(',')}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function manifestForSigning(manifest) {
-  // Mirrors the kdna-core implementation in
-  // packages/kdna-core/src/asset-reader.js#manifestForSignature /
-  // manifestForDigest. Anything not stripped here will end up in the
-  // signing payload, and a mismatch between producer (this CLI) and
-  // verifier (kdna-core) will cause the signature check to fail.
-  //
-  // Bug: prior version did not strip `_source` (only set by eval/loader
-  // helpers) and did not recursively strip `authoring.content_digest`,
-  // so a payload with either field would diverge from kdna-core's
-  // canonicalisation and report a false-positive verification failure.
-  const copy = { ...(manifest || {}) };
-  delete copy.signature;
-  delete copy.asset_digest;
-  delete copy.container_sha256;
-  delete copy.content_digest;
-  delete copy._source;
-  if (copy.authoring && typeof copy.authoring === 'object') {
-    const auth = { ...copy.authoring };
-    delete auth.content_digest;
-    copy.authoring = auth;
-  }
-  return copy;
-}
-
-function canonicalPayload(files) {
-  return ['mimetype', ...Object.keys(files).filter((k) => k !== 'mimetype').sort()]
-    .filter((name) => name !== 'signature.json' && name !== '.DS_Store' && name !== 'build-receipt.json' && !name.startsWith('reports/'))
-    .map((name) => {
-      let content = name === 'mimetype' ? 'application/vnd.aikdna.kdna+zip' : files[name];
-      if (name.endsWith('.json')) {
-        const json = JSON.parse(content);
-        content = stableStringify(name === 'kdna.json' ? manifestForSigning(json) : json);
-      }
-      return `${name}:${crypto.createHash('sha256').update(Buffer.from(content)).digest('hex')}`;
-    })
-    .join('\n');
-}
-
-function identityPaths() {
-  const dir = process.env.KDNA_IDENTITY_DIR || path.join(os.homedir(), '.kdna', 'identity');
-  return { privateKey: path.join(dir, 'kdna.key'), publicKey: path.join(dir, 'kdna.pub') };
-}
-
-function publicKeyFingerprint(publicKeyPem) {
-  return `ed25519:${crypto.createHash('sha256').update(publicKeyPem).digest('hex')}`;
-}
-
-function applySignature(files, passphrase = null) {
-  const paths = identityPaths();
-  if (!fs.existsSync(paths.privateKey) || !fs.existsSync(paths.publicKey)) {
-    fail('Signing requires KDNA identity keys. Run: kdna-studio identity init', EXIT.TRUST_FAILED);
-  }
-  const manifest = JSON.parse(files['kdna.json']);
-  const publicKeyPem = fs.readFileSync(paths.publicKey, 'utf8');
-  manifest.author = manifest.author || {};
-  manifest.author.pubkey = publicKeyFingerprint(publicKeyPem);
-  manifest.author.public_key_pem = publicKeyPem;
-  files['kdna.json'] = JSON.stringify(manifest, null, 2);
-
-  const payload = canonicalPayload(files);
-  let privateKeyPem = fs.readFileSync(paths.privateKey, 'utf8');
-  if (creatorApi.isEncryptedKey(privateKeyPem)) {
-    if (!passphrase) {
-      fail('Private key is encrypted. Export with: kdna-studio export ... --sign --passphrase <your-passphrase>', EXIT.TRUST_FAILED);
-    }
-    privateKeyPem = creatorApi.decryptPrivateKey(privateKeyPem, passphrase);
-  }
-  manifest.signature = `ed25519:${crypto.sign(null, Buffer.from(payload), privateKeyPem).toString('hex')}`;
-  files['kdna.json'] = JSON.stringify(manifest, null, 2);
-}
-
 function cmdExport(args) {
   const projectInput = args[0];
   const out = option(args, '--out');
-  if (!projectInput || !out) fail('Usage: kdna-studio export <project> --out <file.kdna> [--format v1] [--sign] [--allow-incomplete]');
-  if (option(args, '--format') === 'v1') {
+  if (!projectInput || !out) fail('Usage: kdna-studio export <project> --out <file.kdna> [--allow-incomplete]');
+  if (option(args, '--format')) {
+    fail('The --format option is not supported. KDNA has one current asset format.');
+  }
+  if (args.includes('--sign')) {
+    fail('Asset signing is a separate runtime step. Export first, then run: kdna sign <asset.kdna>');
+  }
+  {
     const { project } = readProject(projectInput);
     // BUG-11 (2026-06-27): previous logic required --password to be set
     // before --password-stdin would take effect. That meant callers using
@@ -2256,7 +2078,7 @@ function cmdExport(args) {
       if (process.stdin.isTTY) {
         fail(
           '--password-stdin requires the password to be piped in on stdin.\n' +
-          'Example:  echo "$KDNA_PASSWORD" | kdna-studio export <project> --format v1 --out <file.kdna> --password-stdin\n' +
+          'Example:  echo "$KDNA_PASSWORD" | kdna-studio export <project> --out <file.kdna> --password-stdin\n' +
           'If you are running interactively, omit --password-stdin and you will be prompted.'
         );
       }
@@ -2268,7 +2090,7 @@ function cmdExport(args) {
     } else {
       // Bug (#55): prior version only consulted --password / --passphrase
       // here, so a caller who set KDNA_PASSPHRASE for the signing path
-      // (works via resolvePassphrase) found that the v1 encryption
+      // (works via resolvePassphrase) found that the runtime encryption
       // password was silently null. Resolve from the same sources as
       // the signing path so the two stay in sync.
       password = process.env.KDNA_PASSPHRASE
@@ -2276,84 +2098,12 @@ function cmdExport(args) {
         || option(args, '--password')
         || option(args, '--passphrase');
     }
-    exportProjectV1(project, option(args, '--name') || project.name, path.resolve(out), {
+    exportProject(project, option(args, '--name') || project.name, path.resolve(out), {
       allowIncomplete: args.includes('--allow-incomplete'),
       password,
     });
     return;
   }
-  const { project, result } = compileProject(projectInput);
-  const criticalIssues = criticalAxiomIssues(project);
-  if (criticalIssues.length > 0) {
-    if (args.includes('--allow-incomplete')) {
-      console.warn(
-        `--allow-incomplete: bypassing ${criticalIssues.length} critical axiom-field check(s). ` +
-        `The exported .kdna will load but kdna-loader may not match this domain on those signals.`,
-      );
-    } else {
-      fail(
-        `Cannot export: ${criticalIssues.length} critical axiom field issue(s).\n` +
-        `  These fields are required for domain routing (kdna-loader uses them to\n` +
-        `  decide when to load this domain). Fix them first, or pass\n` +
-        `  --allow-incomplete to bypass.\n` +
-        `  Issues:\n    ` + criticalIssues.slice(0, 10).join('\n    ') +
-        (criticalIssues.length > 10 ? `\n    ... and ${criticalIssues.length - 10} more` : ''),
-        EXIT.HUMAN_LOCK_REQUIRED,
-      );
-    }
-  }
-  const files = { ...result.files };
-  files['README.md'] = compileApi.generateReadme(project);
-  files.LICENSE = project.license?.type || 'UNSPECIFIED';
-  files.mimetype = 'application/vnd.aikdna.kdna+zip';
-
-  // Recompute content_digest after README.md / LICENSE / mimetype are added
-  // so that manifest, receipt, and provenance report all agree with the final ZIP contents.
-  const finalDigest = compileApi.computeContentDigest(files);
-  result.identity.content_digest = finalDigest;
-
-  // Update kdna.json manifest with final digest
-  const manifest = JSON.parse(files['kdna.json']);
-  manifest.content_digest = finalDigest;
-  if (manifest.authoring) manifest.authoring.content_digest = finalDigest;
-  files['kdna.json'] = JSON.stringify(manifest, null, 2);
-
-  // Update build-receipt.json
-  let receiptData = JSON.parse(files['build-receipt.json']);
-  receiptData.content_digest = finalDigest;
-  files['build-receipt.json'] = JSON.stringify(receiptData, null, 2);
-
-  // Update provenance report
-  const provenance = JSON.parse(files['reports/provenance-report.json']);
-  provenance.content_digest = finalDigest;
-  provenance.content_fingerprint = finalDigest;
-  files['reports/provenance-report.json'] = JSON.stringify(provenance, null, 2);
-
-  if (args.includes('--sign')) applySignature(files, resolvePassphrase(args));
-
-  const entries = [['mimetype', files.mimetype]];
-  for (const name of Object.keys(files).filter(k => k !== 'mimetype').sort()) {
-    entries.push([name, files[name]]);
-  }
-  const zip = buildZip(entries);
-  const outPath = path.resolve(out);
-  fs.mkdirSync(path.dirname(outPath), { recursive: true });
-  fs.writeFileSync(outPath, zip);
-
-  const assetDigest = `sha256:${crypto.createHash('sha256').update(zip).digest('hex')}`;
-  receiptData = JSON.parse(files['build-receipt.json']);
-  receiptData.asset_path = outPath;
-  receiptData.asset_digest = assetDigest;
-  receiptData.signature_status = args.includes('--sign') ? 'signed' : 'unsigned';
-  fs.writeFileSync(path.join(path.dirname(outPath), 'build-receipt.json'), JSON.stringify(receiptData, null, 2));
-  fs.writeFileSync(path.join(path.dirname(outPath), 'kdna.json'), files['kdna.json']);
-  fs.writeFileSync(path.join(path.dirname(outPath), 'provenance-report.json'), files['reports/provenance-report.json']);
-  fs.writeFileSync(path.join(path.dirname(outPath), 'quality-gate-report.json'), files['reports/quality-gate-report.json']);
-  fs.writeFileSync(path.join(path.dirname(outPath), 'human-lock-report.json'), files['reports/human-lock-report.json']);
-  fs.writeFileSync(path.join(path.dirname(outPath), 'eval-report.json'), files['reports/eval-report.json']);
-  console.log(`Exported canonical .kdna asset: ${outPath}`);
-  console.log(`Asset digest: ${assetDigest}`);
-  console.log(`Build ID: ${result.identity.build_id}`);
 }
 
 function cmdStudioInstall(args) {
@@ -2460,11 +2210,11 @@ function cmdReport(args) {
   process.exit(gate.blocked ? EXIT.HUMAN_LOCK_REQUIRED : EXIT.OK);
 }
 
-// Audit-locks: list every card that would fail the v1.7.2+ Human Lock
+// Audit-locks: list every card that would fail the current Human Lock
 // gate because of missing or empty fields. Used during the
 // pre-migration review of source-tree assets (e.g. pro-20) so an
 // author can fill in the missing confidence / evidence_type / risk
-// description / stance statement BEFORE running `migrate --format v1`.
+// description / stance statement BEFORE running `migrate`.
 //
 // Bug (UX pro-20 migration): prior version of `kdna-studio report`
 // returned a flat human_lock_gate.issues list, which mixed card
@@ -2486,7 +2236,7 @@ function cmdAuditLocks(args) {
     by_type: {},
   };
 
-  // Per-card-type required field lists. Mirrors the v1.7.2+ lockCard
+  // Per-card-type required field lists. Mirrors the current lockCard
   // gate (kdna-studio-core/src/cards/index.js) so the output is
   // exactly the field set the gate will reject.
   const REQUIRED = {
@@ -2570,7 +2320,7 @@ function cmdAuditLocks(args) {
     console.log(`Cards: ${findings.card_count} (locked: ${findings.locked_count})`);
     const types = Object.keys(findings.by_type);
     if (types.length === 0) {
-      console.log('\nAll cards pass the v1.7.2+ Human Lock gate. Ready to migrate.');
+      console.log('\nAll cards pass the current Human Lock gate. Ready to migrate.');
       return;
     }
     for (const t of types) {

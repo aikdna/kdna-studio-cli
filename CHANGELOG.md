@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.17 (2026-07-13)
+
+- Correct both README authoring examples so every strict axiom field is present
+  and `evidence_type` uses a value accepted by the Studio schema.
+
 ## 0.8.16 (2026-07-13)
 
 - Depend on Studio Core 1.7.13, whose intermediate compile output is explicitly

@@ -48,7 +48,9 @@ kdna-studio card add my_domain axiom \
   --field why="Broad claims hide the actual reason for a judgment, so reviewers cannot tell whether the conclusion is evidence based, reusable, or merely plausible sounding." \
   --field applies_when='["reviewing content"]' \
   --field does_not_apply_when='["pure formatting"]' \
-  --field failure_risk="generic advice"
+  --field failure_risk="generic advice" \
+  --field confidence='high' \
+  --field evidence_type='practice'
 kdna-studio card approve my_domain --all --by expert --statement "I confirm this judgment."
 kdna-studio export my_domain --out dist/my_domain.kdna
 ```
@@ -92,7 +94,7 @@ kdna-studio card add . axiom \
   --field does_not_apply_when='["formatting"]' \
   --field failure_risk='praise without diagnosis' \
   --field confidence='high' \
-  --field evidence_type='observation'
+  --field evidence_type='practice'
 
 # 4. Approve and lock
 kdna-studio card approve . --all --by me --statement "i confirm"

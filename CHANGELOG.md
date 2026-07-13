@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.15 (2026-07-13)
+
+- Use Studio Core 1.7.12 so new password-protected exports use the
+  cross-language Argon2id profile consumed by JavaScript and Swift Core.
+- Keep the same single-format export and migration command surface.
+
 ## 0.8.14 (2026-07-13)
 
 - Make `export` and `migrate` use the single current KDNA runtime format by

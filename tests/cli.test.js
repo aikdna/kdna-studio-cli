@@ -623,7 +623,7 @@ test('export creates a valid non-empty KDNA asset', (t) => {
   assert.equal(loaded.manifest.payload.encrypted, false);
 });
 
-test('export --password encrypts payload and round-trips (scrypt profile)', (t) => {
+test('export --password encrypts payload and round-trips (Argon2id profile)', (t) => {
   assert.ok(kdnaCore, '@aikdna/kdna-core is required for B2 round-trip');
   const { tmp, projectDir } = createLockedProject(t);
   const outFile = path.join(tmp, 'project-encrypted.kdna');
@@ -673,7 +673,7 @@ test('export --password encrypts payload and round-trips (scrypt profile)', (t) 
   assert.equal(loaded.manifest.payload.encrypted, true);
   assert.equal(loaded.manifest.access, 'licensed');
   assert.equal(loaded.manifest.entitlement?.profile, 'password');
-  assert.equal(loaded.manifest.encryption?.profile, 'kdna-password-protected-v1-scrypt');
+  assert.equal(loaded.manifest.encryption?.profile, 'kdna-password-protected-v1');
   assert.ok(loaded.manifest.encryption?.encrypted_entries?.includes('payload.kdnab'));
   assert.equal(loaded.payload.core.axioms.length, 1);
 });

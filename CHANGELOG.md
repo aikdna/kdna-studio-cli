@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.0 (2026-07-13)
+
+- Export complete judgment cards without requiring creator identity or Human
+  Lock; signed approval remains optional provenance.
+- Reject JSON payload bytes and legacy `KDNA_*.json` runtime fallbacks when
+  importing `.kdna`; explicit source-folder migration remains available.
+- Document the authoring/runtime boundary and optional approval workflow.
+- Correct the README source-classification and five-minute project paths so
+  the published commands run from the directory in which `create` was called.
+- Make release readiness reject dirty inputs and version tags that do not
+  point to the current commit.
+- Align authoring export and import with KDNA Core 0.16.0 and Studio Core
+  1.8.0 on the single current `.kdna` runtime contract.
+
 ## 0.8.17 (2026-07-13)
 
 - Correct both README authoring examples so every strict axiom field is present

@@ -8,7 +8,7 @@ Distillation-first authoring is domain-first: declare the target domain, owner s
 
 This package provides the `kdna-studio` command. It creates Studio projects,
 imports evidence, manages judgment cards, records optional review/provenance
-signals, compiles reviewed project content, and exports canonical `.kdna`
+signals, compiles project content, and exports canonical `.kdna`
 assets with build reports.
 
 It is intentionally separate from `@aikdna/kdna-cli`:
@@ -37,7 +37,7 @@ kdna-studio target declare my_domain \
   --task "longform article review" \
   --include "argument structure,tone,revision" \
   --exclude "life habits,food preference"
-kdna-studio source classify my_domain
+kdna-studio source my_domain
 kdna-studio distill my_domain --candidates candidates.json
 kdna-studio candidate list my_domain
 kdna-studio candidate accept my_domain <candidate-id>
@@ -51,16 +51,16 @@ kdna-studio card add my_domain axiom \
   --field failure_risk="generic advice" \
   --field confidence='high' \
   --field evidence_type='practice'
+# Optional: record review provenance
 kdna-studio card approve my_domain --all --by expert --statement "I confirm this judgment."
 kdna-studio export my_domain --out dist/my_domain.kdna
 ```
 
 Candidate promotion is scope-gated: only candidates with `status == accepted` and `scope_fit == true` are promoted to cards by default. Use `kdna-studio candidate override <project> <candidate-id>` only when a human intentionally overrides the scope gate.
 
-The current Studio CLI export workflow uses approved cards as release evidence.
-This is Studio project policy, not a KDNA format-validity rule. Human
-Lock and other provenance records are optional review evidence, not validity
-requirements.
+The Studio CLI exports complete, non-deprecated cards. Human Lock and other
+provenance records are optional review evidence, not creation permission or
+format-validity requirements.
 
 After export, use the runtime CLI:
 
@@ -79,14 +79,11 @@ loading existing `.kdna` assets.
 If you just installed and want to ship a KDNA asset without an LLM:
 
 ```bash
-# 1. Init identity (required for the export signature)
-kdna-studio identity init --name "Your Name"
-
-# 2. Create a project
+# 1. Create a project
 kdna-studio create my_domain --name @yourscope/my_domain
 
-# 3. Add at least one judgment card
-kdna-studio card add . axiom \
+# 2. Add at least one judgment card
+kdna-studio card add my_domain axiom \
   --field one_sentence='specific evidence outranks broad claims' \
   --field full_statement='Always cite the specific source that supports a judgment; broad claims without evidence are the most common cause of bad agent advice.' \
   --field why='because vague advice fails in production' \
@@ -96,13 +93,13 @@ kdna-studio card add . axiom \
   --field confidence='high' \
   --field evidence_type='practice'
 
-# 4. Approve and lock
-kdna-studio card approve . --all --by me --statement "i confirm"
+# 3. Optional: approve and record Human Lock provenance
+kdna-studio card approve my_domain --all --by me --statement "i confirm"
 
-# 5. Export the asset
-kdna-studio export . --out my_domain.kdna
+# 4. Export the asset
+kdna-studio export my_domain --out my_domain.kdna
 
-# 6. Verify with the runtime CLI
+# 5. Verify with the runtime CLI
 kdna load my_domain.kdna --profile=compact
 ```
 
@@ -157,7 +154,7 @@ kdna-studio identity show
 ## Import from existing KDNA or legacy folders
 
 ```bash
-# Fork an existing .kdna asset (cards imported as draft — review before Studio export)
+# Fork an existing canonical .kdna asset (cards are imported as draft)
 kdna-studio create forked --from-kdna ./parent.kdna --name @scope/forked
 
 # Migrate a legacy JSON source folder

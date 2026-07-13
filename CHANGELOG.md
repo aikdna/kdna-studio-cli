@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 (2026-07-13)
 
 - Export complete judgment cards without requiring creator identity or Human
   Lock; signed approval remains optional provenance.
@@ -11,6 +11,8 @@
   the published commands run from the directory in which `create` was called.
 - Make release readiness reject dirty inputs and version tags that do not
   point to the current commit.
+- Align authoring export and import with KDNA Core 0.16.0 and Studio Core
+  1.8.0 on the single current `.kdna` runtime contract.
 
 ## 0.8.17 (2026-07-13)
 

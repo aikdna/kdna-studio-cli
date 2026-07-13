@@ -593,14 +593,14 @@ function buildManifest(project, name) {
   return {
     kdna_version: '1.0',
     asset_id: assetId,
-    asset_uid: project.asset_uid || 'urn:uuid:' + crypto.randomUUID(),
+    asset_uid: project.asset_uid || source.asset_uid || 'urn:uuid:' + crypto.randomUUID(),
     asset_type: project.type === 'cluster' ? 'cluster' : 'domain',
     source_asset_type: source.asset_type || null,
     title: titleFromName(source.name || name || project.name, assetId),
     version: semverValue(project.release?.version || source.version, '1.0.0'),
     judgment_version: semverValue(project.release?.judgment_version || source.judgment_version || source.version, '1.0.0'),
-    created_at: isoDateTime(source.created || project.created),
-    updated_at: isoDateTime(source.updated || project.updated),
+    created_at: isoDateTime(source.created_at || source.created || project.created),
+    updated_at: isoDateTime(source.updated_at || source.updated || project.updated),
     creator: {
       name: author.name || project.author?.name || 'Studio Export',
       id: author.id || project.author?.id || undefined,
@@ -821,6 +821,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
   if (manifest) {
     manifestData.raw = manifest;
     if (manifest.version) manifestData.version = manifest.version;
+    if (manifest.asset_uid) manifestData.asset_uid = manifest.asset_uid;
     if (manifest.judgment_version) manifestData.judgment_version = manifest.judgment_version;
     if (manifest.languages) manifestData.languages = manifest.languages;
     if (manifest.default_language) manifestData.default_language = manifest.default_language;
@@ -831,8 +832,8 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
     if (manifest.author) manifestData.author = manifest.author;
     if (manifest.asset_type) manifestData.asset_type = manifest.asset_type;
     if (manifest.core_insight) manifestData.core_insight = manifest.core_insight;
-    if (manifest.created) manifestData.created = manifest.created;
-    if (manifest.updated) manifestData.updated = manifest.updated;
+    if (manifest.created_at || manifest.created) manifestData.created = manifest.created_at || manifest.created;
+    if (manifest.updated_at || manifest.updated) manifestData.updated = manifest.updated_at || manifest.updated;
     if (manifest.risk_level) manifestData.risk_level = manifest.risk_level;
     if (manifest.fitness_for_purpose) manifestData.fitness_for_purpose = manifest.fitness_for_purpose;
   }
@@ -869,20 +870,20 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
         if (key in ax) fields[key] = ax[key];
         else audit.missingFields.push(`axiom.${ax.id || '?'}.${key}`);
       }
-      importedCards.push(cardApi.createCard('axiom', fields));
+      importedCards.push(cardApi.createCard('axiom', fields, ax.id || null));
     }
     for (const ont of (Array.isArray(core.ontology) ? core.ontology : [])) {
       importedCards.push(cardApi.createCard('ontology', {
         one_sentence: ont.one_sentence || ont.essence || '',
         essence: ont.essence || '', boundary: ont.boundary || '',
         trigger_signal: ont.trigger_signal || '',
-      }));
+      }, ont.id || null));
     }
     for (const b of (Array.isArray(core.boundaries) ? core.boundaries : [])) {
       importedCards.push(cardApi.createCard('boundary', {
         scope: b.scope || '', out_of_scope: b.out_of_scope || '',
         acceptable_exceptions: b.acceptable_exceptions || [],
-      }));
+      }, b.id || null));
     }
     // Accept risks as a top-level array (`risks`) or wrapped in `risk_model`
     // (either as `{risks: [...]}` or as an array itself).
@@ -893,7 +894,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
       else risksSource = [];
     }
     for (const r of risksSource) {
-      importedCards.push(cardApi.createCard('risk', r.fields || r));
+      importedCards.push(cardApi.createCard('risk', r.fields || r, r.id || null));
     }
     // NEW: import stances
     for (const s of (Array.isArray(core.stances) ? core.stances : [])) {
@@ -902,14 +903,14 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
         statement: text,
         applies_when: s.applies_when || [],
         does_not_apply_when: s.does_not_apply_when || [],
-      }));
+      }, typeof s === 'object' ? s.id || null : null));
     }
     // NEW: import frameworks
     for (const fw of (Array.isArray(core.frameworks) ? core.frameworks : [])) {
       importedCards.push(cardApi.createCard('framework', {
         name: fw.name || '', when_to_use: fw.when_to_use || '',
         steps: fw.steps || [],
-      }));
+      }, fw.id || null));
     }
   }
 
@@ -919,23 +920,27 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
       for (const t of (Array.isArray(patterns.terminology.standard_terms) ? patterns.terminology.standard_terms : [])) {
         importedCards.push(cardApi.createCard('term', {
           term: t.term || '', definition: t.definition || '',
-        }));
+        }, t.id || null));
       }
       for (const bt of (Array.isArray(patterns.terminology.banned_terms) ? patterns.terminology.banned_terms : [])) {
         importedCards.push(cardApi.createCard('banned_term', {
           term: bt.term || '', why: bt.why || '', replace_with: bt.replace_with || '',
-        }));
+        }, bt.id || null));
       }
     }
     for (const ms of (Array.isArray(patterns.misunderstandings) ? patterns.misunderstandings : [])) {
       importedCards.push(cardApi.createCard('misunderstanding', {
         wrong: ms.wrong || '', correct: ms.correct || '',
         key_distinction: ms.key_distinction || '', why: ms.why || '',
-      }));
+      }, ms.id || null));
     }
     for (const sc of (Array.isArray(patterns.self_check) ? patterns.self_check : [])) {
       const q = typeof sc === 'string' ? sc : sc.question || '';
-      importedCards.push(cardApi.createCard('self_check', { question: q }));
+      importedCards.push(cardApi.createCard(
+        'self_check',
+        { question: q },
+        typeof sc === 'object' ? sc.id || null : null,
+      ));
     }
     // Bug (aesthetic round-trip): prior version dropped
     // `patterns.aesthetics` on import. `cardsFromRuntimePayload` and
@@ -944,7 +949,11 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
     // them when imported through `create --from-folder`. The fix
     // adds the missing loop here.
     for (const aesthetic of (Array.isArray(patterns.aesthetics) ? patterns.aesthetics : [])) {
-      importedCards.push(cardApi.createCard('aesthetic', aesthetic.fields || aesthetic));
+      importedCards.push(cardApi.createCard(
+        'aesthetic',
+        aesthetic.fields || aesthetic,
+        aesthetic.id || null,
+      ));
     }
   }
 
@@ -954,7 +963,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
       importedCards.push(cardApi.createCard('scenario', {
         name: scene.name || scene.id || '',
         trigger: scene.trigger || '', action: scene.action || '',
-      }));
+      }, scene.id || null));
     }
   }
 
@@ -964,7 +973,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
       importedCards.push(cardApi.createCard('case', {
         title: c.title || c.id || '',
         scenario: c.scenario || '', expected: c.expected || '',
-      }));
+      }, c.id || null));
     }
   }
 
@@ -985,7 +994,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
         concrete_action: rc.concrete_action || rc.so_what || '',
         so_what: rc.so_what || rc.concrete_action || '',
         conclusion: rc.conclusion || '',
-      }));
+      }, rc.id || null));
     }
   }
 
@@ -1009,6 +1018,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
     lineage: { type: 'migrated', parent_name: manifestData.name || null, parent_asset_uid: null, parent_version: manifestData.version || null, parent_asset_digest: null },
   });
   // Preserve manifest metadata
+  if (manifestData.asset_uid) project.asset_uid = manifestData.asset_uid;
   if (manifestData.version) {
     if (!project.release) project.release = {};
     project.release.version = manifestData.version;

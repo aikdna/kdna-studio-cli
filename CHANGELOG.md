@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.1 (2026-07-13)
+
+- Preserve a source asset's `asset_uid`, creation/update timestamps, and
+  authored card IDs when importing a source folder, so re-authoring does not
+  silently replace identity or break references.
+
 ## 0.9.0 (2026-07-13)
 
 - Export complete judgment cards without requiring creator identity or Human

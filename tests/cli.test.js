@@ -415,6 +415,15 @@ test('create --from-folder imports legacy JSON source, outputs audit', (t) => {
   fs.mkdirSync(sourceDir, { recursive: true });
 
   // Create legacy KDNA files
+  const sourceAssetUid = 'urn:uuid:4ce4898d-8f8f-4cff-a394-6509af4e6f29';
+  fs.writeFileSync(path.join(sourceDir, 'kdna.json'), JSON.stringify({
+    name: '@test/legacy-import',
+    asset_uid: sourceAssetUid,
+    version: '0.1.0',
+    judgment_version: '0.1.0',
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-02T00:00:00.000Z',
+  }));
   const core = {
     meta: { domain: 'test', version: '0.1.0', created: '2026-01-01', purpose: 'test', load_condition: 'always' },
     axioms: [{
@@ -457,12 +466,27 @@ test('create --from-folder imports legacy JSON source, outputs audit', (t) => {
   assert.ok(fs.existsSync(projectPath));
   const project = JSON.parse(fs.readFileSync(projectPath, 'utf8'));
   assert.equal(project.source_mode, 'source_folder');
+  assert.equal(project.asset_uid, sourceAssetUid, 'preserves source asset identity');
   assert.ok(project.cards.length > 0);
+  assert.ok(project.cards.some((card) => card.id === 'ax_legacy'), 'preserves axiom id');
+  assert.ok(project.cards.some((card) => card.id === 'ont_legacy'), 'preserves ontology id');
+  assert.ok(project.cards.some((card) => card.id === 'bnd_legacy'), 'preserves boundary id');
+  assert.ok(project.cards.some((card) => card.id === 'ms_legacy'), 'preserves misunderstanding id');
   const importedStage = project.cards.find((card) => card.type === 'evolution_stage');
   assert.ok(importedStage, 'imports source-authored evolution stage');
   assert.equal(importedStage.id, 'ev_legacy', 'preserves source stage id');
   assert.equal(importedStage.fields.level, 0, 'preserves level 0');
   assert.equal(project.lineage.type, 'migrated');
+
+  const outFile = path.join(tmp, 'legacy-import.kdna');
+  const exportResult = run(['export', projectDir, '--out', outFile], { tmp });
+  assert.equal(exportResult.status, 0, exportResult.stderr);
+  const unpacked = path.join(tmp, 'unpacked');
+  kdnaCore.unpack(outFile, unpacked);
+  const exportedManifest = JSON.parse(fs.readFileSync(path.join(unpacked, 'kdna.json'), 'utf8'));
+  assert.equal(exportedManifest.asset_uid, sourceAssetUid);
+  assert.equal(exportedManifest.created_at, '2026-01-01T00:00:00.000Z');
+  assert.equal(exportedManifest.updated_at, '2026-01-02T00:00:00.000Z');
 });
 
 test('migrate --check --json handles risk_model object and preserves axiom evidence fields', (t) => {

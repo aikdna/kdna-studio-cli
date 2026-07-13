@@ -410,10 +410,14 @@ function resetImportedIds() { _importedIds.clear(); }
 function decodePayload(bytes, manifest = {}) {
   const raw = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
   const encoding = manifest.payload?.encoding || manifest.container?.payload_encoding || null;
-  if (encoding === 'json' || raw[0] === 0x7b || raw[0] === 0x5b) {
-    return JSON.parse(raw.toString('utf8'));
+  if (encoding && encoding !== 'cbor') {
+    throw new Error(`unsupported payload encoding "${encoding}"; current .kdna assets require CBOR`);
   }
-  return cbor.decode(raw);
+  try {
+    return cbor.decode(raw);
+  } catch (error) {
+    throw new Error(`payload.kdnab is not valid CBOR: ${error.message}`);
+  }
 }
 
 // Runtime path: trust the producer (export-runtime) to have already shaped
@@ -561,96 +565,10 @@ function cardsFromRuntimePayload(payload) {
   return cards;
 }
 
-function cardsFromLegacyPayload(payload) {
-  resetImportedIds();
-  const cards = [];
-  const judgment = payload.judgment || {};
-  const core = judgment.core || {};
-  const patterns = judgment.patterns || {};
-
-  for (const ax of (Array.isArray(core.axioms) ? core.axioms : [])) {
-    pushImportedCard(cards, 'axiom', {
-      one_sentence: ax.one_sentence || '',
-      full_statement: ax.full_statement || '',
-      why: ax.why || '',
-      applies_when: ax.applies_when || [],
-      does_not_apply_when: ax.does_not_apply_when || [],
-      failure_risk: ax.failure_risk || '',
-    }, ax.id || null);
-  }
-  for (const ont of (Array.isArray(core.ontology) ? core.ontology : [])) {
-    pushImportedCard(cards, 'ontology', {
-      one_sentence: ont.one_sentence || ont.essence || '',
-      essence: ont.essence || '',
-      boundary: ont.boundary || '',
-      trigger_signal: ont.trigger_signal || '',
-    }, ont.id || null);
-  }
-  for (const boundary of (Array.isArray(core.boundaries) ? core.boundaries : [])) {
-    pushImportedCard(cards, 'boundary', {
-      scope: boundary.scope || '',
-      out_of_scope: boundary.out_of_scope || '',
-      acceptable_exceptions: boundary.acceptable_exceptions || [],
-    }, boundary.id || null);
-  }
-  for (const risk of (Array.isArray(core.risks) ? core.risks : [])) {
-    pushImportedCard(cards, 'risk', risk, risk.id || null);
-  }
-  // Bug (#63): prior version skipped `core.stances` and
-  // `core.frameworks`, so a legacy asset that authored either type
-  // round-tripped out as zero cards. The fix adds both loops.
-  for (const stance of (Array.isArray(core.stances) ? core.stances : [])) {
-    pushImportedCard(cards, 'stance', stance, stance.id || null);
-  }
-  for (const fw of (Array.isArray(core.frameworks) ? core.frameworks : [])) {
-    pushImportedCard(cards, 'framework', fw, fw.id || null);
-  }
-  for (const term of (Array.isArray(patterns.terminology?.standard_terms) ? patterns.terminology?.standard_terms : [])) {
-    pushImportedCard(cards, 'term', term, term.id || null);
-  }
-  for (const banned of (Array.isArray(patterns.terminology?.banned_terms) ? patterns.terminology?.banned_terms : [])) {
-    pushImportedCard(cards, 'banned_term', banned, banned.id || null);
-  }
-  for (const ms of (Array.isArray(patterns.misunderstandings) ? patterns.misunderstandings : [])) {
-    pushImportedCard(cards, 'misunderstanding', {
-      wrong: ms.wrong || '',
-      correct: ms.correct || '',
-      key_distinction: ms.key_distinction || '',
-      why: ms.why || '',
-      applies_when: ms.applies_when || [],
-      does_not_apply_when: ms.does_not_apply_when || [],
-      failure_risk: ms.failure_risk || '',
-    }, ms.id || null);
-  }
-  for (const sc of (Array.isArray(patterns.self_check) ? patterns.self_check : [])) {
-    const question = typeof sc === 'string' ? sc : sc.question || '';
-    pushImportedCard(cards, 'self_check', { question }, sc.id || null);
-  }
-  for (const aesthetic of (Array.isArray(patterns.aesthetics) ? patterns.aesthetics : [])) {
-    pushImportedCard(cards, 'aesthetic', aesthetic, aesthetic.id || null);
-  }
-  for (const scene of (Array.isArray(judgment.scenarios?.scenes) ? judgment.scenarios?.scenes : [])) {
-    pushImportedCard(cards, 'scenario', scene, scene.id || null);
-  }
-  for (const item of (Array.isArray(judgment.cases?.cases) ? judgment.cases?.cases : [])) {
-    pushImportedCard(cards, 'case', item, item.id || null);
-  }
-  for (const chain of (Array.isArray(judgment.reasoning?.reasoning_chains) ? judgment.reasoning?.reasoning_chains : [])) {
-    pushImportedCard(cards, 'reasoning', chain, chain.id || null);
-  }
-  for (const stage of (Array.isArray(judgment.evolution?.stages) ? judgment.evolution?.stages : [])) {
-    pushImportedCard(cards, 'evolution_stage', stage, stage.id || null);
-  }
-  return cards;
-}
-
 function cardsFromPayload(payload) {
   if (!payload || typeof payload !== 'object') return [];
   if (payload.profile === 'judgment-profile-v1' || payload.core || payload.source_cards) {
     return cardsFromRuntimePayload(payload);
-  }
-  if (payload.kind === 'kdna.payload' || payload.judgment) {
-    return cardsFromLegacyPayload(payload);
   }
   return [];
 }
@@ -688,7 +606,7 @@ function buildManifest(project, name) {
       id: author.id || project.author?.id || undefined,
     },
     compatibility: { min_loader_version: '1.0.0', profile: 'judgment-profile-v1' },
-    payload: { path: 'payload.kdnab', encoding: 'json', encrypted: false },
+    payload: { path: 'payload.kdnab', encoding: 'cbor', encrypted: false },
     summary: source.core_insight || project.release?.description || source.description || '',
     description: source.description || project.release?.description || '',
     language: source.default_language || project.default_language || (Array.isArray(source.languages) ? source.languages[0] : undefined),
@@ -821,6 +739,14 @@ function importFromKdna(kdnaPath) {
   if (stats.size > 50 * 1024 * 1024) {
     fail(`KDNA file too large (${(stats.size / (1024 * 1024)).toFixed(1)} MiB, max 50 MiB): ${absKdna}`);
   }
+  let runtimeCore;
+  try { runtimeCore = require('@aikdna/kdna-core'); } catch {
+    fail('@aikdna/kdna-core is required to validate --from-kdna imports.');
+  }
+  const validation = runtimeCore.validate(absKdna);
+  if (!validation.overall_valid) {
+    fail(`Not a current .kdna asset: ${(validation.problems || []).join('; ')}`);
+  }
   const zipBuf = fs.readFileSync(absKdna);
   const entries = readZipEntries(zipBuf);
   if (!entries.has('kdna.json')) fail('Not a valid .kdna asset: missing kdna.json');
@@ -834,122 +760,21 @@ function importFromKdna(kdnaPath) {
     parent_asset_digest: manifest.content_digest || manifest.asset_digest || null,
   };
 
-  // Extract cards. Current packages carry `kdna.json` + `payload.kdnab`
-  // and use the unified judgment profile. Legacy packages split content
-  // across KDNA_*.json files. Prefer payload.kdnab when present — it
-  // covers all 8+ card types (axiom / boundary / risk / aesthetic /
-  // ontology / misunderstanding / self_check / scenario / case /
-  // reasoning / evolution_stage / stance / framework / term / banned_term)
-  // via cardsFromRuntimePayload / cardsFromLegacyPayload.
+  // Current assets carry strict-CBOR `payload.kdnab`. Legacy source folders
+  // are migrated explicitly with --from-folder; they are not runtime assets.
   const importedCards = [];
-  if (entries.has('payload.kdnab')) {
-    try {
-      const payload = decodePayload(entries.get('payload.kdnab'), manifest);
-      importedCards.push(...cardsFromPayload(payload));
-    } catch (e) {
-      fail(`Could not import cards from payload.kdnab: ${e.message}`);
-    }
-  } else if (entries.has('KDNA_Core.json') || entries.has('KDNA_Patterns.json')) {
-    // Source-tree fallback — used when an imported source has no payload.kdnab
-    // (i.e. the asset predates the 0.7 split). Bug (#67): prior
-    // version only handled axiom / ontology / boundary / misunderstanding
-    // / self_check — 5 of the 14 card types — so every other type
-    // (risk / stance / framework / term / banned_term / aesthetic /
-    // scenario / case / reasoning / evolution_stage) round-tripped
-    // out as zero cards. The fix threads every type this CLI can
-    // import through, and prefers the same field-shape rules as
-    // cardsFromLegacyPayload so the round-trip is symmetric.
-    if (entries.has('KDNA_Core.json')) {
-      const core = JSON.parse(entries.get('KDNA_Core.json').toString());
-      for (const ax of (Array.isArray(core.axioms) ? core.axioms : [])) {
-        const fields = {};
-        for (const k of ['one_sentence','full_statement','why','applies_when','does_not_apply_when','failure_risk','confidence','evidence_type']) {
-          if (k in ax) fields[k] = ax[k];
-        }
-        importedCards.push(cardApi.createCard('axiom', fields));
-      }
-      for (const ont of (Array.isArray(core.ontology) ? core.ontology : [])) {
-        importedCards.push(cardApi.createCard('ontology', {
-          one_sentence: ont.one_sentence || ont.essence || '',
-          essence: ont.essence || '', boundary: ont.boundary || '',
-          trigger_signal: ont.trigger_signal || '',
-        }));
-      }
-      for (const b of (Array.isArray(core.boundaries) ? core.boundaries : [])) {
-        importedCards.push(cardApi.createCard('boundary', {
-          scope: b.scope || '', out_of_scope: b.out_of_scope || '',
-          acceptable_exceptions: b.acceptable_exceptions || [],
-        }));
-      }
-      // Accept risks as a top-level array (`risks`) or wrapped in `risk_model`
-      // (either as `{risks: [...]}` or as an array itself). Uses the same
-      // Array.isArray ladder pattern as the safe path at lines 1033-1040.
-      let risksSource = core.risks;
-      if (!Array.isArray(risksSource)) {
-        if (Array.isArray(core.risk_model)) risksSource = core.risk_model;
-        else if (Array.isArray(core.risk_model?.risks)) risksSource = core.risk_model.risks;
-        else risksSource = [];
-      }
-      for (const risk of risksSource) {
-        importedCards.push(cardApi.createCard('risk', risk.fields || risk));
-      }
-      for (const stance of (Array.isArray(core.stances) ? core.stances : [])) {
-        importedCards.push(cardApi.createCard('stance', stance.fields || stance));
-      }
-      for (const fw of (Array.isArray(core.frameworks) ? core.frameworks : [])) {
-        importedCards.push(cardApi.createCard('framework', fw.fields || fw));
-      }
-    }
-    if (entries.has('KDNA_Patterns.json')) {
-      const pat = JSON.parse(entries.get('KDNA_Patterns.json').toString());
-      for (const ms of (Array.isArray(pat.misunderstandings) ? pat.misunderstandings : [])) {
-        importedCards.push(cardApi.createCard('misunderstanding', {
-          wrong: ms.wrong || '', correct: ms.correct || '',
-          key_distinction: ms.key_distinction || '', why: ms.why || '',
-        }));
-      }
-      for (const sc of (Array.isArray(pat.self_check) ? pat.self_check : [])) {
-        const q = typeof sc === 'string' ? sc : sc.question || '';
-        importedCards.push(cardApi.createCard('self_check', { question: q }));
-      }
-      for (const aesthetic of (Array.isArray(pat.aesthetics) ? pat.aesthetics : [])) {
-        importedCards.push(cardApi.createCard('aesthetic', aesthetic.fields || aesthetic));
-      }
-      for (const term of (Array.isArray(pat.terminology?.standard_terms) ? pat.terminology?.standard_terms : [])) {
-        importedCards.push(cardApi.createCard('term', term));
-      }
-      for (const banned of (Array.isArray(pat.terminology?.banned_terms) ? pat.terminology?.banned_terms : [])) {
-        importedCards.push(cardApi.createCard('banned_term', banned));
-      }
-    }
-    if (entries.has('KDNA_Scenarios.json')) {
-      const scen = JSON.parse(entries.get('KDNA_Scenarios.json').toString());
-      for (const s of (Array.isArray(scen.scenes) ? scen.scenes : [])) {
-        importedCards.push(cardApi.createCard('scenario', s));
-      }
-    }
-    if (entries.has('KDNA_Cases.json')) {
-      const cases = JSON.parse(entries.get('KDNA_Cases.json').toString());
-      for (const c of (Array.isArray(cases.cases) ? cases.cases : [])) {
-        importedCards.push(cardApi.createCard('case', c));
-      }
-    }
-    if (entries.has('KDNA_Reasoning.json')) {
-      const reasoning = JSON.parse(entries.get('KDNA_Reasoning.json').toString());
-      for (const chain of (Array.isArray(reasoning.reasoning_chains) ? reasoning.reasoning_chains : [])) {
-        importedCards.push(cardApi.createCard('reasoning', chain));
-      }
-    }
-    if (entries.has('KDNA_Evolution.json')) {
-      const evolution = JSON.parse(entries.get('KDNA_Evolution.json').toString());
-      for (const stage of (Array.isArray(evolution.stages) ? evolution.stages : [])) {
-        importedCards.push(cardApi.createCard('evolution_stage', stage));
-      }
-    }
+  if (!entries.has('payload.kdnab')) {
+    fail('Not a current .kdna asset: missing payload.kdnab. Use --from-folder for legacy JSON source migration.');
+  }
+  try {
+    const payload = decodePayload(entries.get('payload.kdnab'), manifest);
+    importedCards.push(...cardsFromPayload(payload));
+  } catch (e) {
+    fail(`Could not import cards from payload.kdnab: ${e.message}`);
   }
 
   if (importedCards.length === 0) {
-    fail(`No cards could be extracted from ${absKdna}. Expected payload.kdnab or an importable KDNA_Core.json + KDNA_Patterns.json source tree.`);
+    fail(`No current judgment cards could be extracted from ${absKdna}.`);
   }
 
   // Bug #15 / #28 follow-up: surface the source's KDNA_Patterns /
@@ -958,23 +783,13 @@ function importFromKdna(kdnaPath) {
   // compileDomain via exportRuntimeAsset, which preserves
   // changelog / version_notes / reasoning_chains / banned_terms
   // through the round-trip.
-  const sourcePatterns = entries.has('KDNA_Patterns.json')
-    ? JSON.parse(entries.get('KDNA_Patterns.json').toString())
-    : null;
-  const sourceReasoning = entries.has('KDNA_Reasoning.json')
-    ? JSON.parse(entries.get('KDNA_Reasoning.json').toString())
-    : null;
-  const sourceEvolution = entries.has('KDNA_Evolution.json')
-    ? JSON.parse(entries.get('KDNA_Evolution.json').toString())
-    : null;
-
   return {
     lineage,
     cards: importedCards,
     source_manifest: manifest,
-    source_patterns: sourcePatterns,
-    source_reasoning: sourceReasoning,
-    source_evolution: sourceEvolution,
+    source_patterns: null,
+    source_reasoning: null,
+    source_evolution: null,
   };
 }
 
@@ -1992,17 +1807,7 @@ function exportProject(project, name, outPath, opts = {}) {
       );
     }
   }
-  const gate = projectApi.checkHumanLockGate(project);
-  if (gate.blocked) {
-    if (opts.allowIncomplete) {
-      console.warn('Human Lock Gate bypassed (--allow-incomplete):');
-      for (const issue of gate.issues) console.warn(`  - ${issue.cardId}: ${issue.reason}`);
-    } else {
-      const reasons = gate.issues.map((i) => `${i.cardId}: ${i.reason}`).join('\n  - ');
-      fail(`Human Lock Gate blocked export:\n  - ${reasons}\nUse --allow-incomplete to bypass.`, EXIT.HUMAN_LOCK_REQUIRED);
-    }
-  }
-  const lockedCards = (project.cards || []).filter(c => c.locked);
+  const exportedCards = (project.cards || []).filter(c => c.status !== 'deprecated');
   const runtimeDir = trackTempDir(fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-runtime-')));
   try {
     const manifestDefaults = buildManifest(project, name);
@@ -2021,7 +1826,7 @@ function exportProject(project, name, outPath, opts = {}) {
     const vr = core.validate(outPath);
     if (!vr.overall_valid) fail('runtime export validation failed: ' + (vr.problems || []).join('; '));
     console.log('Exported: ' + outPath);
-    console.log('  Name: ' + name + '  Cards: ' + lockedCards.length + '  Validated: all gates pass');
+    console.log('  Name: ' + name + '  Cards: ' + exportedCards.length + '  Validated: runtime contract passed');
   } finally {
     try { fs.rmSync(runtimeDir, { recursive: true }); } catch { /* cleanup */ }
   }
@@ -2029,11 +1834,6 @@ function exportProject(project, name, outPath, opts = {}) {
 
 function compileProject(projectInput) {
   const { project } = readProject(projectInput);
-  const gate = projectApi.checkHumanLockGate(project);
-  if (gate.blocked) {
-    const reasons = gate.issues.map((i) => `${i.cardId}: ${i.reason}`).join('\n  - ');
-    fail(`Human Lock Gate blocked compile:\n  - ${reasons}`, EXIT.HUMAN_LOCK_REQUIRED);
-  }
   return { project, result: compileApi.compileDomain(project) };
 }
 

@@ -190,7 +190,7 @@ test('creates a Studio project and rejects accidental overwrite', (t) => {
   assert.match(result.stderr, /Directory already exists/);
 });
 
-test('blocks compile and export until judgment cards are Human Locked', (t) => {
+test('compiles and exports complete cards without requiring Human Lock', (t) => {
   const tmp = tmpDir();
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const projectDir = path.join(tmp, 'project');
@@ -202,19 +202,29 @@ test('blocks compile and export until judgment cards are Human Locked', (t) => {
     'add',
     projectDir,
     'axiom',
-    '--no-strict',
-    '--field',
-    'one_sentence=Prefer specific evidence over broad claims',
+    '--field', 'one_sentence=Prefer specific evidence over broad claims',
+    '--field', 'full_statement=Prefer a specific source because broad claims cannot be verified or improved.',
+    '--field', 'why=Specific evidence makes judgment traceable.',
+    '--field', 'applies_when=["reviewing claims"]',
+    '--field', 'does_not_apply_when=["formatting only"]',
+    '--field', 'failure_risk=The agent may repeat an unsupported generalization.',
+    '--field', 'confidence=high',
+    '--field', 'evidence_type=practice',
   ], { tmp });
   assert.equal(result.status, 0, result.stderr);
 
-  result = run(['lock', projectDir], { tmp });
-  assert.equal(result.status, 4);
-  assert.match(result.stderr, /Human Lock Gate blocked export/);
-
   result = run(['compile', projectDir, '--out', path.join(tmp, 'build')], { tmp });
-  assert.equal(result.status, 4);
-  assert.match(result.stderr, /Human Lock Gate blocked compile/);
+  assert.equal(result.status, 0, result.stderr);
+  const manifest = JSON.parse(fs.readFileSync(path.join(tmp, 'build', 'kdna.json'), 'utf8'));
+  assert.equal(manifest.authoring.human_confirmed, false);
+  assert.equal(manifest.authoring.human_lock_count, 0);
+
+  const outFile = path.join(tmp, 'unreviewed.kdna');
+  result = run(['export', projectDir, '--out', outFile], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+  const runtimeManifest = assertCanonicalRuntimeContainer(outFile).manifest;
+  assert.equal(runtimeManifest.authoring.human_confirmed, false);
+  assert.equal(runtimeManifest.authoring.human_lock_count, 0);
 });
 
 test('runs the trusted authoring workflow through compile and export', (t) => {
@@ -729,6 +739,34 @@ test('create --from-kdna forks an existing .kdna asset', (t) => {
   assert.ok(project.lineage, 'must have lineage');
   assert.equal(project.lineage.type, 'fork');
   assert.ok(project.lineage.parent_name, 'must record parent name');
+});
+
+test('create --from-kdna rejects JSON payload fallback', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const { projectDir } = createLockedProject(t);
+  const canonical = path.join(tmp, 'canonical.kdna');
+  let result = run(['export', projectDir, '--out', canonical], { tmp });
+  assert.equal(result.status, 0, result.stderr);
+
+  const source = path.join(tmp, 'json-payload-source');
+  kdnaCore.unpack(canonical, source);
+  const manifestPath = path.join(source, 'kdna.json');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  manifest.payload.encoding = 'json';
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  const payload = require('cbor-x').decode(fs.readFileSync(path.join(source, 'payload.kdnab')));
+  fs.writeFileSync(path.join(source, 'payload.kdnab'), JSON.stringify(payload));
+  fs.writeFileSync(
+    path.join(source, 'checksums.json'),
+    JSON.stringify(kdnaCore.buildChecksums(source), null, 2),
+  );
+  const invalid = path.join(tmp, 'json-payload.kdna');
+  kdnaCore.pack(source, invalid);
+
+  result = run(['create', path.join(tmp, 'fork'), '--from-kdna', invalid, '--name', '@test/json-fallback'], { tmp });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /current \.kdna|CBOR|payload/i);
 });
 
 // ── Card approve --sign ─────────────────────────────────────────────

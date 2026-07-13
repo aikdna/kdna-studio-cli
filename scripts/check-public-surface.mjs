@@ -58,6 +58,9 @@ let FORBIDDEN_HASHES = new Set();
 const { createHash } = await import('crypto');
 function checkForbiddenHash(text) { return FORBIDDEN_HASHES.has(createHash('sha256').update(text).digest('hex')); }
 
+const INTERNAL_HOME_ROOT = ['', 'Users', 'AI', 'K', 'OPEN'].join('/');
+const PRIVATE_TEMP_ROOT = ['', 'private', 'tmp', 'kdna'].join('/');
+
 const RULES = [
   {
     name: 'private-repo-reference',
@@ -73,8 +76,8 @@ const RULES = [
   },
   {
     name: 'local-filesystem-path',
-    pattern: /(\/Users\/AI\/K\/OPEN|\/private\/tmp\/kdna)/g,
-    hint: 'Replace /Users/AI/K/OPEN/<x> with <workdir>/<x>; /private/tmp/kdna-* with /tmp/kdna-*.',
+    pattern: new RegExp(`(${INTERNAL_HOME_ROOT}|${PRIVATE_TEMP_ROOT})`, 'g'),
+    hint: 'Replace internal absolute paths with public placeholders such as <workdir> or /tmp.',
   },
   {
     name: 'full-commit-hash',

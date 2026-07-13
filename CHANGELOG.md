@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.16 (2026-07-13)
+
+- Depend on Studio Core 1.7.13, whose intermediate compile output is explicitly
+  named as a Studio authoring artifact rather than a second KDNA container
+  generation.
+
 ## 0.8.15 (2026-07-13)
 
 - Use Studio Core 1.7.12 so new password-protected exports use the

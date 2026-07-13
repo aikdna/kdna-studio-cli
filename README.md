@@ -50,13 +50,13 @@ kdna-studio card add my_domain axiom \
   --field does_not_apply_when='["pure formatting"]' \
   --field failure_risk="generic advice"
 kdna-studio card approve my_domain --all --by expert --statement "I confirm this judgment."
-kdna-studio export my_domain --format v1 --out dist/my_domain.kdna
+kdna-studio export my_domain --out dist/my_domain.kdna
 ```
 
 Candidate promotion is scope-gated: only candidates with `status == accepted` and `scope_fit == true` are promoted to cards by default. Use `kdna-studio candidate override <project> <candidate-id>` only when a human intentionally overrides the scope gate.
 
 The current Studio CLI export workflow uses approved cards as release evidence.
-This is Studio project policy, not a KDNA Core v1 format-validity rule. Human
+This is Studio project policy, not a KDNA format-validity rule. Human
 Lock and other provenance records are optional review evidence, not validity
 requirements.
 
@@ -74,7 +74,7 @@ loading existing `.kdna` assets.
 
 ## 5-minute first asset
 
-If you just installed and want to ship a v1 asset without an LLM:
+If you just installed and want to ship a KDNA asset without an LLM:
 
 ```bash
 # 1. Init identity (required for the export signature)
@@ -97,8 +97,8 @@ kdna-studio card add . axiom \
 # 4. Approve and lock
 kdna-studio card approve . --all --by me --statement "i confirm"
 
-# 5. Export the v1 asset
-kdna-studio export . --format v1 --out my_domain.kdna
+# 5. Export the asset
+kdna-studio export . --out my_domain.kdna
 
 # 6. Verify with the runtime CLI
 kdna load my_domain.kdna --profile=compact
@@ -115,11 +115,11 @@ kdna-studio llm config --provider openai --model gpt-4 --key <your-key>
 
 ## Runtime Export Contract
 
-`kdna-studio export --format v1` is the canonical runtime export path. It uses
-`@aikdna/kdna-studio-core` to compile the Studio project into a KDNA Core v1
+`kdna-studio export` is the canonical runtime export path. It uses
+`@aikdna/kdna-studio-core` to compile the Studio project into the current KDNA
 runtime asset and then packs it with `@aikdna/kdna-core`.
 
-A KDNA Core v1 runtime export contains only these top-level entries:
+A KDNA runtime export contains only these top-level entries:
 
 - `mimetype`
 - `kdna.json`

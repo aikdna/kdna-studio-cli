@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.2 (2026-07-14)
+
+- Align runtime validation and packing with KDNA Core 0.17.0 and authoring
+  compilation with Studio Core 1.9.0.
+- Keep the Studio CLI, Studio Core, runtime CLI, and Core on one released
+  dependency tree instead of silently installing the previous runtime beside
+  the current toolchain.
+- Revalidate blank creation, migration, fork import, ordinary and encrypted
+  export, identity preservation, and Runtime Capsule round trips.
+
 ## 0.9.1 (2026-07-13)
 
 - Preserve a source asset's `asset_uid`, creation/update timestamps, and

@@ -1,4 +1,5 @@
 node_modules/
 dist/
 *.tgz
+!fixtures/runtime-candidates/*.tgz
 .DS_Store

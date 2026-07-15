@@ -618,7 +618,7 @@ function buildManifest(project, name) {
       id: author.id || project.author?.id || undefined,
     },
     compatibility: {
-      min_loader_version: '0.18.1',
+      min_loader_version: '0.19.0',
       profile: protocolContract.PAYLOAD_PROFILE,
       profile_version: protocolContract.PAYLOAD_PROFILE_VERSION,
     },

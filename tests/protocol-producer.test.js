@@ -9,6 +9,10 @@ const path = require('node:path');
 const cbor = require('cbor-x');
 const core = require('@aikdna/kdna-core');
 const studio = require('@aikdna/kdna-studio-core');
+const {
+  assertRegistryReleaseReady,
+  verifyCandidateBinding,
+} = require('../scripts/runtime-candidate-binding');
 
 const BIN = path.resolve(__dirname, '..', 'bin', 'kdna-studio.js');
 
@@ -75,7 +79,7 @@ test('Studio CLI emits the current manifest, payload, digest, and Runtime contra
 
   assert.equal(manifest.format_version, '0.1.0');
   assert.deepEqual(manifest.compatibility, {
-    min_loader_version: '0.18.1',
+    min_loader_version: '0.19.0',
     profile: 'kdna.payload.judgment',
     profile_version: '0.1.0',
   });
@@ -109,6 +113,30 @@ test('Studio CLI emits the current manifest, payload, digest, and Runtime contra
   const capsule = core.load(assetPath, { profile: 'compact', as: 'json' });
   assert.equal(capsule.type, 'kdna.runtime-capsule');
   assert.equal(capsule.contract_version, '0.1.0');
+});
+
+test('Studio CLI binds exact unpublished Runtime candidates and blocks release', () => {
+  const root = path.resolve(__dirname, '..');
+  const evidence = verifyCandidateBinding(root);
+  assert.deepEqual(
+    evidence.packages.map((entry) => [entry.name, entry.version, entry.commit]),
+    [
+      [
+        '@aikdna/kdna-core',
+        '0.19.0',
+        'a245b291a51ed19de30fd1ced8c803e396ca405c',
+      ],
+      [
+        '@aikdna/kdna-studio-core',
+        '2.0.0',
+        '6e5744435d4e4390f71c610ee23e671bb8ddf88f',
+      ],
+    ],
+  );
+  assert.throws(
+    () => assertRegistryReleaseReady(root),
+    /registry dependency gate blocked/i,
+  );
 });
 
 test('create --from-kdna preserves the declared judgment core without axiom synthesis', (t) => {

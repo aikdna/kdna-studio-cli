@@ -3,6 +3,7 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { assertRegistryReleaseReady } = require('./runtime-candidate-binding');
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
 const version = pkg.version;
@@ -22,6 +23,10 @@ function softCheck(label, fn) {
 }
 
 console.log(`Release readiness check: ${name}@${version}\n`);
+
+check('runtime dependencies are published registry artifacts', () => {
+  assertRegistryReleaseReady(path.resolve(__dirname, '..'));
+});
 
 check('worktree is clean', () => {
   const out = execSync('git status --porcelain', { encoding: 'utf8' }).trim();

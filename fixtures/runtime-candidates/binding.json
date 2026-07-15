@@ -1,0 +1,22 @@
+{
+  "schema": "kdna.runtime-candidate-binding",
+  "schema_version": "0.1.0",
+  "packages": [
+    {
+      "name": "@aikdna/kdna-core",
+      "version": "0.19.0",
+      "commit": "a245b291a51ed19de30fd1ced8c803e396ca405c",
+      "artifact": "fixtures/runtime-candidates/kdna-core-0.19.0.tgz",
+      "integrity": "sha512-fD/u/83JMhmc3ujc9UnZiSsEo/uv9oWJuWf4o0296Qm9uQ4tO3QP7q5Wh9SCl5vOqMrGaQk3SQdJLVZPdacMvw==",
+      "sha256": "6fe3ce47f13dfdc1b38db7c2cdafe8f1d2a4619b25dc8e077aabd727023c0920"
+    },
+    {
+      "name": "@aikdna/kdna-studio-core",
+      "version": "2.0.0",
+      "commit": "6e5744435d4e4390f71c610ee23e671bb8ddf88f",
+      "artifact": "fixtures/runtime-candidates/kdna-studio-core-2.0.0.tgz",
+      "integrity": "sha512-Adinc5kmb5lutofdXQ+4GFLkif+09tivtVl2Lgs7MiGtTSqLNeOy3pKoBXkeKI/lU/7xQpC27lkb/tuYaiEQAQ==",
+      "sha256": "0d676abddf8436c17a0eff22eb862ed6fc071ce0b2b4c3a1c23efea3d8c29324"
+    }
+  ]
+}

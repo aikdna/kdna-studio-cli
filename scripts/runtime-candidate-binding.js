@@ -6,6 +6,8 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const BINDING_PATH = 'fixtures/runtime-candidates/binding.json';
+const AIKDNA_SCOPE = '@aikdna';
+const AIKDNA_PACKAGE_RE = /^@aikdna\/[a-z0-9][a-z0-9._-]*$/;
 const COMMIT_RE = /^[0-9a-f]{40}$/;
 const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
@@ -32,10 +34,37 @@ function tarPackageManifest(artifact) {
   );
 }
 
-function aikdnaDependencyNames(dependencies) {
-  return Object.keys(dependencies || {})
-    .filter((name) => name.startsWith('@aikdna/'))
-    .sort();
+function referencesAikdnaScope(value) {
+  if (typeof value !== 'string') return false;
+  const candidates = [];
+  let candidate = value;
+  for (let depth = 0; depth <= value.length; depth += 1) {
+    candidates.push(candidate);
+    try {
+      const decoded = decodeURIComponent(candidate);
+      if (decoded === candidate) break;
+      candidate = decoded;
+    } catch {
+      // A malformed escape remains invalid if an already decoded value references this scope.
+      break;
+    }
+  }
+  return candidates.some((candidate) =>
+    candidate
+      .replaceAll('\\', '/')
+      .split('/')
+      .some((segment) => segment.toLowerCase() === AIKDNA_SCOPE),
+  );
+}
+
+function aikdnaDependencyNames(dependencies, label) {
+  const names = [];
+  for (const name of Object.keys(dependencies || {})) {
+    if (!referencesAikdnaScope(name)) continue;
+    assert(AIKDNA_PACKAGE_RE.test(name), `${label} AIKDNA package name invalid: ${name}`);
+    names.push(name);
+  }
+  return names.sort();
 }
 
 function assertExactPackageNames(label, actualNames, expectedNames) {
@@ -57,15 +86,71 @@ function assertExactPackageNames(label, actualNames, expectedNames) {
   );
 }
 
-function assertNoUnboundLockPackages(packageLock, boundNames) {
+function parseLockPackagePath(lockPath) {
+  assert(
+    typeof lockPath === 'string' && lockPath.length > 0 && !lockPath.includes('\\'),
+    `AIKDNA lock package path invalid: ${lockPath}`,
+  );
+  const segments = lockPath.split('/');
+  assert(
+    !segments.some((segment) => segment === '' || segment === '.' || segment === '..'),
+    `AIKDNA lock package path invalid: ${lockPath}`,
+  );
+
+  const packages = [];
+  let index = 0;
+  while (index < segments.length) {
+    assert(segments[index] === 'node_modules', `AIKDNA lock package path invalid: ${lockPath}`);
+    index += 1;
+    const first = segments[index];
+    assert(first && first !== 'node_modules', `AIKDNA lock package path invalid: ${lockPath}`);
+    if (first.startsWith('@')) {
+      const leaf = segments[index + 1];
+      assert(
+        leaf && leaf !== 'node_modules' && !leaf.startsWith('@'),
+        `AIKDNA lock package path invalid: ${lockPath}`,
+      );
+      index += 2;
+      packages.push({ name: `${first}/${leaf}`, lockPath: segments.slice(0, index).join('/') });
+    } else {
+      index += 1;
+      packages.push({ name: first, lockPath: segments.slice(0, index).join('/') });
+    }
+  }
+  return packages;
+}
+
+function assertExactBoundLockPackages(packageLock, boundNames) {
+  const occurrences = new Map([...boundNames].map((name) => [name, new Set()]));
+
+  for (const lockPath of Object.keys(packageLock.packages || {})) {
+    if (lockPath === '') continue;
+    if (referencesAikdnaScope(lockPath)) {
+      const packages = parseLockPackagePath(lockPath);
+      for (const { name, lockPath: packagePath } of packages.filter(({ name }) =>
+        referencesAikdnaScope(name),
+      )) {
+        assert(AIKDNA_PACKAGE_RE.test(name), `AIKDNA lock package name invalid: ${lockPath}`);
+        assert(boundNames.has(name), `unbound AIKDNA lock package: ${name}`);
+        occurrences.get(name).add(packagePath);
+      }
+    }
+  }
+
+  for (const name of boundNames) {
+    const paths = [...occurrences.get(name)].sort();
+    assert(
+      paths.length === 1,
+      `bound AIKDNA lock package must appear exactly once: ${name} count=${paths.length} paths=[${paths.join(', ')}]`,
+    );
+    assert(
+      paths[0] === `node_modules/${name}`,
+      `bound AIKDNA lock package must be top-level: ${name} path=${paths[0]}`,
+    );
+  }
+
   for (const [lockPath, locked] of Object.entries(packageLock.packages || {})) {
     if (lockPath === '') continue;
-    const aikdnaMatch = lockPath.match(/(?:^|\/)node_modules\/(@aikdna\/[^/]+)$/);
-    assert(
-      !aikdnaMatch || boundNames.has(aikdnaMatch[1]),
-      `unbound AIKDNA lock package: ${aikdnaMatch?.[1] || lockPath}`,
-    );
-
     if (typeof locked?.resolved === 'string' && locked.resolved.startsWith('file:')) {
       const directMatch = lockPath.match(/^node_modules\/(@aikdna\/[^/]+)$/);
       assert(
@@ -86,22 +171,25 @@ function verifyCandidateBinding(root) {
   assert(Array.isArray(binding.packages) && binding.packages.length > 0, 'candidate binding is empty');
 
   for (const entry of binding.packages) {
-    assert(typeof entry.name === 'string' && entry.name.startsWith('@aikdna/'), 'candidate package name invalid');
+    assert(
+      typeof entry.name === 'string' && AIKDNA_PACKAGE_RE.test(entry.name),
+      'candidate package name invalid',
+    );
   }
-  const directNames = aikdnaDependencyNames(packageJson.dependencies);
+  const directNames = aikdnaDependencyNames(packageJson.dependencies, 'direct dependencies');
   const bindingNames = binding.packages.map((entry) => entry.name);
   assertExactPackageNames('candidate binding', bindingNames, directNames);
   assertExactPackageNames(
     'lock root AIKDNA dependencies',
-    aikdnaDependencyNames(packageLock.packages?.['']?.dependencies),
+    aikdnaDependencyNames(packageLock.packages?.['']?.dependencies, 'lock root dependencies'),
     directNames,
   );
   const boundNames = new Set(bindingNames);
-  assertNoUnboundLockPackages(packageLock, boundNames);
+  assertExactBoundLockPackages(packageLock, boundNames);
 
   for (const entry of binding.packages) {
     assert(SEMVER_RE.test(entry.version || ''), `candidate version invalid: ${entry.name}`);
-    assert(COMMIT_RE.test(entry.commit || ''), `candidate commit invalid: ${entry.name}`);
+    assert(COMMIT_RE.test(entry.commit || ''), `candidate commit audit reference invalid: ${entry.name}`);
     assert(
       typeof entry.artifact === 'string' &&
         entry.artifact.startsWith('fixtures/runtime-candidates/') &&

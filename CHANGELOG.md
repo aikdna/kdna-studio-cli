@@ -12,10 +12,13 @@
 - Preserve the four declared `judgment_core` fields exactly when
   `create --from-kdna` creates an editable project and when that project is
   exported again; the importer never synthesizes them from the first axiom.
-- Bind both unpublished Runtime dependencies to exact source commits and
-  reproducible tar integrities. Clean installs use those checked-in candidate
-  artifacts; publication remains blocked until identical packages exist in
-  the public registry and the lock resolves those registry artifacts.
+- Bind both unpublished Runtime dependencies to exact checked-in tar digests
+  and require exactly one top-level copy of each across the complete lock
+  graph. Recorded commits are audit source references, not cryptographic
+  identity claims; tar integrities and SHA-256 digests are authoritative.
+  Clean installs use those candidate artifacts; publication remains blocked
+  until identical packages exist in the public registry and the lock resolves
+  those registry artifacts.
 
 The command surface remains in the pre-1.0 line. This release changes the
 emitted asset contract and therefore uses the next minor coordinate, 0.10.0,

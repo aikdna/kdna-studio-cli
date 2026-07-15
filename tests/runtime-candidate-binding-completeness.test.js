@@ -32,7 +32,7 @@ function mutateJson(root, relativePath, mutation) {
   fs.writeFileSync(target, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-test('candidate binding completeness rejects every unbound runtime dependency', (t) => {
+test('candidate binding completeness rejects every unbound or non-unique runtime dependency', (t) => {
   const root = copyFixtureRoot(t);
   const bindingPath = path.join(root, 'fixtures/runtime-candidates/binding.json');
   const packagePath = path.join(root, 'package.json');
@@ -101,5 +101,74 @@ test('candidate binding completeness rejects every unbound runtime dependency', 
       };
     },
     /unbound file lock package/,
+  );
+
+  const binding = JSON.parse(originals.get(bindingPath));
+  for (const entry of binding.packages) {
+    const nestedPath = `node_modules/foreign/node_modules/${entry.name}`;
+    const topLevelPath = `node_modules/${entry.name}`;
+    const leaf = entry.name.split('/').at(-1);
+    rejects(
+      'package-lock.json',
+      (lock) => {
+        lock.packages[nestedPath] = {
+          version: '0.0.1',
+          resolved: `https://registry.npmjs.org/${entry.name}/-/${leaf}-0.0.1.tgz`,
+        };
+      },
+      new RegExp(`bound AIKDNA lock package must appear exactly once.*${leaf}.*count=2`),
+    );
+    rejects(
+      'package-lock.json',
+      (lock) => {
+        lock.packages[`${nestedPath}/node_modules/transitive`] = { version: '1.0.0' };
+      },
+      new RegExp(`bound AIKDNA lock package must appear exactly once.*${leaf}.*count=2`),
+    );
+    rejects(
+      'package-lock.json',
+      (lock) => {
+        lock.packages[nestedPath] = {
+          ...lock.packages[topLevelPath],
+          resolved: `file:${entry.artifact}`,
+        };
+      },
+      new RegExp(`bound AIKDNA lock package must appear exactly once.*${leaf}.*count=2`),
+    );
+    rejects(
+      'package-lock.json',
+      (lock) => {
+        lock.packages[nestedPath] = lock.packages[topLevelPath];
+        delete lock.packages[topLevelPath];
+      },
+      new RegExp(`bound AIKDNA lock package must be top-level.*${leaf}`),
+    );
+  }
+  rejects(
+    'package-lock.json',
+    (lock) => {
+      lock.packages['node_modules/foreign/node_modules/@aikdna%2fkdna-core'] = {
+        version: '0.19.0',
+      };
+    },
+    /AIKDNA lock package path invalid/,
+  );
+  rejects(
+    'package-lock.json',
+    (lock) => {
+      lock.packages['node_modules/foreign/node_modules/%2540aikdna%252fkdna-core'] = {
+        version: '0.19.0',
+      };
+    },
+    /AIKDNA lock package name invalid/,
+  );
+  rejects(
+    'package-lock.json',
+    (lock) => {
+      lock.packages['node_modules/foreign/node_modules/@AIKDNA/kdna-studio-core'] = {
+        version: '2.0.0',
+      };
+    },
+    /AIKDNA lock package name invalid/,
   );
 });

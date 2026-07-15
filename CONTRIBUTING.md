@@ -5,7 +5,7 @@ This is the KDNA Studio CLI repository. Contribution guidelines follow the [main
 Key points:
 - Submit changes via pull request to `main`.
 - Sign off commits: `git commit -s`.
-- Do NOT restore legacy commands, registry, v2 support.
+- Do NOT restore legacy commands, registry, retired support.
 - Studio CLI changes must be verified with `npm test` (21 tests).
 - Include verification commands in PR description.
 

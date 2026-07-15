@@ -9,7 +9,7 @@ const { execFileSync } = require('child_process');
 
 function loadStudioCore() {
   const publishedCore = require('@aikdna/kdna-studio-core');
-  if (publishedCore.exportRuntime) return publishedCore;
+  if (publishedCore.exportRuntime && publishedCore.protocolContract) return publishedCore;
   try {
     return require('../../kdna-studio-core/src');
   } catch (_) {
@@ -26,6 +26,7 @@ const {
   creator: creatorApi,
   distillation: distillationApi,
   exportRuntime,
+  protocolContract,
 } = loadStudioCore();
 
 const llm = require('../src/llm');
@@ -513,14 +514,10 @@ function cardsFromRuntimePayload(payload) {
   for (const item of (Array.isArray(payload.cases) ? payload.cases : [])) {
     pushImportedCard(cards, 'case', item, item.id || null);
   }
-  // Accept both `self_check` (canonical) and `self_checks` (legacy schema
-  // name) so we round-trip assets written by either version of the
-  // payload-profile schema. Bug (#53): prior version used
-  // `arr || []`, which would crash with "object is not iterable" if
-  // the field was a truthy non-array (e.g. a single `{question: ...}`
-  // object instead of an array). The fix guards with Array.isArray.
-  const rawSelfCheck = payload.reasoning?.self_check
-    || payload.reasoning?.self_checks;
+  // The current payload contract has one self-check field. Refuse to infer a
+  // parallel field name: Core validation owns format migration, while Studio
+  // imports only the current validated payload shape.
+  const rawSelfCheck = payload.reasoning?.self_check;
   const selfCheckArr = Array.isArray(rawSelfCheck) ? rawSelfCheck : [];
   for (const selfCheck of selfCheckArr) {
     const fields = typeof selfCheck === 'string' ? { question: selfCheck } : selfCheck;
@@ -567,7 +564,10 @@ function cardsFromRuntimePayload(payload) {
 
 function cardsFromPayload(payload) {
   if (!payload || typeof payload !== 'object') return [];
-  if (payload.profile === 'judgment-profile-v1' || payload.core || payload.source_cards) {
+  if (
+    payload.profile === protocolContract.PAYLOAD_PROFILE &&
+    payload.profile_version === protocolContract.PAYLOAD_PROFILE_VERSION
+  ) {
     return cardsFromRuntimePayload(payload);
   }
   return [];
@@ -591,7 +591,7 @@ function buildManifest(project, name) {
   const assetId = assetIdFromName(name || source.name || project.name);
   const author = source.author || project.author || {};
   return {
-    kdna_version: '1.0',
+    format_version: protocolContract.FORMAT_VERSION,
     asset_id: assetId,
     asset_uid: project.asset_uid || source.asset_uid || 'urn:uuid:' + crypto.randomUUID(),
     asset_type: project.type === 'cluster' ? 'cluster' : 'domain',
@@ -605,7 +605,11 @@ function buildManifest(project, name) {
       name: author.name || project.author?.name || 'Studio Export',
       id: author.id || project.author?.id || undefined,
     },
-    compatibility: { min_loader_version: '1.0.0', profile: 'judgment-profile-v1' },
+    compatibility: {
+      min_loader_version: '0.18.1',
+      profile: protocolContract.PAYLOAD_PROFILE,
+      profile_version: protocolContract.PAYLOAD_PROFILE_VERSION,
+    },
     payload: { path: 'payload.kdnab', encoding: 'cbor', encrypted: false },
     summary: source.core_insight || project.release?.description || source.description || '',
     description: source.description || project.release?.description || '',
@@ -1936,7 +1940,7 @@ function cmdStudioInstall(args) {
 function cmdStudioUpdate(args) {
   const target = args[0];
   if (!target) fail('Usage: kdna-studio update <@scope/name>');
-  // kdna update does not exist in kdna-cli v0.28.x. The correct
+  // kdna update does not exist in kdna-cli 0.28.x. The correct
   // path is to re-install via npm or use kdna install to pull
   // the latest published version of the asset.
   console.log(`To update ${target}, run:`);

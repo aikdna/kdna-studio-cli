@@ -7,7 +7,7 @@
 - [ ] Fresh `npm install -g` verified
 - [ ] Commands run: `kdna-studio ...`
 
-## Does this reintroduce legacy / registry / v2 / install / compatibility?
+## Does this reintroduce legacy / registry / retired / install / compatibility?
 - [ ] No
 
 ## If adding or changing a .kdna asset

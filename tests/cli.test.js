@@ -570,7 +570,7 @@ test('migrate exports canonical runtime payload without source entries', (t) => 
     core_insight: 'Preserve real judgment structure.',
     author: { name: 'Test Author', id: 'test-author' },
     license: { type: 'CC-BY-4.0' },
-    keywords: ['legacy', 'v1'],
+    keywords: ['legacy', 'single-format'],
     languages: ['en'],
     default_language: 'en',
     quality_badge: 'tested',
@@ -626,7 +626,8 @@ test('migrate exports canonical runtime payload without source entries', (t) => 
   assert.equal(full.manifest.creator.name, 'Test Author');
   assert.equal(full.manifest.version, '0.7.3');
   assert.equal(full.manifest.judgment_version, '2026.05.0');
-  assert.equal(full.payload.profile, 'judgment-profile-v1');
+  assert.equal(full.payload.profile, 'kdna.payload.judgment');
+  assert.equal(full.payload.profile_version, '0.1.0');
   assert.equal(full.payload.core.axioms.length, 1);
   assert.equal(full.payload.scenarios.length, 1);
   assert.equal(full.payload.cases.length, 1);
@@ -702,12 +703,17 @@ test('export --password encrypts payload and round-trips (Argon2id profile)', (t
 
   // 7. load with correct password → Runtime Capsule round-trip
   const capsule = kdnaCore.load(outFile, { password, profile: 'full', as: 'json' });
-  assert.equal(capsule.type, 'kdna.context.capsule');
+  assert.equal(capsule.type, 'kdna.runtime-capsule');
+  assert.equal(capsule.contract_version, '0.1.0');
   const loaded = capsule.context;
   assert.equal(loaded.manifest.payload.encrypted, true);
   assert.equal(loaded.manifest.access, 'licensed');
   assert.equal(loaded.manifest.entitlement?.profile, 'password');
-  assert.equal(loaded.manifest.encryption?.profile, 'kdna-password-protected-v1');
+  assert.equal(loaded.manifest.encryption?.profile, kdnaCore.PASSWORD_PROTECTED_PROFILE);
+  assert.equal(
+    loaded.manifest.encryption?.profile_version,
+    kdnaCore.ENCRYPTION_PROFILE_VERSION,
+  );
   assert.ok(loaded.manifest.encryption?.encrypted_entries?.includes('payload.kdnab'));
   assert.equal(loaded.payload.core.axioms.length, 1);
 });
@@ -965,7 +971,7 @@ test('E2E blank: create → approve → lock → export → runtime digest match
   assert.equal(manifest.authoring.human_confirmed, true);
   assert.equal(kdnaCore.validate(outFile).overall_valid, true);
   assert.equal(kdnaCore.planLoad(outFile).can_load_now, true);
-  assert.equal(kdnaCore.load(outFile, { profile: 'compact', as: 'json' }).type, 'kdna.context.capsule');
+  assert.equal(kdnaCore.load(outFile, { profile: 'compact', as: 'json' }).type, 'kdna.runtime-capsule');
 });
 
 // ── E2E: Fork workflow ────────────────────────────────────────────

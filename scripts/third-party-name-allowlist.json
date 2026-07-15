@@ -1,0 +1,110 @@
+[
+  {
+    "file": "CODE_OF_CONDUCT.md",
+    "text": "v2.1",
+    "count": 2,
+    "reason": "Contributor Covenant's controlled reference label for its published coordinate."
+  },
+  {
+    "file": "src/llm/config.js",
+    "text": "https://api.openai.com/v1",
+    "count": 1,
+    "reason": "Provider-owned OpenAI-compatible API route."
+  },
+  {
+    "file": "src/llm/config.js",
+    "text": "https://api.anthropic.com/v1",
+    "count": 1,
+    "reason": "Provider-owned Anthropic API route."
+  },
+  {
+    "file": "src/llm/config.js",
+    "text": "https://api.deepseek.com/v1",
+    "count": 1,
+    "reason": "Provider-owned DeepSeek API route."
+  },
+  {
+    "file": "src/llm/config.js",
+    "text": "https://openrouter.ai/api/v1",
+    "count": 1,
+    "reason": "Provider-owned OpenRouter API route."
+  },
+  {
+    "file": "src/llm/config.js",
+    "text": "https://api.groq.com/openai/v1",
+    "count": 1,
+    "reason": "Provider-owned Groq OpenAI-compatible API route."
+  },
+  {
+    "file": "src/llm/config.js",
+    "text": "http://localhost:11434/v1",
+    "count": 2,
+    "reason": "Provider-owned local OpenAI-compatible API route."
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "text": "actions/checkout@v7",
+    "count": 1,
+    "reason": "GitHub Actions release selector owned by actions/checkout."
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "text": "actions/setup-node@v6",
+    "count": 1,
+    "reason": "GitHub Actions release selector owned by actions/setup-node."
+  },
+  {
+    "file": ".github/workflows/public-surface.yml",
+    "text": "actions/checkout@v7",
+    "count": 1,
+    "reason": "GitHub Actions release selector owned by actions/checkout."
+  },
+  {
+    "file": ".github/workflows/public-surface.yml",
+    "text": "actions/setup-node@v6",
+    "count": 1,
+    "reason": "GitHub Actions release selector owned by actions/setup-node."
+  },
+  {
+    "file": ".github/workflows/publish.yml",
+    "text": "actions/checkout@v7",
+    "count": 1,
+    "reason": "GitHub Actions release selector owned by actions/checkout."
+  },
+  {
+    "file": ".github/workflows/publish.yml",
+    "text": "actions/setup-node@v6",
+    "count": 1,
+    "reason": "GitHub Actions release selector owned by actions/setup-node."
+  },
+  {
+    "file": ".github/workflows/codeql-js.yml",
+    "text": "actions/checkout@v7",
+    "count": 1,
+    "reason": "GitHub Actions release selector owned by actions/checkout."
+  },
+  {
+    "file": ".github/workflows/codeql-js.yml",
+    "text": "github/codeql-action/init@v4",
+    "count": 1,
+    "reason": "GitHub Actions release selector owned by github/codeql-action."
+  },
+  {
+    "file": ".github/workflows/codeql-js.yml",
+    "text": "github/codeql-action/autobuild@v4",
+    "count": 1,
+    "reason": "GitHub Actions release selector owned by github/codeql-action."
+  },
+  {
+    "file": ".github/workflows/codeql-js.yml",
+    "text": "github/codeql-action/analyze@v4",
+    "count": 1,
+    "reason": "GitHub Actions release selector owned by github/codeql-action."
+  },
+  {
+    "file": ".github/workflows/stale.yml",
+    "text": "actions/stale@v10",
+    "count": 1,
+    "reason": "GitHub Actions release selector owned by actions/stale."
+  }
+]

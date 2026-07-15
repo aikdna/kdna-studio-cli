@@ -8,4 +8,4 @@ labels: enhancement
 
 ## Proposed solution
 
-## Does this reintroduce legacy / registry / v2 / install?
+## Does this reintroduce legacy / registry / retired / install?

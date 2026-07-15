@@ -125,6 +125,11 @@ A KDNA runtime export contains only these top-level entries:
 - `payload.kdnab`
 - `checksums.json`
 
+The current producer writes `format_version: 0.1.0`, payload profile
+`kdna.payload.judgment` with `profile_version: 0.1.0`, and digest profile
+`kdna.digest-basis.runtime-entry-set` with `digest_profile_version: 0.1.0`.
+These compatibility coordinates are independent of package versions.
+
 Authoring/source entries such as `KDNA_Core.json`, `KDNA_Patterns.json`, and
 `source_cards` are not runtime distribution entries. They may exist in Studio
 compile output or legacy imports, but they must not be emitted by the runtime

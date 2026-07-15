@@ -573,6 +573,18 @@ function cardsFromPayload(payload) {
   return [];
 }
 
+function judgmentCoreFromRuntimePayload(payload) {
+  const core = payload?.core;
+  if (!core || typeof core !== 'object' || Array.isArray(core)) return null;
+  const declared = {};
+  for (const field of ['highest_question', 'worldview', 'value_order', 'judgment_role']) {
+    if (Object.hasOwn(core, field)) {
+      declared[field] = JSON.parse(JSON.stringify(core[field]));
+    }
+  }
+  return Object.keys(declared).length > 0 ? declared : null;
+}
+
 function buildManifest(project, name) {
   // Bug (#58): prior version was a hand-rolled manifest builder that
   // shared zero logic with the canonical buildManifest in
@@ -668,6 +680,7 @@ function cmdCreate(args) {
         sourceMode,
         creatorIdentity,
         lineage,
+        judgmentCore: kdnaData.judgment_core,
       });
       project.cards = kdnaData.cards;
       // Bug #15 / #28 follow-up: store the source KDNA_* files on the
@@ -767,12 +780,14 @@ function importFromKdna(kdnaPath) {
   // Current assets carry strict-CBOR `payload.kdnab`. Legacy source folders
   // are migrated explicitly with --from-folder; they are not runtime assets.
   const importedCards = [];
+  let judgmentCore = null;
   if (!entries.has('payload.kdnab')) {
     fail('Not a current .kdna asset: missing payload.kdnab. Use --from-folder for legacy JSON source migration.');
   }
   try {
     const payload = decodePayload(entries.get('payload.kdnab'), manifest);
     importedCards.push(...cardsFromPayload(payload));
+    judgmentCore = judgmentCoreFromRuntimePayload(payload);
   } catch (e) {
     fail(`Could not import cards from payload.kdnab: ${e.message}`);
   }
@@ -790,6 +805,7 @@ function importFromKdna(kdnaPath) {
   return {
     lineage,
     cards: importedCards,
+    judgment_core: judgmentCore,
     source_manifest: manifest,
     source_patterns: null,
     source_reasoning: null,

@@ -166,6 +166,11 @@ kdna-studio create forked --from-kdna ./parent.kdna --name @scope/forked
 kdna-studio create migrated --from-folder ./old-domain-json --name @scope/migrated
 ```
 
+Current `.kdna` imports also preserve explicitly declared `highest_question`,
+`worldview`, ordered `value_order`, and `judgment_role` values in the editable
+project. Re-export writes those values back exactly; Studio does not infer a
+replacement judgment core from an axiom.
+
 ## Related
 
 - [KDNA Core](https://github.com/aikdna/kdna) — Official format specification

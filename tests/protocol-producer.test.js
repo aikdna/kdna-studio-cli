@@ -111,6 +111,39 @@ test('Studio CLI emits the current manifest, payload, digest, and Runtime contra
   assert.equal(capsule.contract_version, '0.1.0');
 });
 
+test('create --from-kdna preserves the declared judgment core without axiom synthesis', (t) => {
+  const { root, project, projectDir } = fixture(t);
+  const sourceAsset = path.join(root, 'source.kdna');
+  assert.equal(exportAsset(projectDir, sourceAsset).status, 0);
+
+  const importedProjectDir = path.join(root, 'imported-project');
+  const imported = spawnSync(
+    process.execPath,
+    [BIN, 'create', importedProjectDir, '--from-kdna', sourceAsset, '--name', '@test/imported'],
+    { encoding: 'utf8', env: { ...process.env } },
+  );
+  assert.equal(imported.status, 0, imported.stderr);
+
+  const importedProject = JSON.parse(
+    fs.readFileSync(path.join(importedProjectDir, 'studio.project.json'), 'utf8'),
+  );
+  assert.deepEqual(importedProject.judgment_core, project.judgment_core);
+  assert.notEqual(
+    importedProject.judgment_core.highest_question,
+    importedProject.cards[0].fields.one_sentence,
+    'highest_question must come from payload.core, not the first axiom',
+  );
+
+  const reexportedAsset = path.join(root, 'reexported.kdna');
+  const reexported = exportAsset(importedProjectDir, reexportedAsset);
+  assert.equal(reexported.status, 0, reexported.stderr);
+  assert.equal(core.validate(reexportedAsset).overall_valid, true);
+  const payload = core.load(reexportedAsset, { profile: 'full', as: 'json' }).context.payload;
+  for (const field of ['highest_question', 'worldview', 'value_order', 'judgment_role']) {
+    assert.deepEqual(payload.core[field], project.judgment_core[field], field);
+  }
+});
+
 test('Studio CLI refuses a packaged asset with a non-current payload profile', (t) => {
   const { root, projectDir } = fixture(t);
   const assetPath = path.join(root, 'asset.kdna');

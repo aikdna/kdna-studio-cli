@@ -10,6 +10,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const cbor = require('cbor-x');
+const { unpack } = require('@aikdna/kdna-core');
 
 const studioBin = path.join(__dirname, '..', 'bin', 'kdna-studio.js');
 
@@ -18,10 +19,6 @@ function run(args, opts = {}) {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, ...opts.env },
   });
-}
-
-function runKdna(args) {
-  return spawnSync('kdna', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 function tmpDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-e2e-export-')); }
@@ -51,7 +48,7 @@ test('e2e: pattern → approve → export → patterns in payload', () => {
     assert.equal(approveR.status, 0, approveR.stderr);
     const exportR = run(['export', pDir, '--out', path.join(tmp, 'out.kdna')]);
     assert.equal(exportR.status, 0, exportR.stderr);
-    runKdna(['unpack', path.join(tmp, 'out.kdna'), path.join(tmp, 'unpacked')]);
+    unpack(path.join(tmp, 'out.kdna'), path.join(tmp, 'unpacked'));
     const payload = cbor.decode(fs.readFileSync(path.join(tmp, 'unpacked', 'payload.kdnab')));
     const patternCards = (payload.patterns || []).filter(p => p.type === 'test_pattern');
     assert.ok(patternCards.length > 0, `Expected >0 pattern cards in payload patterns, got ${patternCards.length}`);
@@ -73,7 +70,7 @@ test('e2e: stances → approve → export → stances in payload', () => {
     addCard(pDir, 'stance', { statement: 'Stance two: Trust burns slowly and is lost quickly.' });
     run(['card', 'approve', pDir, '--all', '--by', 'me', '--statement', 'ok']);
     run(['export', pDir, '--out', path.join(tmp, 'out.kdna')]);
-    runKdna(['unpack', path.join(tmp, 'out.kdna'), path.join(tmp, 'unpacked')]);
+    unpack(path.join(tmp, 'out.kdna'), path.join(tmp, 'unpacked'));
     const payload = cbor.decode(fs.readFileSync(path.join(tmp, 'unpacked', 'payload.kdnab')));
     assert.equal((payload.core?.stances || []).length, 2, 'Expected 2 stances in payload');
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }

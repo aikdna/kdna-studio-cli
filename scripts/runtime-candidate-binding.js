@@ -32,6 +32,50 @@ function tarPackageManifest(artifact) {
   );
 }
 
+function aikdnaDependencyNames(dependencies) {
+  return Object.keys(dependencies || {})
+    .filter((name) => name.startsWith('@aikdna/'))
+    .sort();
+}
+
+function assertExactPackageNames(label, actualNames, expectedNames) {
+  const counts = new Map();
+  for (const name of actualNames) counts.set(name, (counts.get(name) || 0) + 1);
+  const duplicates = [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([name]) => name)
+    .sort();
+  assert(duplicates.length === 0, `${label} contains duplicate packages: ${duplicates.join(', ')}`);
+
+  const actual = new Set(actualNames);
+  const expected = new Set(expectedNames);
+  const missing = expectedNames.filter((name) => !actual.has(name));
+  const extra = [...actual].filter((name) => !expected.has(name)).sort();
+  assert(
+    missing.length === 0 && extra.length === 0,
+    `${label} package set mismatch: missing=[${missing.join(', ')}] extra=[${extra.join(', ')}]`,
+  );
+}
+
+function assertNoUnboundLockPackages(packageLock, boundNames) {
+  for (const [lockPath, locked] of Object.entries(packageLock.packages || {})) {
+    if (lockPath === '') continue;
+    const aikdnaMatch = lockPath.match(/(?:^|\/)node_modules\/(@aikdna\/[^/]+)$/);
+    assert(
+      !aikdnaMatch || boundNames.has(aikdnaMatch[1]),
+      `unbound AIKDNA lock package: ${aikdnaMatch?.[1] || lockPath}`,
+    );
+
+    if (typeof locked?.resolved === 'string' && locked.resolved.startsWith('file:')) {
+      const directMatch = lockPath.match(/^node_modules\/(@aikdna\/[^/]+)$/);
+      assert(
+        directMatch && boundNames.has(directMatch[1]),
+        `unbound file lock package: ${lockPath}`,
+      );
+    }
+  }
+}
+
 function verifyCandidateBinding(root) {
   const binding = readJson(path.join(root, BINDING_PATH));
   const packageJson = readJson(path.join(root, 'package.json'));
@@ -43,6 +87,19 @@ function verifyCandidateBinding(root) {
 
   for (const entry of binding.packages) {
     assert(typeof entry.name === 'string' && entry.name.startsWith('@aikdna/'), 'candidate package name invalid');
+  }
+  const directNames = aikdnaDependencyNames(packageJson.dependencies);
+  const bindingNames = binding.packages.map((entry) => entry.name);
+  assertExactPackageNames('candidate binding', bindingNames, directNames);
+  assertExactPackageNames(
+    'lock root AIKDNA dependencies',
+    aikdnaDependencyNames(packageLock.packages?.['']?.dependencies),
+    directNames,
+  );
+  const boundNames = new Set(bindingNames);
+  assertNoUnboundLockPackages(packageLock, boundNames);
+
+  for (const entry of binding.packages) {
     assert(SEMVER_RE.test(entry.version || ''), `candidate version invalid: ${entry.name}`);
     assert(COMMIT_RE.test(entry.commit || ''), `candidate commit invalid: ${entry.name}`);
     assert(

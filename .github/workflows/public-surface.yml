@@ -17,9 +17,16 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
-          node-version: 22
+          node-version: '22.23.1'
+          check-latest: false
+      - name: Acquire and verify the audited npm release bytes
+        run: |
+          node scripts/acquire-trusted-npm-release.js --out "$RUNNER_TEMP/npm-11.17.0.tgz"
+          echo "KDNA_TRUSTED_NPM_TARBALL=$RUNNER_TEMP/npm-11.17.0.tgz" >> "$GITHUB_ENV"
       - name: Run public-surface check
         run: node scripts/check-public-surface.mjs
+      - name: Enforce the packed public naming boundary
+        run: node scripts/check-current-protocol-names.js

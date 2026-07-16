@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const { verifyCandidateBinding } = require('./runtime-candidate-binding');
 
 const root = path.resolve(__dirname, '..');
@@ -24,12 +24,17 @@ function run(command, args, options = {}) {
   return result;
 }
 
+function npm(args, options = {}) {
+  const npmCli = process.env.npm_execpath;
+  if (npmCli) return run(process.execPath, [npmCli, ...args], options);
+  return run('npm', args, options);
+}
+
 function pack(destination) {
-  const output = execFileSync(
-    'npm',
+  const output = npm(
     ['pack', '--silent', '--ignore-scripts', '--pack-destination', destination],
-    { cwd: root, encoding: 'utf8' },
-  ).trim();
+    { cwd: root },
+  ).stdout.trim();
   return path.join(destination, output.split(/\r?\n/).at(-1));
 }
 
@@ -64,8 +69,7 @@ function main() {
       `${JSON.stringify({ name: 'candidate-chain-consumer', version: '1.0.0', private: true }, null, 2)}\n`,
     );
     const candidateTars = binding.packages.map((entry) => path.join(root, entry.artifact));
-    run(
-      'npm',
+    npm(
       [
         'install',
         '--ignore-scripts',
@@ -78,7 +82,7 @@ function main() {
       ],
       { cwd: consumer },
     );
-    run('npm', ['ls', '--all'], { cwd: consumer });
+    npm(['ls', '--all'], { cwd: consumer });
 
     const core = require(path.join(consumer, 'node_modules/@aikdna/kdna-core'));
     const studio = require(path.join(consumer, 'node_modules/@aikdna/kdna-studio-core'));

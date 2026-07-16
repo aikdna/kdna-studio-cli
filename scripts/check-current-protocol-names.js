@@ -4,7 +4,11 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
+const {
+  readTarFileEntries,
+  resolveTrustedNpmInvocation,
+} = require('./runtime-candidate-binding');
 
 const TEXT_EXTENSIONS = new Set([
   '',
@@ -106,7 +110,8 @@ function findingsForText(relative, text, allowlist) {
   return findings;
 }
 
-function scanTree(root, allowlist = readAllowlist(root)) {
+function scanTree(root) {
+  const allowlist = readAllowlist(root);
   const files = listFiles(root).sort();
   const findings = [];
   for (const relative of files) {
@@ -121,20 +126,50 @@ function scanTree(root, allowlist = readAllowlist(root)) {
 
 function scanPackedArtifact(root) {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-studio-cli-names-'));
+  const invocation = resolveTrustedNpmInvocation(root);
+  const allowlist = readAllowlist(root);
   try {
-    const output = execFileSync(
-      'npm',
-      ['pack', '--silent', '--ignore-scripts', '--pack-destination', temporary],
-      { cwd: root, encoding: 'utf8' },
-    ).trim();
-    const tarball = path.join(temporary, output.split(/\r?\n/).at(-1));
-    execFileSync('tar', ['-xzf', tarball, '-C', temporary]);
-    const packageRoot = path.join(temporary, 'package');
-    return scanTree(packageRoot, readAllowlist(root)).map((finding) => ({
-      ...finding,
-      file: `npm-pack/${finding.file}`,
-    }));
+    const result = spawnSync(
+      invocation.command,
+      [
+        ...invocation.prefixArgs,
+        'pack',
+        '--json',
+        '--ignore-scripts',
+        '--pack-destination',
+        temporary,
+        '--registry=https://registry.npmjs.org/',
+        '--@aikdna:registry=https://registry.npmjs.org/',
+      ],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: invocation.environment,
+        maxBuffer: 16 * 1024 * 1024,
+        shell: false,
+      },
+    );
+    if (result.error || result.status !== 0 || result.signal) {
+      throw new Error('trusted npm public-surface pack failed');
+    }
+    const reports = JSON.parse(result.stdout);
+    if (!Array.isArray(reports) || reports.length !== 1 || !reports[0].filename) {
+      throw new Error('trusted npm public-surface pack returned invalid JSON');
+    }
+    const tarball = path.join(temporary, reports[0].filename);
+    const findings = [];
+    for (const entry of readTarFileEntries(tarball)) {
+      if (!entry.path.startsWith('package/')) {
+        throw new Error(`public package entry escaped its root: ${entry.path}`);
+      }
+      const relative = entry.path.slice('package/'.length);
+      findings.push(...findingsForText(relative, relative, []));
+      if (!isTextFile(relative)) continue;
+      findings.push(...findingsForText(relative, entry.bytes.toString('utf8'), allowlist));
+    }
+    return findings.map((finding) => ({ ...finding, file: `npm-pack/${finding.file}` }));
   } finally {
+    invocation.cleanup();
     fs.rmSync(temporary, { recursive: true, force: true });
   }
 }

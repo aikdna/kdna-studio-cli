@@ -42,66 +42,6 @@
     "reason": "Provider-owned local OpenAI-compatible API route."
   },
   {
-    "file": ".github/workflows/ci.yml",
-    "text": "actions/checkout@v7",
-    "count": 1,
-    "reason": "GitHub Actions release selector owned by actions/checkout."
-  },
-  {
-    "file": ".github/workflows/ci.yml",
-    "text": "actions/setup-node@v6",
-    "count": 1,
-    "reason": "GitHub Actions release selector owned by actions/setup-node."
-  },
-  {
-    "file": ".github/workflows/public-surface.yml",
-    "text": "actions/checkout@v7",
-    "count": 1,
-    "reason": "GitHub Actions release selector owned by actions/checkout."
-  },
-  {
-    "file": ".github/workflows/public-surface.yml",
-    "text": "actions/setup-node@v6",
-    "count": 1,
-    "reason": "GitHub Actions release selector owned by actions/setup-node."
-  },
-  {
-    "file": ".github/workflows/publish.yml",
-    "text": "actions/checkout@v7",
-    "count": 1,
-    "reason": "GitHub Actions release selector owned by actions/checkout."
-  },
-  {
-    "file": ".github/workflows/publish.yml",
-    "text": "actions/setup-node@v6",
-    "count": 1,
-    "reason": "GitHub Actions release selector owned by actions/setup-node."
-  },
-  {
-    "file": ".github/workflows/codeql-js.yml",
-    "text": "actions/checkout@v7",
-    "count": 1,
-    "reason": "GitHub Actions release selector owned by actions/checkout."
-  },
-  {
-    "file": ".github/workflows/codeql-js.yml",
-    "text": "github/codeql-action/init@v4",
-    "count": 1,
-    "reason": "GitHub Actions release selector owned by github/codeql-action."
-  },
-  {
-    "file": ".github/workflows/codeql-js.yml",
-    "text": "github/codeql-action/autobuild@v4",
-    "count": 1,
-    "reason": "GitHub Actions release selector owned by github/codeql-action."
-  },
-  {
-    "file": ".github/workflows/codeql-js.yml",
-    "text": "github/codeql-action/analyze@v4",
-    "count": 1,
-    "reason": "GitHub Actions release selector owned by github/codeql-action."
-  },
-  {
     "file": ".github/workflows/stale.yml",
     "text": "actions/stale@v10",
     "count": 1,

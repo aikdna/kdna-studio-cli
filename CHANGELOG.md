@@ -19,6 +19,22 @@
   Clean installs use those candidate artifacts; publication remains blocked
   until identical packages exist in the public registry and the lock resolves
   those registry artifacts.
+- Rebind the unpublished Runtime set to the final Core 0.19.0 and Studio Core
+  2.0.0 source candidates. CI now materializes both exact clean commit trees
+  outside the Studio CLI checkout, reproduces each artifact twice with the
+  audited npm client, and rejects any install-byte drift from the checked
+  candidate tarballs.
+- Make npm publication release-event-only and bind it to the exact stable tag,
+  commit, package, and top CHANGELOG entry. The workflow retains one
+  independently verified tarball, publishes those exact bytes, and treats an
+  existing version as idempotent only when both registry digests match.
+- Pin release-participating GitHub Actions by commit, test the product contract
+  on Node 18.20.8 and 22.23.1 without running the Node-22-only audited npm
+  client under Node 18, and require both the complete suite and empty-cache
+  candidate-chain smoke before publication.
+- Remove the nonexistent library `main` entry from this bin-only package and
+  fail release evidence if required CLI pack members are missing or a phantom
+  root `index.js` appears.
 
 The command surface remains in the pre-1.0 line. This release changes the
 emitted asset contract and therefore uses the next minor coordinate, 0.10.0,

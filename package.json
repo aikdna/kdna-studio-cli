@@ -14,13 +14,18 @@
     "README.md"
   ],
   "scripts": {
-    "lint": "find bin src tests scripts -type f \\( -name '*.js' -o -name '*.mjs' \\) -print0 | xargs -0 -n1 node --check",
+    "lint": "node scripts/run-lint.js",
+    "pretest": "node scripts/acquire-trusted-npm-release.js",
     "test": "node --test tests/*.test.js",
-    "test:all": "npm run lint && npm run check:protocol-names && npm test",
+    "test:all": "node scripts/run-test-all.js",
+    "test:runtime": "node scripts/run-product-tests.js",
     "test:candidate-chain": "node scripts/verify-runtime-candidate-chain.js",
+    "verify:candidate-sources": "node scripts/verify-runtime-candidate-sources.js",
     "check:protocol-names": "node scripts/check-current-protocol-names.js",
     "release:check": "node scripts/release-check.js",
-    "prepublishOnly": "npm run test:all && npm run release:check"
+    "release:generate-evidence": "node scripts/generate-release-evidence.js",
+    "release:publish-verified": "node scripts/publish-verified-artifact.js",
+    "prepublishOnly": "node scripts/run-test-all.js && node scripts/verify-runtime-candidate-chain.js && node scripts/release-check.js"
   },
   "keywords": [
     "kdna",
@@ -49,7 +54,6 @@
     "ajv-formats": "^3.0.1",
     "cbor-x": "^1.6.4"
   },
-  "main": "index.js",
   "directories": {
     "test": "tests"
   },

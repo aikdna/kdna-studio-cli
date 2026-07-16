@@ -13,6 +13,7 @@ function copyFixtureRoot(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-cli-binding-completeness-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, 'fixtures/runtime-candidates'), { recursive: true });
+  fs.mkdirSync(path.join(root, '.github/workflows'), { recursive: true });
   for (const file of ['package.json', 'package-lock.json']) {
     fs.copyFileSync(path.join(ROOT, file), path.join(root, file));
   }
@@ -22,6 +23,10 @@ function copyFixtureRoot(t) {
       path.join(root, 'fixtures/runtime-candidates', file),
     );
   }
+  fs.copyFileSync(
+    path.join(ROOT, '.github/workflows/ci.yml'),
+    path.join(root, '.github/workflows/ci.yml'),
+  );
   return root;
 }
 
@@ -74,7 +79,7 @@ test('candidate binding completeness rejects every unbound or non-unique runtime
   rejects(
     'package.json',
     (pkg) => { pkg.dependencies['@aikdna/unbound-runtime'] = '1.0.0'; },
-    /candidate binding package set mismatch.*unbound-runtime/,
+    /lock root AIKDNA dependencies package set mismatch.*unbound-runtime/,
   );
   rejects(
     'package-lock.json',
@@ -116,14 +121,14 @@ test('candidate binding completeness rejects every unbound or non-unique runtime
           resolved: `https://registry.npmjs.org/${entry.name}/-/${leaf}-0.0.1.tgz`,
         };
       },
-      new RegExp(`bound AIKDNA lock package must appear exactly once.*${leaf}.*count=2`),
+      new RegExp(`(?:AIKDNA lock resolution/path mismatch|bound AIKDNA lock package must appear exactly once.*${leaf}.*count=2)`),
     );
     rejects(
       'package-lock.json',
       (lock) => {
         lock.packages[`${nestedPath}/node_modules/transitive`] = { version: '1.0.0' };
       },
-      new RegExp(`bound AIKDNA lock package must appear exactly once.*${leaf}.*count=2`),
+      new RegExp(`(?:AIKDNA lock resolution/path mismatch|bound AIKDNA lock package must appear exactly once.*${leaf}.*count=2)`),
     );
     rejects(
       'package-lock.json',
@@ -133,7 +138,7 @@ test('candidate binding completeness rejects every unbound or non-unique runtime
           resolved: `file:${entry.artifact}`,
         };
       },
-      new RegExp(`bound AIKDNA lock package must appear exactly once.*${leaf}.*count=2`),
+      new RegExp(`(?:AIKDNA lock resolution/path mismatch|bound AIKDNA lock package must appear exactly once.*${leaf}.*count=2)`),
     );
     rejects(
       'package-lock.json',
@@ -141,7 +146,7 @@ test('candidate binding completeness rejects every unbound or non-unique runtime
         lock.packages[nestedPath] = lock.packages[topLevelPath];
         delete lock.packages[topLevelPath];
       },
-      new RegExp(`bound AIKDNA lock package must be top-level.*${leaf}`),
+      new RegExp(`(?:AIKDNA lock resolution/path mismatch|bound AIKDNA lock package must be top-level.*${leaf})`),
     );
   }
   rejects(

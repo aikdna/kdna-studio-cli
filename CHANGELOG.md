@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.10.0 (2026-07-16)
+## 0.10.0 (2026-07-17)
 
 - Produce and import only the current `kdna.payload.judgment` profile with an
   independent `profile_version: 0.1.0` coordinate.

@@ -134,7 +134,7 @@ test('Studio CLI pack members are fail-closed and package metadata has no librar
 });
 
 function releaseInput(overrides = {}) {
-  const version = overrides.pkg?.version || '0.10.0';
+  const version = overrides.pkg?.version || '0.10.1';
   return {
     pkg: { name: '@aikdna/kdna-studio-cli', version, ...overrides.pkg },
     changelog: overrides.changelog ?? `# Changelog\n\n## ${version} (2026-07-15)\n`,
@@ -169,7 +169,7 @@ function createReleaseRepository(t, marker) {
   git(repository, ['config', 'user.email', 'test@example.invalid']);
   fs.writeFileSync(
     path.join(repository, 'package.json'),
-    `${JSON.stringify({ name: '@aikdna/kdna-studio-cli', version: '0.10.0' }, null, 2)}\n`,
+    `${JSON.stringify({ name: '@aikdna/kdna-studio-cli', version: '0.10.1' }, null, 2)}\n`,
   );
   for (const member of REQUIRED_STUDIO_CLI_PACK_MEMBERS.filter(
     (candidate) => candidate !== 'package.json',
@@ -178,12 +178,12 @@ function createReleaseRepository(t, marker) {
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     fs.writeFileSync(destination, `${member}\n`);
   }
-  fs.writeFileSync(path.join(repository, 'CHANGELOG.md'), '# Changelog\n\n## 0.10.0 (2026-07-16)\n');
+  fs.writeFileSync(path.join(repository, 'CHANGELOG.md'), '# Changelog\n\n## 0.10.1 (2026-07-17)\n');
   fs.writeFileSync(path.join(repository, 'marker.txt'), `${marker}\n`);
   git(repository, ['add', '.']);
   git(repository, ['commit', '--quiet', '-m', marker]);
   const commit = git(repository, ['rev-parse', 'HEAD']);
-  git(repository, ['tag', '0.10.0', commit]);
+  git(repository, ['tag', '0.10.1', commit]);
   return { repository, commit };
 }
 
@@ -192,10 +192,10 @@ function candidateEvidence(bytes = releaseTarball()) {
   return {
     schema: 'kdna.studio-cli.release-evidence',
     version: '1.0',
-    source: { ref: 'refs/tags/0.10.0', commit: HASH },
-    package: { name: '@aikdna/kdna-studio-cli', version: '0.10.0' },
+    source: { ref: 'refs/tags/0.10.1', commit: HASH },
+    package: { name: '@aikdna/kdna-studio-cli', version: '0.10.1' },
     artifact: {
-      filename: 'aikdna-kdna-studio-cli-0.10.0.tgz',
+      filename: 'aikdna-kdna-studio-cli-0.10.1.tgz',
       integrity: `sha512-${crypto.createHash('sha512').update(bytes).digest('base64')}`,
       shasum: crypto.createHash('sha1').update(bytes).digest('hex'),
       packed_size: bytes.length,
@@ -209,8 +209,8 @@ function candidateEvidence(bytes = releaseTarball()) {
 function packReport(bytes, files = parseTarFiles(bytes)) {
   return [{
     name: '@aikdna/kdna-studio-cli',
-    version: '0.10.0',
-    filename: 'aikdna-kdna-studio-cli-0.10.0.tgz',
+    version: '0.10.1',
+    filename: 'aikdna-kdna-studio-cli-0.10.1.tgz',
     integrity: `sha512-${crypto.createHash('sha512').update(bytes).digest('base64')}`,
     shasum: crypto.createHash('sha1').update(bytes).digest('hex'),
     size: bytes.length,
@@ -253,7 +253,6 @@ test('publish workflow is release-only, serialized, pinned, and publishes one ve
     'complete tests and candidate-chain smoke must precede release evidence',
   );
   assert.match(workflow, /run-trusted-npm\.js run release:generate-evidence --/);
-  assert.match(workflow, /run-trusted-npm\.js run release:publish-verified --/);
   const scripts = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).scripts;
   assert.equal(scripts['release:generate-evidence'], 'node scripts/generate-release-evidence.js');
   assert.equal(scripts['release:publish-verified'], 'node scripts/publish-verified-artifact.js');
@@ -384,7 +383,7 @@ test('release evidence entry rejects hidden worktree changes and packs exact com
     environment,
   });
   assert.equal(evidence.source.commit, release.commit);
-  assert.equal(evidence.source.ref, 'refs/tags/0.10.0');
+  assert.equal(evidence.source.ref, 'refs/tags/0.10.1');
   assert.ok(fs.existsSync(output));
   assert.ok(fs.existsSync(artifact));
   const files = parseTarFiles(fs.readFileSync(artifact)).map((entry) => entry.path);
@@ -471,7 +470,7 @@ test('every audited npm child receives the controlled execution environment', ()
     ['scripts/run-trusted-npm.js', ['env: invocation.environment', 1]],
     ['scripts/generate-release-evidence.js', ['env: npmInvocation.environment', 1]],
     ['scripts/check-current-protocol-names.js', ['env: invocation.environment', 1]],
-    ['scripts/publish-verified-artifact.js', ['env: npmInvocation.environment', 2]],
+    ['scripts/publish-verified-artifact.js', ['env: npmInvocation.environment', 1]],
     ['scripts/verify-runtime-candidate-sources.js', ['env: invocation.environment', 1]],
     ['scripts/runtime-candidate-binding.js', ['env: invocation.environment', 1]],
   ]);
@@ -481,12 +480,29 @@ test('every audited npm child receives the controlled execution environment', ()
   }
 });
 
+test('release auth chain isolates the publish credential from the lookup environment', () => {
+  const source = fs.readFileSync(path.join(ROOT, 'scripts/publish-verified-artifact.js'), 'utf8');
+  // lookup spawn keeps the scrubbed environment: npm view needs no auth
+  const lookupEnv = source.indexOf("env: npmInvocation.environment");
+  assert.ok(lookupEnv >= 0, 'lookup child must keep the scrubbed environment');
+  const afterLookup = source.slice(lookupEnv + 30);
+  // publish spawn after lookup must NOT use the scrubbed environment
+  const publishSpawns = afterLookup.match(/env: npmInvocation\.environment/g);
+  assert.equal(publishSpawns, null, 'publish child must not use the scrubbed environment');
+  // the publish spawn argument list must not contain the token
+  assert.doesNotMatch(source, /NODE_AUTH_TOKEN/);
+  // the workflow must not nest the publisher through run-trusted-npm
+  const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/publish.yml'), 'utf8');
+  assert.doesNotMatch(workflow, /run-trusted-npm\.js run release:publish-verified/);
+  assert.match(workflow, /node scripts\/publish-verified-artifact\.js/);
+});
+
 test('release context binds package, changelog, event, tag ref, HEAD, and workflow SHA', () => {
   assert.deepEqual(validateReleaseContext(releaseInput()), {
     name: '@aikdna/kdna-studio-cli',
-    version: '0.10.0',
-    tag: '0.10.0',
-    ref: 'refs/tags/0.10.0',
+    version: '0.10.1',
+    tag: '0.10.1',
+    ref: 'refs/tags/0.10.1',
     commit: HASH,
   });
   for (const input of [
@@ -553,8 +569,8 @@ test('pack evidence independently parses a real npm tgz and rejects changed byte
   const evidence = validatePackReport({
     reportText: packed.stdout,
     tarball: bytes,
-    pkg: { name: '@aikdna/kdna-studio-cli', version: '0.10.0' },
-    source: { ref: 'refs/tags/0.10.0', commit: HASH },
+    pkg: { name: '@aikdna/kdna-studio-cli', version: '0.10.1' },
+    source: { ref: 'refs/tags/0.10.1', commit: HASH },
   });
   assert.equal(validateArtifact(evidence, bytes), evidence);
   assert.throws(() => validateArtifact(evidence, Buffer.from('changed')), /size|integrity|shasum/);
@@ -630,8 +646,8 @@ test('pack JSON and retained evidence must exactly match the independently parse
       validatePackReport({
         reportText: JSON.stringify(report),
         tarball: bytes,
-        pkg: { name: '@aikdna/kdna-studio-cli', version: '0.10.0' },
-        source: { ref: 'refs/tags/0.10.0', commit: HASH },
+        pkg: { name: '@aikdna/kdna-studio-cli', version: '0.10.1' },
+        source: { ref: 'refs/tags/0.10.1', commit: HASH },
       }),
     /file report/,
   );

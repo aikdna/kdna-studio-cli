@@ -93,7 +93,6 @@ function main() {
       publish: (args) =>
         spawnSync(npmInvocation.command, [...npmInvocation.prefixArgs, ...args], {
           encoding: 'utf8',
-          env: npmInvocation.environment,
           maxBuffer: 16 * 1024 * 1024,
           shell: false,
           stdio: 'inherit',

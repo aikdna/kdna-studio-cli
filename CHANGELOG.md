@@ -1,6 +1,18 @@
 # Changelog
 
-## 0.10.0 (2026-07-17)
+## 0.10.1 (2026-07-17)
+
+### Fixed
+
+- Restore the npm auth chain for the release-publish step. Version 0.10.0
+  was tagged but never reached the npm registry because the trusted-npm
+  wrapper dropped NPM_CONFIG_USERCONFIG (ENEEDAUTH). The publish step now
+  calls the verified publisher directly and the publish child inherits the
+  workflow step environment, matching the sibling CLI, MCP, and Remote
+  Server publisher pattern. The read-only registry lookup keeps the
+  scrubbed environment. No product content changed relative to 0.10.0.
+
+## 0.10.0 (2026-07-17) — NOT PUBLISHED TO NPM
 
 - Produce and import only the current `kdna.payload.judgment` profile with an
   independent `profile_version: 0.1.0` coordinate.

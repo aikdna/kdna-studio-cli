@@ -171,7 +171,7 @@ test('candidate binding completeness rejects every unbound or non-unique runtime
     'package-lock.json',
     (lock) => {
       lock.packages['node_modules/foreign/node_modules/@AIKDNA/kdna-studio-core'] = {
-        version: '2.0.0',
+        version: '2.0.1',
       };
     },
     /AIKDNA lock package name invalid/,

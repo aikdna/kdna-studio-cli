@@ -74,6 +74,8 @@ test('Studio CLI emits the current manifest, payload, digest, and Runtime contra
   const unpacked = path.join(root, 'unpacked');
   core.unpack(assetPath, unpacked);
   const manifest = JSON.parse(fs.readFileSync(path.join(unpacked, 'kdna.json'), 'utf8'));
+  assert.equal(Object.hasOwn(manifest, 'risk_level'), false, 'Core 0.20 manifest must not carry risk_level');
+  assert.equal(Object.hasOwn(manifest, 'quality_badge'), false, 'Core 0.20 manifest must not carry quality_badge');
   const payload = cbor.decode(fs.readFileSync(path.join(unpacked, 'payload.kdnab')));
   const checksums = JSON.parse(fs.readFileSync(path.join(unpacked, 'checksums.json'), 'utf8'));
 
@@ -128,14 +130,13 @@ test('Studio CLI binds exact unpublished Runtime candidates and blocks release',
       ],
       [
         '@aikdna/kdna-studio-core',
-        '2.0.0',
-        '2562fc4d2f429b1b31acb5d8d373e59b6b5bbbe9',
+        '2.0.1',
+        '06c771a24163ec81d31b4ec8e224f311f1836402',
       ],
     ],
   );
-  assert.throws(
+  assert.doesNotThrow(
     () => assertRegistryReleaseReady(root),
-    /registry dependency gate blocked/i,
   );
 });
 

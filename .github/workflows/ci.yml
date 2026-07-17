@@ -17,7 +17,7 @@ jobs:
       KDNA_CORE_CANDIDATE_REPOSITORY: aikdna/kdna
       KDNA_CORE_CANDIDATE_COMMIT: 1e77e3e0d486c330fe9f9262b514ef24c859d469
       KDNA_STUDIO_CORE_CANDIDATE_REPOSITORY: aikdna/kdna-studio-core
-      KDNA_STUDIO_CORE_CANDIDATE_COMMIT: 2562fc4d2f429b1b31acb5d8d373e59b6b5bbbe9
+      KDNA_STUDIO_CORE_CANDIDATE_COMMIT: 06c771a24163ec81d31b4ec8e224f311f1836402
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       - name: Check out the exact Runtime candidates outside the Studio CLI workspace

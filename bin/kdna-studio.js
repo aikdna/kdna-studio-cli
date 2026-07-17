@@ -854,6 +854,8 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
     if (manifest.core_insight) manifestData.core_insight = manifest.core_insight;
     if (manifest.created_at || manifest.created) manifestData.created = manifest.created_at || manifest.created;
     if (manifest.updated_at || manifest.updated) manifestData.updated = manifest.updated_at || manifest.updated;
+    // legacy-migration bookkeeping only: preserved in the Studio project for
+    // issuer-scoped governance; the Core 0.20 export manifest never projects it
     if (manifest.risk_level) manifestData.risk_level = manifest.risk_level;
     if (manifest.fitness_for_purpose) manifestData.fitness_for_purpose = manifest.fitness_for_purpose;
   }

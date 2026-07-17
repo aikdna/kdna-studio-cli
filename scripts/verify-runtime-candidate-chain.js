@@ -91,7 +91,7 @@ function main() {
       'node_modules/@aikdna/kdna-studio-cli/bin/kdna-studio.js',
     );
     assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-core/package.json')).version, '0.20.0');
-    assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-studio-core/package.json')).version, '2.0.0');
+    assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-studio-core/package.json')).version, '2.0.1');
     assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-studio-cli/package.json')).version, '0.10.0');
 
     const judgmentCore = {

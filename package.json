@@ -49,7 +49,7 @@
   },
   "dependencies": {
     "@aikdna/kdna-core": "0.20.0",
-    "@aikdna/kdna-studio-core": "2.0.0",
+    "@aikdna/kdna-studio-core": "2.0.1",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "cbor-x": "^1.6.4"

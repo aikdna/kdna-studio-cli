@@ -90,7 +90,7 @@ function main() {
       consumer,
       'node_modules/@aikdna/kdna-studio-cli/bin/kdna-studio.js',
     );
-    assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-core/package.json')).version, '0.19.0');
+    assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-core/package.json')).version, '0.20.0');
     assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-studio-core/package.json')).version, '2.0.0');
     assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-studio-cli/package.json')).version, '0.10.0');
 
@@ -136,7 +136,7 @@ function main() {
     assert.equal(core.validate(plainAsset).overall_valid, true);
     const plainCapsule = core.load(plainAsset, { profile: 'full', as: 'json' });
     assert.deepEqual(exportedCore(plainCapsule), judgmentCore);
-    assert.equal(plainCapsule.context.manifest.compatibility.min_loader_version, '0.19.0');
+    assert.equal(plainCapsule.context.manifest.compatibility.min_loader_version, '0.20.0');
 
     const importedDirectory = path.join(temporary, 'imported');
     run(process.execPath, [

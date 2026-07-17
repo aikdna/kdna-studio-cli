@@ -92,7 +92,7 @@ function main() {
     );
     assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-core/package.json')).version, '0.20.0');
     assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-studio-core/package.json')).version, '2.0.1');
-    assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-studio-cli/package.json')).version, '0.10.0');
+    assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-studio-cli/package.json')).version, '0.10.1');
 
     const judgmentCore = {
       highest_question: 'Which declared tradeoff controls this exact task?',

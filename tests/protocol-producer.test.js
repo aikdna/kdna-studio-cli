@@ -79,7 +79,7 @@ test('Studio CLI emits the current manifest, payload, digest, and Runtime contra
 
   assert.equal(manifest.format_version, '0.1.0');
   assert.deepEqual(manifest.compatibility, {
-    min_loader_version: '0.19.0',
+    min_loader_version: '0.20.0',
     profile: 'kdna.payload.judgment',
     profile_version: '0.1.0',
   });
@@ -123,13 +123,13 @@ test('Studio CLI binds exact unpublished Runtime candidates and blocks release',
     [
       [
         '@aikdna/kdna-core',
-        '0.19.0',
-        '556f8cec37c94fc9c006035b0bdeefc80d04d9c2',
+        '0.20.0',
+        '1e77e3e0d486c330fe9f9262b514ef24c859d469',
       ],
       [
         '@aikdna/kdna-studio-core',
         '2.0.0',
-        'd560dcf24c1a850258744acf4d8b39eec5e7d7de',
+        '2562fc4d2f429b1b31acb5d8d373e59b6b5bbbe9',
       ],
     ],
   );

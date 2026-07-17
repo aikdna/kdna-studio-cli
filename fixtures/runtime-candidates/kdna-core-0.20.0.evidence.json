@@ -6,17 +6,17 @@
   "source_authority": "exact_git_commit_tree",
   "source_worktree_clean": true,
   "pack": {
-    "status": "candidate_source_pack_not_registry_artifact",
+    "status": "registry_artifact",
     "npm_client": "11.17.0",
     "npm_release_url": "https://registry.npmjs.org/npm/-/npm-11.17.0.tgz",
     "npm_release_integrity": "sha512-PurxiZexEHDTE4SSaLI3ZrnbAGiZfeyUcQcxcP5D+hfytNAze/D1IzDuInTn9XVLIbAQUnQuSPXJx02LHjLvQw==",
     "filename": "aikdna-kdna-core-0.20.0.tgz",
-    "size": 114101,
+    "size": 114430,
     "unpacked_size": 521005,
     "entry_count": 42,
-    "sha1": "6f3833920c651529613b8957d9c6c71d0088f8bf",
-    "sha256": "194621d8f7362686cdbfb0ebec4e690f620b1f4445f776eeb45cfafa816d1d12",
-    "sha512": "sha512-+qD8RLrvvSZmZacGfFfiP4ydG/AZKL0Ifq8co0jfCvGQD7iRRmaHBP4+/uSFt5AkDstA0DYPajO43YW0nMdlDg==",
+    "sha1": "abc0e3190c72a79e21732d9e0ca90cd52817967e",
+    "sha256": "b1614d14b77d6b8eac1c0a3902e2270a46cb0f52708e524b12b3990256ff8dee",
+    "sha512": "sha512-zdx5NuC4mOuN3625Dsn8Bq01/V9+MQy+kT870XXX2JHOjKJhXnBwO3BU8jke2vBrxfnzH7Jm9MmeqTM0UCBc0Q==",
     "reproducible_runs": 2,
     "source_equivalence": {
       "status": "strict_install_equivalent",
@@ -36,5 +36,13 @@
       ]
     }
   },
-  "registry_artifact": null
+  "registry_artifact": {
+    "name": "@aikdna/kdna-core",
+    "version": "0.20.0",
+    "publish_time": "2026-07-17T08:52:59.427Z",
+    "registry_url": "https://registry.npmjs.org/",
+    "tarball_url": "https://registry.npmjs.org/@aikdna/kdna-core/-/kdna-core-0.20.0.tgz",
+    "integrity": "sha512-zdx5NuC4mOuN3625Dsn8Bq01/V9+MQy+kT870XXX2JHOjKJhXnBwO3BU8jke2vBrxfnzH7Jm9MmeqTM0UCBc0Q==",
+    "shasum": "abc0e3190c72a79e21732d9e0ca90cd52817967e"
+  }
 }

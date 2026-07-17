@@ -26,6 +26,14 @@ const COMMIT_RE = /^[0-9a-f]{40}$/;
 const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const INTEGRITY_RE = /^sha512-[A-Za-z0-9+/]{86}==$/;
 const CANDIDATE_ARTIFACT_RE = /^fixtures\/runtime-candidates\/[a-z0-9][a-z0-9._-]*\.tgz$/;
+const CANDIDATE_PACK_STATUSES = Object.freeze([
+  'candidate_source_pack_not_registry_artifact',
+  'registry_artifact',
+]);
+
+function isValidCandidatePackStatus(status) {
+  return CANDIDATE_PACK_STATUSES.includes(status);
+}
 const DEPENDENCY_MAP_NAMES = Object.freeze([
   'dependencies',
   'optionalDependencies',
@@ -713,14 +721,28 @@ function verifyCandidateBinding(root) {
       authority.version === entry.version && entry.commit === pinnedCommit,
       `candidate commit does not match the CI pin: ${entry.name}`,
     );
+    const registryArtifact = candidateEvidence.registry_artifact;
+    const isPublishedRegistryArtifact =
+      registryArtifact !== null &&
+      typeof registryArtifact === 'object' &&
+      registryArtifact.name === entry.name &&
+      registryArtifact.version === entry.version &&
+      typeof registryArtifact.publish_time === 'string' &&
+      typeof registryArtifact.registry_url === 'string' &&
+      typeof registryArtifact.tarball_url === 'string' &&
+      INTEGRITY_RE.test(registryArtifact.integrity || '') &&
+      /^[0-9a-f]{40}$/.test(registryArtifact.shasum || '');
+    assert(
+      registryArtifact === null || isPublishedRegistryArtifact,
+      `candidate registry artifact evidence invalid: ${entry.name}`,
+    );
     assert(
       candidateEvidence.evidence_kind === 'candidate_source_pack' &&
         candidateEvidence.package === entry.name &&
         candidateEvidence.version === entry.version &&
         candidateEvidence.git_head === pinnedCommit &&
         candidateEvidence.source_authority === 'exact_git_commit_tree' &&
-        candidateEvidence.source_worktree_clean === true &&
-        candidateEvidence.registry_artifact === null,
+        candidateEvidence.source_worktree_clean === true,
       `candidate source evidence mismatch: ${entry.name}`,
     );
     assert(
@@ -768,7 +790,7 @@ function verifyCandidateBinding(root) {
     const expectedFilename =
       `${entry.name.slice(1).replace('/', '-')}-${entry.version}.tgz`;
     assert(
-      candidateEvidence.pack?.status === 'candidate_source_pack_not_registry_artifact' &&
+      candidateEvidence.pack?.status && isValidCandidatePackStatus(candidateEvidence.pack.status) &&
         candidateEvidence.pack?.npm_client === TRUSTED_NPM_VERSION &&
         candidateEvidence.pack?.npm_release_url === TRUSTED_NPM_URL &&
         candidateEvidence.pack?.npm_release_integrity === TRUSTED_NPM_INTEGRITY &&

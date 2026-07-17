@@ -7,8 +7,8 @@
       "version": "0.20.0",
       "commit": "1e77e3e0d486c330fe9f9262b514ef24c859d469",
       "artifact": "fixtures/runtime-candidates/kdna-core-0.20.0.tgz",
-      "integrity": "sha512-+qD8RLrvvSZmZacGfFfiP4ydG/AZKL0Ifq8co0jfCvGQD7iRRmaHBP4+/uSFt5AkDstA0DYPajO43YW0nMdlDg==",
-      "sha256": "194621d8f7362686cdbfb0ebec4e690f620b1f4445f776eeb45cfafa816d1d12"
+      "integrity": "sha512-zdx5NuC4mOuN3625Dsn8Bq01/V9+MQy+kT870XXX2JHOjKJhXnBwO3BU8jke2vBrxfnzH7Jm9MmeqTM0UCBc0Q==",
+      "sha256": "b1614d14b77d6b8eac1c0a3902e2270a46cb0f52708e524b12b3990256ff8dee"
     },
     {
       "name": "@aikdna/kdna-studio-core",

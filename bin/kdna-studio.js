@@ -886,9 +886,19 @@ function validateZipContainer(entries) {
 
 function validateLegacyImportContract(manifest, payload) {
   // Frozen validation for judgment-profile-v1 assets.
-  // Only verifies structural integrity, not runtime contract conformance.
   if (!manifest || typeof manifest !== 'object') fail('Legacy asset manifest is missing or invalid');
+  if (manifest.kdna_version !== '1.0') fail(`Legacy asset must declare kdna_version "1.0", got "${manifest.kdna_version}"`);
   if (!manifest.asset_id || typeof manifest.asset_id !== 'string') fail('Legacy asset_id is missing');
+  if (!manifest.compatibility || manifest.compatibility.profile !== LEGACY_PROFILE) {
+    fail(`Legacy asset compatibility.profile must be "${LEGACY_PROFILE}"`);
+  }
+  if (!manifest.payload || manifest.payload.path !== 'payload.kdnab') {
+    fail('Legacy asset payload.path must be "payload.kdnab"');
+  }
+  if (manifest.payload.encoding !== 'cbor') {
+    fail('Legacy asset payload.encoding must be "cbor"');
+  }
+  if (manifest.payload.encrypted) fail('Legacy asset must not be encrypted');
   if (!payload || typeof payload !== 'object') fail('Legacy asset payload is missing or invalid');
   if (payload.profile !== LEGACY_PROFILE) fail('Legacy payload must declare profile "judgment-profile-v1"');
   if (!payload.core || typeof payload.core !== 'object') fail('Legacy payload must contain a "core" object');
@@ -898,12 +908,31 @@ function validateLegacyImportContract(manifest, payload) {
 
 function judgmentCoreFromLegacyPayload(payload) {
   const core = payload.core || {};
-  return {
-    highest_question: core.highest_question || null,
-    worldview: Array.isArray(core.worldview) ? core.worldview : [],
-    value_order: Array.isArray(core.value_order) ? core.value_order : [],
-    judgment_role: core.judgment_role && typeof core.judgment_role === 'object' ? core.judgment_role : null,
-  };
+  const result = {};
+  if (typeof core.highest_question === 'string' && core.highest_question) result.highest_question = core.highest_question;
+  if (Array.isArray(core.worldview) && core.worldview.length) result.worldview = core.worldview;
+  if (Array.isArray(core.value_order) && core.value_order.length) result.value_order = core.value_order;
+  if (core.judgment_role && typeof core.judgment_role === 'object' && Object.keys(core.judgment_role).length) result.judgment_role = core.judgment_role;
+  return Object.keys(result).length ? result : null;
+}
+
+function legacyStableId(type, fields, prefix) {
+  // Deterministic ID for legacy items that lack a declared id.
+  // Prefix is the parent scope (e.g. the asset name or domain id).
+  const sorted = JSON.stringify(Object.entries(fields).sort());
+  const h = require('crypto').createHash('sha256').update(`${type}:${sorted}`).digest('hex');
+  return `${prefix}_${h.slice(0, 12)}`;
+}
+
+const _legacyDedupIds = new Set();
+
+function _legacyDedupPush(cards, type, fields, id) {
+  // Deduplicate by id IF an id is declared. Items without ids are unique
+  // (deterministic by content). A second push with the same id merges.
+  if (!id) { pushImportedCard(cards, type, fields, null); return; }
+  if (_legacyDedupIds.has(id)) { pushImportedCard(cards, type, fields, id); return; }
+  _legacyDedupIds.add(id);
+  pushImportedCard(cards, type, fields, id);
 }
 
 function cardsFromLegacyPayload(payload) {
@@ -912,26 +941,25 @@ function cardsFromLegacyPayload(payload) {
 
   // axioms
   for (const ax of (core.axioms || [])) {
-    pushImportedCard(cards, 'axiom', {
+    _legacyDedupPush(cards, 'axiom', {
       one_sentence: ax.one_sentence || null,
       full_statement: ax.full_statement || null,
       why: ax.why || null,
-      confidence: ax.confidence || null,
-      evidence_type: ax.evidence_type || null,
       applies_when: ax.applies_when || [],
       does_not_apply_when: ax.does_not_apply_when || [],
       failure_risk: ax.failure_risk || null,
-      legacy_subtype: null,
+      confidence: ax.confidence || null,
+      evidence_type: ax.evidence_type || null,
     }, ax.id || null);
   }
 
   // ontology
   for (const ont of (core.ontology || [])) {
     pushImportedCard(cards, 'ontology', {
-      level: ont.level || null,
-      name: ont.name || null,
-      description: ont.description || null,
-      members: ont.members || [],
+      one_sentence: ont.one_sentence || null,
+      essence: ont.essence || null,
+      boundary: ont.boundary || null,
+      trigger_signal: ont.trigger_signal || null,
     }, ont.id || null);
   }
 
@@ -939,143 +967,142 @@ function cardsFromLegacyPayload(payload) {
   for (const fw of (core.frameworks || [])) {
     pushImportedCard(cards, 'framework', {
       name: fw.name || null,
-      description: fw.description || null,
-      relationship: fw.relationship || null,
+      when_to_use: fw.when_to_use || null,
+      steps: fw.steps || [],
     }, fw.id || null);
   }
 
   // stances
   for (const st of (core.stances || [])) {
     pushImportedCard(cards, 'stance', {
-      name: st.name || null,
       statement: st.statement || null,
+      applies_when: st.applies_when || [],
     }, st.id || null);
-  }
-
-  // aesthetics
-  for (const ae of (core.aesthetics || [])) {
-    pushImportedCard(cards, 'aesthetic', {
-      name: ae.name || null,
-      description: ae.description || null,
-      examples: ae.examples || [],
-      test: ae.test || null,
-    }, ae.id || null);
   }
 
   // boundaries
   for (const bd of (core.boundaries || [])) {
     pushImportedCard(cards, 'boundary', {
       scope: bd.scope || null,
-      description: bd.description || null,
-      applies_when: bd.applies_when || [],
-      does_not_apply_when: bd.does_not_apply_when || [],
+      out_of_scope: bd.out_of_scope || null,
+      acceptable_exceptions: bd.acceptable_exceptions || [],
     }, bd.id || null);
   }
 
   // risks
   for (const risk of (core.risk_model?.risks || [])) {
     pushImportedCard(cards, 'risk', {
-      category: risk.category || null,
-      example: risk.example || null,
+      name: risk.name || null,
+      description: risk.description || null,
       mitigation: risk.mitigation || null,
-      severity: risk.severity || null,
     }, risk.id || null);
   }
 
-  // patterns (including legacy subtypes)
+  // patterns with explicit types (including legacy subtypes)
   const patterns = payload.patterns || [];
-  for (const pattern of patterns) {
-    if (!pattern || typeof pattern !== 'object') continue;
-    let rawType = pattern.type;
-    // Misunderstandings, self_checks, and reasoning chains may appear
-    // in the legacy patterns array without a declared type. Detect them
-    // from their structural fields.
-    if (!rawType) {
-      if (pattern.wrong && pattern.correct) {
-        rawType = 'misunderstanding';
-      } else if (pattern.check || pattern.question) {
-        rawType = 'self_check';
-      } else {
-        fail(`Legacy pattern "${pattern.id || '(no id)'}" has no type field and cannot be mapped`);
-      }
-    }
+  for (const p of patterns) {
+    if (!p || typeof p !== 'object') continue;
+    const rawType = p.type;
+    if (!rawType) continue; // type-less items handled separately (misunderstandings below)
+
     if (LEGACY_PATTERN_SUBTYPES.has(rawType)) {
       pushImportedCard(cards, 'pattern', {
-        one_sentence: pattern.one_sentence || null,
-        full_statement: pattern.full_statement || null,
-        why: pattern.why || null,
-        confidence: pattern.confidence || null,
-        evidence_type: pattern.evidence_type || null,
-        applies_when: pattern.applies_when || [],
-        does_not_apply_when: pattern.does_not_apply_when || [],
-        failure_risk: pattern.failure_risk || null,
+        type: rawType,                    // sets fields.type for the exporter
         legacy_subtype: rawType,
-      }, pattern.id || null);
-    } else if (rawType === 'term' || rawType === 'banned_term') {
-      pushImportedCard(cards, rawType, {
-        one_sentence: pattern.one_sentence || null,
-        full_statement: pattern.full_statement || null,
-        why: pattern.why || null,
-        confidence: pattern.confidence || null,
-      }, pattern.id || null);
-    } else if (rawType === 'misunderstanding') {
-      pushImportedCard(cards, 'misunderstanding', {
-        wrong: pattern.wrong || null,
-        why: pattern.why || null,
-        correct: pattern.correct || null,
-      }, pattern.id || null);
-    } else if (rawType === 'self_check') {
-      pushImportedCard(cards, 'self_check', {
-        check: pattern.check || null,
-        question: pattern.question || null,
-        question_type: pattern.question_type || null,
-      }, pattern.id || null);
+        name: p.name || null,
+        one_sentence: p.one_sentence || null,
+        what_it_looks_like: p.what_it_looks_like || null,
+        how_to_fix: p.how_to_fix || null,
+        failure_risk: p.failure_risk || null,
+      }, p.id || null);
+    } else if (rawType === 'term') {
+      pushImportedCard(cards, 'term', {
+        term: p.term || null,
+        definition: p.definition || null,
+      }, p.id || null);
+    } else if (rawType === 'banned_term') {
+      pushImportedCard(cards, 'banned_term', {
+        term: p.term || null,
+        why: p.why || null,
+        replace_with: p.replace_with || null,
+      }, p.id || null);
     } else if (LEGACY_PATTERN_TYPE_MAP.hasOwnProperty(rawType)) {
-      pushImportedCard(cards, LEGACY_PATTERN_TYPE_MAP[rawType], pattern, pattern.id || null);
+      pushImportedCard(cards, LEGACY_PATTERN_TYPE_MAP[rawType], p, p.id || null);
     } else {
-      fail(`Unknown legacy pattern type "${rawType}" for card "${pattern.id || '(no id)'}"`);
+      fail(`Unknown legacy pattern type "${rawType}" for card "${p.id || '(no id)'}"`);
+    }
+  }
+
+  // misunderstandings: appear in patterns[] with no type and in
+  // reasoning.failure_modes[] with slightly different field names.
+  // Import from patterns[] (richer fields). The pushImportedCard
+  // dedup handles the failure_modes view via id matching.
+  for (const p of patterns) {
+    if (!p || typeof p !== 'object') continue;
+    if (p.type) continue; // already handled above
+    if (!p.wrong && !p.correct) continue;
+    pushImportedCard(cards, 'misunderstanding', {
+      wrong: p.wrong || null,
+      correct: p.correct || null,
+      key_distinction: p.key_distinction || null,
+      why: p.why || null,
+      failure_risk: p.failure_risk || null,
+      applies_when: p.applies_when || [],
+      does_not_apply_when: p.does_not_apply_when || [],
+    }, p.id || null);
+  }
+
+  // reasoning chains
+  for (const chain of (payload.reasoning?.reasoning_chains || [])) {
+    pushImportedCard(cards, 'reasoning', {
+      axiom: chain.axiom || null,
+      one_sentence: chain.one_sentence || null,
+      logic: chain.logic || null,
+      so_what: chain.so_what || null,
+    }, chain.id || null);
+  }
+
+  // self checks: array of plain strings in legacy payload
+  for (const check of (payload.reasoning?.self_check || [])) {
+    if (typeof check === 'string' && check.trim()) {
+      const id = legacyStableId('self_check', { check: check.trim() }, 'lz_sc');
+      pushImportedCard(cards, 'self_check', { check: check.trim() }, id);
     }
   }
 
   // scenarios
   for (const sc of (payload.scenarios || [])) {
     pushImportedCard(cards, 'scenario', {
-      context: sc.context || null,
+      name: sc.name || null,
+      trigger: sc.trigger || null,
       action: sc.action || null,
-      reason: sc.reason || null,
-      expected_shift: sc.expected_shift || null,
+      expected: sc.expected || null,
     }, sc.id || null);
   }
 
   // cases
   for (const cs of (payload.cases || [])) {
     pushImportedCard(cards, 'case', {
-      situation: cs.situation || null,
-      judgment: cs.judgment || null,
-      result: cs.result || null,
-      note: cs.note || null,
+      title: cs.title || null,
+      scenario: cs.scenario || null,
+      input: cs.input || null,
+      expected: cs.expected || null,
     }, cs.id || null);
-  }
-
-  // reasoning chains
-  for (const chain of (payload.reasoning?.chains || [])) {
-    pushImportedCard(cards, 'reasoning', {
-      question: chain.question || null,
-      chain: chain.chain || null,
-      axioms_used: chain.axioms_used || [],
-      conclusion: chain.conclusion || null,
-    }, chain.id || null);
   }
 
   // evolution stages
   for (const stage of (payload.evolution?.stages || [])) {
     pushImportedCard(cards, 'evolution_stage', {
-      version: stage.version || null,
-      date: stage.date || null,
-      author: stage.author || null,
-      changes: stage.changes || null,
-      reason: stage.reason || null,
+      name: stage.name || null,
+      level: stage.level || null,
+      description: stage.description || null,
+      indicators: stage.indicators || [],
     }, stage.id || null);
+    // Preserve source-authored evolution content
+    if (stage.source_authored && cards.length) {
+      const last = cards[cards.length - 1];
+      if (last.fields) last.fields.source_authored = stage.source_authored;
+    }
   }
 
   return cards;
@@ -1342,10 +1369,12 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
 }
 
 /**
- * Minimal ZIP central directory parser — reads entries into a Map.
+ * Minimal ZIP central directory parser — validates every entry before decompressing.
  */
 function readZipEntries(buf) {
   const entries = new Map();
+  const metadata = [];
+
   // Find end-of-central-directory record
   let eocdOffset = buf.length - 22;
   while (eocdOffset >= 0) {
@@ -1357,6 +1386,8 @@ function readZipEntries(buf) {
   const centralDirOffset = buf.readUInt32LE(eocdOffset + 16);
   let offset = centralDirOffset;
 
+  // Pass 1: collect metadata, validate safety before any decompression
+  let totalUncomp = 0;
   while (offset < eocdOffset) {
     const sig = buf.readUInt32LE(offset);
     if (sig !== 0x02014b50) break;
@@ -1369,18 +1400,45 @@ function readZipEntries(buf) {
     const localOffset = buf.readUInt32LE(offset + 42);
     const name = buf.toString('utf8', offset + 46, offset + 46 + nameLen);
 
-    // Read local file header to get data
-    const localNameLen = buf.readUInt16LE(localOffset + 26);
-    const localExtraLen = buf.readUInt16LE(localOffset + 28);
-    const dataStart = localOffset + 30 + localNameLen + localExtraLen;
-
-    if (compMethod === 0) {
-      entries.set(name, buf.subarray(dataStart, dataStart + uncompSize));
-    } else if (compMethod === 8) {
-      entries.set(name, zlib.inflateRawSync(buf.subarray(dataStart, dataStart + compSize)));
+    // Security: path must not be absolute, must not escape
+    if (!name || name.startsWith('/') || name.includes('..') || name.includes('\\')) {
+      throw new Error(`ZIP entry "${name}" has an unsafe path`);
     }
-
+    // Duplicate detection
+    if (entries.has(name) || metadata.some(m => m.name === name)) {
+      throw new Error(`Duplicate ZIP entry: "${name}"`);
+    }
+    if (compMethod !== 0 && compMethod !== 8) {
+      throw new Error(`ZIP entry "${name}" uses unsupported compression method ${compMethod}`);
+    }
+    totalUncomp += uncompSize;
+    if (totalUncomp > MAX_TOTAL_UNCOMPRESSED) {
+      throw new Error(`ZIP total uncompressed size ${totalUncomp} exceeds limit`);
+    }
+    if (uncompSize > MAX_SINGLE_ENTRY_UNCOMPRESSED) {
+      throw new Error(`ZIP entry "${name}" declared size ${uncompSize} exceeds limit`);
+    }
+    const dataStart = localOffset + 30 + buf.readUInt16LE(localOffset + 26) + buf.readUInt16LE(localOffset + 28);
+    metadata.push({ name, compMethod, compSize, uncompSize, dataStart });
     offset += 46 + nameLen + extraLen + commentLen;
+  }
+
+  if (metadata.length > MAX_ZIP_ENTRIES) {
+    throw new Error(`ZIP container has too many entries (${metadata.length}, max ${MAX_ZIP_ENTRIES})`);
+  }
+
+  // Pass 2: decompress into entries
+  for (const m of metadata) {
+    if (m.compMethod === 0) {
+      entries.set(m.name, buf.subarray(m.dataStart, m.dataStart + m.uncompSize));
+    } else {
+      const raw = buf.subarray(m.dataStart, m.dataStart + m.compSize);
+      const inflated = zlib.inflateRawSync(raw, { maxOutputLength: m.uncompSize });
+      if (inflated.length !== m.uncompSize) {
+        throw new Error(`ZIP entry "${m.name}" decompressed length ${inflated.length} != declared ${m.uncompSize}`);
+      }
+      entries.set(m.name, inflated);
+    }
   }
 
   return entries;

@@ -25,6 +25,20 @@
 - Misunderstandings and self-checks that lack a `type` field in the legacy
   payload are detected from their structural fields (`wrong`/`correct`
   or `check`/`question`).
+- Preserve every declared field on current and legacy axioms, ontology,
+  frameworks, stances, boundaries, risks, patterns, scenarios, cases,
+  reasoning chains, and source-authored evolution instead of reducing imports
+  through per-type allow-lists.
+- Store legacy self-check text in the canonical `fields.question` location so
+  re-export no longer emits empty questions.
+- Preserve source `core_structure`, complete reasoning/evolution objects,
+  public title and asset identity metadata, and source-folder judgment-core
+  declarations in the editable project.
+- Normalize current Runtime pattern subtypes to the Studio `pattern` card type
+  while retaining the subtype in fields. A current asset can now complete a
+  second import/export cycle without `Invalid card type` failures.
+- Add protocol tests for nested provenance, source references, relation
+  structure, extended reasoning fields, and authored evolution metadata.
 
 ## 0.10.1 (2026-07-18)
 

@@ -171,6 +171,11 @@ Current `.kdna` imports also preserve explicitly declared `highest_question`,
 project. Re-export writes those values back exactly; Studio does not infer a
 replacement judgment core from an axiom.
 
+Imports preserve authored source references, `core_structure` relations,
+pattern subtypes, scenario and case metadata, extended reasoning fields, and
+source-authored evolution. Studio-only card state and lock audit records remain
+authoring provenance and are not rewritten as Runtime judgment evolution.
+
 ## Related
 
 - [KDNA Core](https://github.com/aikdna/kdna) — Official format specification

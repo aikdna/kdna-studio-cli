@@ -366,6 +366,16 @@ function cleanFields(fields = {}) {
   return cleaned;
 }
 
+function importedFields(entry = {}, options = {}) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return {};
+  const fields = JSON.parse(JSON.stringify(entry));
+  for (const key of ['id', 'status', 'locked', 'human_lock', 'audit_log', 'source_authored']) {
+    delete fields[key];
+  }
+  if (options.keepType !== true) delete fields.type;
+  return cleanFields(fields);
+}
+
 function importedCard(type, fields = {}, id = null) {
   const card = cardApi.createCard(type, cleanFields(fields), id || null);
   if (card === null) {
@@ -441,31 +451,22 @@ function cardsFromRuntimePayload(payload) {
   if (cards.length > 0) return cards;
 
   for (const ax of (Array.isArray(payload.core?.axioms) ? payload.core?.axioms : [])) {
-    pushImportedCard(cards, 'axiom', {
-      one_sentence: ax.one_sentence || '',
-      full_statement: ax.full_statement || '',
-      why: ax.why || '',
-      applies_when: ax.applies_when || [],
-      does_not_apply_when: ax.does_not_apply_when || [],
-      failure_risk: ax.failure_risk || '',
-      confidence: ax.confidence || '',
-      evidence_type: ax.evidence_type || '',
-    }, ax.id || null);
+    pushImportedCard(cards, 'axiom', importedFields(ax), ax.id || null);
   }
   for (const ont of (Array.isArray(payload.core?.ontology) ? payload.core?.ontology : [])) {
-    pushImportedCard(cards, 'ontology', ont, ont.id || null);
+    pushImportedCard(cards, 'ontology', importedFields(ont), ont.id || null);
   }
   for (const fw of (Array.isArray(payload.core?.frameworks) ? payload.core?.frameworks : [])) {
-    pushImportedCard(cards, 'framework', fw, fw.id || null);
+    pushImportedCard(cards, 'framework', importedFields(fw), fw.id || null);
   }
   for (const stance of (Array.isArray(payload.core?.stances) ? payload.core?.stances : [])) {
-    pushImportedCard(cards, 'stance', stance, stance.id || null);
+    pushImportedCard(cards, 'stance', importedFields(stance), stance.id || null);
   }
   for (const aesthetic of (Array.isArray(payload.core?.aesthetics) ? payload.core?.aesthetics : [])) {
-    pushImportedCard(cards, 'aesthetic', aesthetic, aesthetic.id || null);
+    pushImportedCard(cards, 'aesthetic', importedFields(aesthetic), aesthetic.id || null);
   }
   for (const boundary of (Array.isArray(payload.core?.boundaries) ? payload.core?.boundaries : [])) {
-    pushImportedCard(cards, 'boundary', boundary, boundary.id || null);
+    pushImportedCard(cards, 'boundary', importedFields(boundary), boundary.id || null);
   }
   // risk_model may be either an array of risk items (legacy) or
   // `{risks: [...]}` (current). Treat both shapes; ignore everything else
@@ -473,7 +474,7 @@ function cardsFromRuntimePayload(payload) {
   const riskModel = payload.core?.risk_model;
   const riskItems = Array.isArray(riskModel) ? riskModel : (riskModel?.risks || []);
   for (const risk of riskItems) {
-    pushImportedCard(cards, 'risk', risk, risk.id || null);
+    pushImportedCard(cards, 'risk', importedFields(risk), risk.id || null);
   }
   for (const pattern of (Array.isArray(payload.patterns) ? payload.patterns : [])) {
     // Bug (#146): prior version dropped any payload.patterns entry
@@ -503,19 +504,25 @@ function cardsFromRuntimePayload(payload) {
         );
         continue;
       }
-      fields = { ...pattern };
-      delete fields.type;
+      fields = importedFields(pattern);
     } else {
-      const { type: _stripped, ...rest } = pattern;
-      fields = rest;
+      fields = importedFields(pattern, { keepType: type === 'pattern' || LEGACY_PATTERN_SUBTYPES.has(type) });
+    }
+    if (LEGACY_PATTERN_SUBTYPES.has(type)) {
+      fields = {
+        ...fields,
+        type,
+        legacy_subtype: fields.legacy_subtype || type,
+      };
+      type = 'pattern';
     }
     pushImportedCard(cards, type, fields, pattern.id || null);
   }
   for (const scenario of (Array.isArray(payload.scenarios) ? payload.scenarios : [])) {
-    pushImportedCard(cards, 'scenario', scenario, scenario.id || null);
+    pushImportedCard(cards, 'scenario', importedFields(scenario), scenario.id || null);
   }
   for (const item of (Array.isArray(payload.cases) ? payload.cases : [])) {
-    pushImportedCard(cards, 'case', item, item.id || null);
+    pushImportedCard(cards, 'case', importedFields(item), item.id || null);
   }
   // The current payload contract has one self-check field. Refuse to infer a
   // parallel field name: Core validation owns format migration, while Studio
@@ -523,8 +530,8 @@ function cardsFromRuntimePayload(payload) {
   const rawSelfCheck = payload.reasoning?.self_check;
   const selfCheckArr = Array.isArray(rawSelfCheck) ? rawSelfCheck : [];
   for (const selfCheck of selfCheckArr) {
-    const fields = typeof selfCheck === 'string' ? { question: selfCheck } : selfCheck;
-    pushImportedCard(cards, 'self_check', fields, fields.id || null);
+    const fields = typeof selfCheck === 'string' ? { question: selfCheck } : importedFields(selfCheck);
+    pushImportedCard(cards, 'self_check', fields, typeof selfCheck === 'object' ? selfCheck.id || null : null);
   }
   for (const failureMode of (Array.isArray(payload.reasoning?.failure_modes) ? payload.reasoning?.failure_modes : [])) {
     // Bug (#145 follow-up): the prior version dropped three
@@ -533,7 +540,8 @@ function cardsFromRuntimePayload(payload) {
     // project that round-tripped through `migrate` lost
     // these fields every time. The fix reads them through, matching
     // the export-side map in kdna-studio-core's buildPayload.
-    pushImportedCard(cards, 'misunderstanding', {
+    const fields = {
+      ...importedFields(failureMode),
       wrong: failureMode.mode || failureMode.wrong || '',
       correct: failureMode.correct || '',
       key_distinction: failureMode.key_distinction || '',
@@ -541,7 +549,9 @@ function cardsFromRuntimePayload(payload) {
       failure_risk: failureMode.failure_risk || '',
       applies_when: Array.isArray(failureMode.applies_when) ? failureMode.applies_when : [],
       does_not_apply_when: Array.isArray(failureMode.does_not_apply_when) ? failureMode.does_not_apply_when : [],
-    }, failureMode.id || null);
+    };
+    delete fields.mode;
+    pushImportedCard(cards, 'misunderstanding', fields, failureMode.id || null);
   }
   for (const chain of (Array.isArray(payload.reasoning?.reasoning_chains) ? payload.reasoning?.reasoning_chains : [])) {
     // Bug (#4 UX): compile/index.js synthesises one reasoning chain
@@ -550,7 +560,7 @@ function cardsFromRuntimePayload(payload) {
     // doubled the card count on round-trip. The fix skips chains
     // that the producer explicitly marked as synthesised.
     if (chain.source_authored === false) continue;
-    pushImportedCard(cards, 'reasoning', chain, chain.id || null);
+    pushImportedCard(cards, 'reasoning', importedFields(chain), chain.id || null);
   }
   for (const stage of (Array.isArray(payload.evolution?.stages) ? payload.evolution?.stages : [])) {
     // Distinguish source-authored stages (preserved identity) from
@@ -559,7 +569,7 @@ function cardsFromRuntimePayload(payload) {
     // so the importer doesn't double-count what was already in the
     // locked judgment cards.
     if (stage.source_authored === true) {
-      pushImportedCard(cards, 'evolution_stage', stage, stage.id || null);
+      pushImportedCard(cards, 'evolution_stage', importedFields(stage), stage.id || null);
     }
   }
   return cards;
@@ -611,7 +621,7 @@ function buildManifest(project, name) {
     asset_uid: project.asset_uid || source.asset_uid || 'urn:uuid:' + crypto.randomUUID(),
     asset_type: project.type === 'cluster' ? 'cluster' : 'domain',
     source_asset_type: source.asset_type || null,
-    title: titleFromName(source.name || name || project.name, assetId),
+    title: source.title || project.title || titleFromName(source.name || name || project.name, assetId),
     version: semverValue(project.release?.version || source.version, '1.0.0'),
     judgment_version: semverValue(project.release?.judgment_version || source.judgment_version || source.version, '1.0.0'),
     created_at: isoDateTime(source.created_at || source.created || project.created),
@@ -694,7 +704,13 @@ function cmdCreate(args) {
       if (kdnaData.source_patterns) project.source_patterns = kdnaData.source_patterns;
       if (kdnaData.source_reasoning) project.source_reasoning = kdnaData.source_reasoning;
       if (kdnaData.source_evolution) project.source_evolution = kdnaData.source_evolution;
+      if (kdnaData.source_core_structure) project.source_core_structure = kdnaData.source_core_structure;
       if (kdnaData.source_manifest) project.source_manifest = publicManifestMetadata(kdnaData.source_manifest);
+      if (kdnaData.source_manifest?.asset_uid) project.asset_uid = kdnaData.source_manifest.asset_uid;
+      if (kdnaData.source_manifest?.title) project.title = kdnaData.source_manifest.title;
+      if (kdnaData.source_manifest?.license) project.license = kdnaData.source_manifest.license;
+      if (kdnaData.source_manifest?.languages) project.languages = kdnaData.source_manifest.languages;
+      if (kdnaData.source_manifest?.language) project.default_language = kdnaData.source_manifest.language;
       if (kdnaData.source_manifest?.version) {
         if (!project.release) project.release = {};
         project.release.version = kdnaData.source_manifest.version;
@@ -703,9 +719,9 @@ function cmdCreate(args) {
         if (!project.release) project.release = {};
         project.release.judgment_version = kdnaData.source_manifest.judgment_version;
       }
-      if (kdnaData.source_manifest?.description) {
+      if (kdnaData.source_manifest?.description || kdnaData.source_manifest?.summary) {
         if (!project.release) project.release = {};
-        project.release.description = kdnaData.source_manifest.description;
+        project.release.description = kdnaData.source_manifest.description || kdnaData.source_manifest.summary;
       }
       if (project.stages?.judgment_cards) {
         project.stages.judgment_cards.total = kdnaData.cards.length;
@@ -821,8 +837,15 @@ function importFromKdna(kdnaPath) {
     judgment_core: judgmentCore,
     source_manifest: manifest,
     source_patterns: null,
-    source_reasoning: null,
-    source_evolution: null,
+    source_reasoning: payload.reasoning && typeof payload.reasoning === 'object'
+      ? JSON.parse(JSON.stringify(payload.reasoning))
+      : null,
+    source_evolution: payload.evolution && typeof payload.evolution === 'object'
+      ? JSON.parse(JSON.stringify(payload.evolution))
+      : null,
+    source_core_structure: Array.isArray(payload.core?.core_structure)
+      ? JSON.parse(JSON.stringify(payload.core.core_structure))
+      : null,
   };
 }
 
@@ -936,66 +959,42 @@ function _legacyDedupPush(cards, type, fields, id) {
 }
 
 function cardsFromLegacyPayload(payload) {
+  _legacyDedupIds.clear();
   const cards = [];
   const core = payload.core || {};
 
   // axioms
   for (const ax of (core.axioms || [])) {
-    _legacyDedupPush(cards, 'axiom', {
-      one_sentence: ax.one_sentence || null,
-      full_statement: ax.full_statement || null,
-      why: ax.why || null,
-      applies_when: ax.applies_when || [],
-      does_not_apply_when: ax.does_not_apply_when || [],
-      failure_risk: ax.failure_risk || null,
-      confidence: ax.confidence || null,
-      evidence_type: ax.evidence_type || null,
-    }, ax.id || null);
+    _legacyDedupPush(cards, 'axiom', importedFields(ax), ax.id || null);
   }
 
   // ontology
   for (const ont of (core.ontology || [])) {
-    pushImportedCard(cards, 'ontology', {
-      one_sentence: ont.one_sentence || null,
-      essence: ont.essence || null,
-      boundary: ont.boundary || null,
-      trigger_signal: ont.trigger_signal || null,
-    }, ont.id || null);
+    pushImportedCard(cards, 'ontology', importedFields(ont), ont.id || null);
   }
 
   // frameworks
   for (const fw of (core.frameworks || [])) {
-    pushImportedCard(cards, 'framework', {
-      name: fw.name || null,
-      when_to_use: fw.when_to_use || null,
-      steps: fw.steps || [],
-    }, fw.id || null);
+    pushImportedCard(cards, 'framework', importedFields(fw), fw.id || null);
   }
 
   // stances
   for (const st of (core.stances || [])) {
-    pushImportedCard(cards, 'stance', {
-      statement: st.statement || null,
-      applies_when: st.applies_when || [],
-    }, st.id || null);
+    const fields = typeof st === 'string' ? { statement: st } : importedFields(st);
+    pushImportedCard(cards, 'stance', fields, typeof st === 'object' ? st.id || null : null);
   }
 
   // boundaries
   for (const bd of (core.boundaries || [])) {
-    pushImportedCard(cards, 'boundary', {
-      scope: bd.scope || null,
-      out_of_scope: bd.out_of_scope || null,
-      acceptable_exceptions: bd.acceptable_exceptions || [],
-    }, bd.id || null);
+    pushImportedCard(cards, 'boundary', importedFields(bd), bd.id || null);
   }
 
   // risks
-  for (const risk of (core.risk_model?.risks || [])) {
-    pushImportedCard(cards, 'risk', {
-      name: risk.name || null,
-      description: risk.description || null,
-      mitigation: risk.mitigation || null,
-    }, risk.id || null);
+  const legacyRisks = Array.isArray(core.risk_model)
+    ? core.risk_model
+    : (Array.isArray(core.risk_model?.risks) ? core.risk_model.risks : []);
+  for (const risk of legacyRisks) {
+    pushImportedCard(cards, 'risk', importedFields(risk.fields || risk), risk.id || null);
   }
 
   // patterns with explicit types (including legacy subtypes)
@@ -1007,27 +1006,15 @@ function cardsFromLegacyPayload(payload) {
 
     if (LEGACY_PATTERN_SUBTYPES.has(rawType)) {
       pushImportedCard(cards, 'pattern', {
-        type: rawType,                    // sets fields.type for the exporter
+        ...importedFields(p, { keepType: true }),
         legacy_subtype: rawType,
-        name: p.name || null,
-        one_sentence: p.one_sentence || null,
-        what_it_looks_like: p.what_it_looks_like || null,
-        how_to_fix: p.how_to_fix || null,
-        failure_risk: p.failure_risk || null,
       }, p.id || null);
     } else if (rawType === 'term') {
-      pushImportedCard(cards, 'term', {
-        term: p.term || null,
-        definition: p.definition || null,
-      }, p.id || null);
+      pushImportedCard(cards, 'term', importedFields(p), p.id || null);
     } else if (rawType === 'banned_term') {
-      pushImportedCard(cards, 'banned_term', {
-        term: p.term || null,
-        why: p.why || null,
-        replace_with: p.replace_with || null,
-      }, p.id || null);
+      pushImportedCard(cards, 'banned_term', importedFields(p), p.id || null);
     } else if (LEGACY_PATTERN_TYPE_MAP.hasOwnProperty(rawType)) {
-      pushImportedCard(cards, LEGACY_PATTERN_TYPE_MAP[rawType], p, p.id || null);
+      pushImportedCard(cards, LEGACY_PATTERN_TYPE_MAP[rawType], importedFields(p), p.id || null);
     } else {
       fail(`Unknown legacy pattern type "${rawType}" for card "${p.id || '(no id)'}"`);
     }
@@ -1041,68 +1028,37 @@ function cardsFromLegacyPayload(payload) {
     if (!p || typeof p !== 'object') continue;
     if (p.type) continue; // already handled above
     if (!p.wrong && !p.correct) continue;
-    pushImportedCard(cards, 'misunderstanding', {
-      wrong: p.wrong || null,
-      correct: p.correct || null,
-      key_distinction: p.key_distinction || null,
-      why: p.why || null,
-      failure_risk: p.failure_risk || null,
-      applies_when: p.applies_when || [],
-      does_not_apply_when: p.does_not_apply_when || [],
-    }, p.id || null);
+    pushImportedCard(cards, 'misunderstanding', importedFields(p), p.id || null);
   }
 
   // reasoning chains
   for (const chain of (payload.reasoning?.reasoning_chains || [])) {
-    pushImportedCard(cards, 'reasoning', {
-      axiom: chain.axiom || null,
-      one_sentence: chain.one_sentence || null,
-      logic: chain.logic || null,
-      so_what: chain.so_what || null,
-    }, chain.id || null);
+    const fields = importedFields(chain);
+    pushImportedCard(cards, 'reasoning', fields, chain.id || null);
   }
 
   // self checks: array of plain strings in legacy payload
   for (const check of (payload.reasoning?.self_check || [])) {
     if (typeof check === 'string' && check.trim()) {
-      const id = legacyStableId('self_check', { check: check.trim() }, 'lz_sc');
-      pushImportedCard(cards, 'self_check', { check: check.trim() }, id);
+      const fields = { question: check.trim() };
+      const id = legacyStableId('self_check', fields, 'legacy_sc');
+      pushImportedCard(cards, 'self_check', fields, id);
     }
   }
 
   // scenarios
   for (const sc of (payload.scenarios || [])) {
-    pushImportedCard(cards, 'scenario', {
-      name: sc.name || null,
-      trigger: sc.trigger || null,
-      action: sc.action || null,
-      expected: sc.expected || null,
-    }, sc.id || null);
+    pushImportedCard(cards, 'scenario', importedFields(sc), sc.id || null);
   }
 
   // cases
   for (const cs of (payload.cases || [])) {
-    pushImportedCard(cards, 'case', {
-      title: cs.title || null,
-      scenario: cs.scenario || null,
-      input: cs.input || null,
-      expected: cs.expected || null,
-    }, cs.id || null);
+    pushImportedCard(cards, 'case', importedFields(cs), cs.id || null);
   }
 
   // evolution stages
   for (const stage of (payload.evolution?.stages || [])) {
-    pushImportedCard(cards, 'evolution_stage', {
-      name: stage.name || null,
-      level: stage.level || null,
-      description: stage.description || null,
-      indicators: stage.indicators || [],
-    }, stage.id || null);
-    // Preserve source-authored evolution content
-    if (stage.source_authored && cards.length) {
-      const last = cards[cards.length - 1];
-      if (last.fields) last.fields.source_authored = stage.source_authored;
-    }
+    pushImportedCard(cards, 'evolution_stage', importedFields(stage), stage.id || null);
   }
 
   return cards;
@@ -1142,6 +1098,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
     if (manifest.default_language) manifestData.default_language = manifest.default_language;
     if (manifest.description) manifestData.description = manifest.description;
     if (manifest.name) manifestData.name = manifest.name;
+    if (manifest.title) manifestData.title = manifest.title;
     if (manifest.keywords) manifestData.keywords = manifest.keywords;
     if (manifest.license) manifestData.license = manifest.license;
     if (manifest.author) manifestData.author = manifest.author;
@@ -1182,25 +1139,17 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
 
   if (core) {
     for (const ax of (Array.isArray(core.axioms) ? core.axioms : [])) {
-      const fields = {};
+      const fields = importedFields(ax);
       for (const key of ['one_sentence', 'full_statement', 'why', 'applies_when', 'does_not_apply_when', 'failure_risk', 'confidence', 'evidence_type']) {
-        if (key in ax) fields[key] = ax[key];
-        else audit.missingFields.push(`axiom.${ax.id || '?'}.${key}`);
+        if (!(key in ax)) audit.missingFields.push(`axiom.${ax.id || '?'}.${key}`);
       }
       importedCards.push(cardApi.createCard('axiom', fields, ax.id || null));
     }
     for (const ont of (Array.isArray(core.ontology) ? core.ontology : [])) {
-      importedCards.push(cardApi.createCard('ontology', {
-        one_sentence: ont.one_sentence || ont.essence || '',
-        essence: ont.essence || '', boundary: ont.boundary || '',
-        trigger_signal: ont.trigger_signal || '',
-      }, ont.id || null));
+      importedCards.push(cardApi.createCard('ontology', importedFields(ont), ont.id || null));
     }
     for (const b of (Array.isArray(core.boundaries) ? core.boundaries : [])) {
-      importedCards.push(cardApi.createCard('boundary', {
-        scope: b.scope || '', out_of_scope: b.out_of_scope || '',
-        acceptable_exceptions: b.acceptable_exceptions || [],
-      }, b.id || null));
+      importedCards.push(cardApi.createCard('boundary', importedFields(b), b.id || null));
     }
     // Accept risks as a top-level array (`risks`) or wrapped in `risk_model`
     // (either as `{risks: [...]}` or as an array itself).
@@ -1211,23 +1160,16 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
       else risksSource = [];
     }
     for (const r of risksSource) {
-      importedCards.push(cardApi.createCard('risk', r.fields || r, r.id || null));
+      importedCards.push(cardApi.createCard('risk', importedFields(r.fields || r), r.id || null));
     }
     // NEW: import stances
     for (const s of (Array.isArray(core.stances) ? core.stances : [])) {
-      const text = typeof s === 'string' ? s : s.statement || s.stance || '';
-      importedCards.push(cardApi.createCard('stance', {
-        statement: text,
-        applies_when: s.applies_when || [],
-        does_not_apply_when: s.does_not_apply_when || [],
-      }, typeof s === 'object' ? s.id || null : null));
+      const fields = typeof s === 'string' ? { statement: s } : importedFields(s);
+      importedCards.push(cardApi.createCard('stance', fields, typeof s === 'object' ? s.id || null : null));
     }
     // NEW: import frameworks
     for (const fw of (Array.isArray(core.frameworks) ? core.frameworks : [])) {
-      importedCards.push(cardApi.createCard('framework', {
-        name: fw.name || '', when_to_use: fw.when_to_use || '',
-        steps: fw.steps || [],
-      }, fw.id || null));
+      importedCards.push(cardApi.createCard('framework', importedFields(fw), fw.id || null));
     }
   }
 
@@ -1235,27 +1177,25 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
     // NEW: import terminology
     if (patterns.terminology) {
       for (const t of (Array.isArray(patterns.terminology.standard_terms) ? patterns.terminology.standard_terms : [])) {
-        importedCards.push(cardApi.createCard('term', {
-          term: t.term || '', definition: t.definition || '',
-        }, t.id || null));
+        importedCards.push(cardApi.createCard('term', importedFields(t), t.id || null));
       }
       for (const bt of (Array.isArray(patterns.terminology.banned_terms) ? patterns.terminology.banned_terms : [])) {
-        importedCards.push(cardApi.createCard('banned_term', {
-          term: bt.term || '', why: bt.why || '', replace_with: bt.replace_with || '',
-        }, bt.id || null));
+        importedCards.push(cardApi.createCard('banned_term', importedFields(bt), bt.id || null));
       }
     }
+    for (const pattern of (Array.isArray(patterns.patterns) ? patterns.patterns : [])) {
+      const fields = importedFields(pattern, { keepType: true });
+      if (!fields.type) fields.type = 'pattern';
+      importedCards.push(cardApi.createCard('pattern', fields, pattern.id || null));
+    }
     for (const ms of (Array.isArray(patterns.misunderstandings) ? patterns.misunderstandings : [])) {
-      importedCards.push(cardApi.createCard('misunderstanding', {
-        wrong: ms.wrong || '', correct: ms.correct || '',
-        key_distinction: ms.key_distinction || '', why: ms.why || '',
-      }, ms.id || null));
+      importedCards.push(cardApi.createCard('misunderstanding', importedFields(ms), ms.id || null));
     }
     for (const sc of (Array.isArray(patterns.self_check) ? patterns.self_check : [])) {
-      const q = typeof sc === 'string' ? sc : sc.question || '';
+      const fields = typeof sc === 'string' ? { question: sc } : importedFields(sc);
       importedCards.push(cardApi.createCard(
         'self_check',
-        { question: q },
+        fields,
         typeof sc === 'object' ? sc.id || null : null,
       ));
     }
@@ -1268,7 +1208,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
     for (const aesthetic of (Array.isArray(patterns.aesthetics) ? patterns.aesthetics : [])) {
       importedCards.push(cardApi.createCard(
         'aesthetic',
-        aesthetic.fields || aesthetic,
+        importedFields(aesthetic.fields || aesthetic),
         aesthetic.id || null,
       ));
     }
@@ -1277,20 +1217,14 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
   // NEW: import scenarios
   if (scenarios && Array.isArray(scenarios.scenes)) {
     for (const scene of scenarios.scenes) {
-      importedCards.push(cardApi.createCard('scenario', {
-        name: scene.name || scene.id || '',
-        trigger: scene.trigger || '', action: scene.action || '',
-      }, scene.id || null));
+      importedCards.push(cardApi.createCard('scenario', importedFields(scene), scene.id || null));
     }
   }
 
   // NEW: import cases
   if (cases && Array.isArray(cases.cases)) {
     for (const c of cases.cases) {
-      importedCards.push(cardApi.createCard('case', {
-        title: c.title || c.id || '',
-        scenario: c.scenario || '', expected: c.expected || '',
-      }, c.id || null));
+      importedCards.push(cardApi.createCard('case', importedFields(c), c.id || null));
     }
   }
 
@@ -1303,26 +1237,14 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
   // identity.
   if (reasoning && Array.isArray(reasoning.reasoning_chains)) {
     for (const rc of reasoning.reasoning_chains) {
-      importedCards.push(cardApi.createCard('reasoning', {
-        axiom: rc.axiom || '',
-        one_sentence: rc.one_sentence || rc.conclusion || '',
-        chain: Array.isArray(rc.chain) ? rc.chain : (rc.logic || []),
-        principle: rc.principle || rc.name || '',
-        concrete_action: rc.concrete_action || rc.so_what || '',
-        so_what: rc.so_what || rc.concrete_action || '',
-        conclusion: rc.conclusion || '',
-      }, rc.id || null));
+      importedCards.push(cardApi.createCard('reasoning', importedFields(rc), rc.id || null));
     }
   }
 
   // NEW: import evolution stages
   if (evolution && Array.isArray(evolution.stages)) {
     for (const stage of evolution.stages) {
-      pushImportedCard(importedCards, 'evolution_stage', {
-        name: stage.name || stage.id || '',
-        level: stage.level != null ? stage.level : '',
-        description: stage.description || '',
-      }, stage.id || null);
+      pushImportedCard(importedCards, 'evolution_stage', importedFields(stage), stage.id || null);
     }
   }
 
@@ -1333,6 +1255,7 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
     sourcePath: absSource,
     creatorIdentity: creatorIdentity || null,
     lineage: { type: 'migrated', parent_name: manifestData.name || null, parent_asset_uid: null, parent_version: manifestData.version || null, parent_asset_digest: null },
+    judgmentCore: judgmentCoreFromLegacyPayload({ core: core || {} }),
   });
   // Preserve manifest metadata
   if (manifestData.asset_uid) project.asset_uid = manifestData.asset_uid;
@@ -1348,11 +1271,18 @@ function importFromFolder(sourceDir, projectDir, projectName, creatorIdentity, o
     if (!project.release) project.release = {};
     project.release.description = manifestData.description;
   }
+  if (manifestData.title) project.title = manifestData.title;
   if (manifestData.license) project.license = manifestData.license;
   if (manifestData.author) project.author = manifestData.author;
   if (manifestData.languages) project.languages = manifestData.languages;
   if (manifestData.default_language) project.default_language = manifestData.default_language;
   if (manifestData.raw) project.source_manifest = publicManifestMetadata(manifestData.raw);
+  if (patterns) project.source_patterns = JSON.parse(JSON.stringify(patterns));
+  if (reasoning) project.source_reasoning = JSON.parse(JSON.stringify(reasoning));
+  if (evolution) project.source_evolution = JSON.parse(JSON.stringify(evolution));
+  if (Array.isArray(core?.core_structure)) {
+    project.source_core_structure = JSON.parse(JSON.stringify(core.core_structure));
+  }
 
   project.cards = importedCards;
   if (project.stages?.judgment_cards) {

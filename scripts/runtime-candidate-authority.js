@@ -21,14 +21,14 @@ const CANDIDATE_AUTHORITIES = Object.freeze([
   }),
   Object.freeze({
     name: '@aikdna/kdna-studio-core',
-    version: '2.0.1',
+    version: '2.0.2',
     repository: 'aikdna/kdna-studio-core',
     repositoryEnvironment: 'KDNA_STUDIO_CORE_CANDIDATE_REPOSITORY',
     commitEnvironment: 'KDNA_STUDIO_CORE_CANDIDATE_COMMIT',
     evidencePath: path.join(
       'fixtures',
       'runtime-candidates',
-      'kdna-studio-core-2.0.1.evidence.json',
+      'kdna-studio-core-2.0.2.evidence.json',
     ),
     sourceEnvironment: 'KDNA_STUDIO_CORE_CANDIDATE_SOURCE',
     sourcePackageSubdirectory: '',

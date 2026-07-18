@@ -64,6 +64,21 @@ function exportAsset(projectDir, output) {
   });
 }
 
+function runtimeJudgmentSemantics(payload) {
+  const tooling = new Set(['audit_log', 'human_lock', 'legacy_subtype', 'locked', 'source_authored', 'status']);
+  function visit(value) {
+    if (Array.isArray(value)) return value.map(visit);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(
+      Object.keys(value).filter((key) => !tooling.has(key)).sort().map((key) => [key, visit(value[key])]),
+    );
+  }
+  const copy = structuredClone(payload);
+  delete copy.profile;
+  delete copy.profile_version;
+  return visit(copy);
+}
+
 test('Studio CLI emits the current manifest, payload, digest, and Runtime contracts', (t) => {
   const { root, project, projectDir } = fixture(t);
   const assetPath = path.join(root, 'asset.kdna');
@@ -117,7 +132,7 @@ test('Studio CLI emits the current manifest, payload, digest, and Runtime contra
   assert.equal(capsule.contract_version, '0.1.0');
 });
 
-test('Studio CLI binds exact unpublished Runtime candidates and blocks release', () => {
+test('Studio CLI binds exact published Runtime dependencies and opens the release gate', () => {
   const root = path.resolve(__dirname, '..');
   const evidence = verifyCandidateBinding(root);
   assert.deepEqual(
@@ -130,8 +145,8 @@ test('Studio CLI binds exact unpublished Runtime candidates and blocks release',
       ],
       [
         '@aikdna/kdna-studio-core',
-        '2.0.1',
-        '06c771a24163ec81d31b4ec8e224f311f1836402',
+        '2.0.2',
+        'cc3ebabf119af751d6f50e2445ad4363aae88f37',
       ],
     ],
   );
@@ -218,32 +233,39 @@ test('create --from-kdna imports a legacy asset and preserves all pattern subtyp
     core: {
       highest_question: 'What is the right action?',
       axioms: [
-        { id: 'ax_01', one_sentence: 'Preserve reversibility.', full_statement: 'Always preserve reversibility.', why: 'Irreversible harm.', applies_when: [], does_not_apply_when: [], failure_risk: 'Irreversible consequence' },
-        { id: 'ax_02', one_sentence: 'Minimize intervention.', full_statement: 'Intervene minimally.', why: 'Excess causes resistance.', applies_when: ['complex'], does_not_apply_when: ['emergency'], failure_risk: 'Paralysis' },
+        { id: 'ax_01', one_sentence: 'Preserve reversibility.', full_statement: 'Always preserve reversibility.', why: 'Irreversible harm would change the decision permanently.', applies_when: ['reversible decisions'], does_not_apply_when: ['imminent harm'], failure_risk: 'Irreversible consequence', confidence: 'high', evidence_type: 'practice', source_refs: ['source:chapter-1', 'source:chapter-2'], supports: { claim: 'reversibility matters', strength: 'primary' } },
+        { id: 'ax_02', one_sentence: 'Minimize intervention.', full_statement: 'Intervene minimally.', why: 'Excess causes resistance.', applies_when: ['complex'], does_not_apply_when: ['emergency'], failure_risk: 'Paralysis', confidence: 'medium', evidence_type: 'case_observation' },
       ],
       ontology: [{ id: 'ont_01', one_sentence: 'Action ontology.', essence: 'Actions change state.', boundary: 'Scope only.', trigger_signal: 'Decision fork' }],
       frameworks: [{ id: 'fw_01', name: 'Decision framework', when_to_use: 'Multi-option context', steps: ['identify','evaluate','choose'] }],
       stances: [{ id: 'st_01', statement: 'Default to restraint.', applies_when: ['high uncertainty'] }],
       boundaries: [{ id: 'bd_01', scope: 'Professional decisions', out_of_scope: 'Personal relationships', acceptable_exceptions: ['life safety'] }],
-      risk_model: { risks: [{ id: 'risk_01', name: 'Over-control', description: 'Excessive rules', mitigation: 'Periodic review' }] },
+      risk_model: { risks: [{ id: 'risk_01', name: 'Over-control', description: 'Excessive rules can suppress local judgment.', mitigation: 'Periodic review' }] },
+      core_structure: [{ id: 'rel_01', from: 'ax_01', to: 'ax_02', via: { relation: 'constrains' } }],
     },
     patterns: [
       { type: 'term', term: 'wuwei', definition: 'Effortless action', id: 't_01' },
       { type: 'banned_term', term: 'should', why: 'Prescriptive', replace_with: 'consider', id: 'bt_01' },
-      { type: 'failure_pattern', id: 'fp_01', name: 'Overstepping', one_sentence: 'Do not overstep.', what_it_looks_like: 'Adding constraints.', how_to_fix: 'Remove constraints.', failure_risk: 'Loss of autonomy' },
+      { type: 'failure_pattern', id: 'fp_01', name: 'Overstepping', one_sentence: 'Do not overstep.', what_it_looks_like: 'Adding constraints.', how_to_fix: 'Remove constraints.', failure_risk: 'Loss of autonomy', evidence_required: ['source:field-note'] },
       { type: 'design_pattern', id: 'dp_01', name: 'Minimal design', one_sentence: 'Design minimally.', what_it_looks_like: 'Complex rules.', how_to_fix: 'Simplify.', failure_risk: 'Complexity explosion' },
       { type: 'response_pattern', id: 'rp_01', name: 'Pause response', one_sentence: 'Pause before responding.', what_it_looks_like: 'Immediate reaction.', how_to_fix: 'Insert a delay.', failure_risk: 'Impulse override' },
       { type: 'stopping_pattern', id: 'sp_01', name: 'Stop at sufficiency', one_sentence: 'Stop when enough.', what_it_looks_like: 'Perpetual refinement.', how_to_fix: 'Define done.', failure_risk: 'Never shipping' },
       { type: 'completion_pattern', id: 'cp_01', name: 'Finish release', one_sentence: 'Release when complete.', what_it_looks_like: 'Holding indefinitely.', how_to_fix: 'Declare completion.', failure_risk: 'Unreleased value' },
-      { id: 'ms_01', wrong: 'Assuming intent', correct: 'Observe behavior', key_distinction: 'Intent vs behavior', why: 'Cannot read minds', applies_when: [], does_not_apply_when: [], failure_risk: 'Misattribution' },
+      { id: 'ms_01', wrong: 'Assuming intent', correct: 'Observe behavior', key_distinction: 'Inferred intent is different from observed behavior.', why: 'Cannot read minds', applies_when: [], does_not_apply_when: [], failure_risk: 'Misattribution' },
     ],
-    scenarios: [{ id: 'sc_01', name: 'Team conflict', trigger: 'Disagreement', action: 'Facilitate resolution', expected: 'Alignment' }],
-    cases: [{ id: 'cs_01', title: 'Restraint avoided escalation', scenario: 'Customer complaint', input: 'Angry message', expected: 'De-escalated response' }],
+    scenarios: [{ id: 'sc_01', name: 'Team conflict', trigger: 'Disagreement', action: 'Facilitate resolution', expected: 'Alignment', source_refs: ['source:scenario-note'] }],
+    cases: [{ id: 'cs_01', title: 'Restraint avoided escalation', scenario: 'Customer complaint', input: 'Angry message', expected: 'De-escalated response', source_refs: ['source:case-note'] }],
     reasoning: {
-      reasoning_chains: [{ id: 'rc_01', axiom: 'ax_01', one_sentence: 'Walk through.', logic: 'If A then B', so_what: 'Choose B' }],
+      reasoning_chains: [{ id: 'rc_01', axiom: 'ax_01', one_sentence: 'Walk through.', logic: ['If A then B'], so_what: 'Choose B', tradeoffs: ['speed versus reversibility'], conflict_resolution: { rule: 'prefer reversibility' }, when_not_to_use: ['imminent harm'], evidence_required: ['source:chapter-1'], uncertainty_handling: { unknown: 'pause' } }],
       self_check: ['Did I consider all options?', 'Is this reversible?', 'Would a reasonable person agree?'],
     },
-    evolution: { stages: [{ id: 'ev_01', name: 'Initial draft', level: 'alpha', description: 'First pass.', indicators: [] }] },
+    evolution: {
+      stages: [{ id: 'ev_01', name: 'Initial draft', level: 'alpha', description: 'First pass.', indicators: ['reviewed'] }],
+      evolution_layers: [{ id: 'layer_01', from_stage: 'ev_01', to_stage: 'ev_01', capability: 'baseline' }],
+      measurement: [{ id: 'measure_01', what: 'coverage', how: 'count', threshold: '1' }],
+      changelog: [{ version: '0.1.0', changes: ['initial'] }],
+      version_notes: ['First authored version.'],
+    },
   };
   fs.writeFileSync(path.join(srcDir, 'payload.kdnab'), cbor.encode(payload));
 
@@ -274,13 +296,27 @@ test('create --from-kdna imports a legacy asset and preserves all pattern subtyp
 
   const project = JSON.parse(fs.readFileSync(path.join(projectDir, 'studio.project.json'), 'utf8'));
   const cards = project.cards || [];
-  assert.equal(cards.length, 22, `expected 23 cards, got ${cards.length}`);
+  assert.equal(cards.length, 22, `expected 22 cards, got ${cards.length}`);
+
+  const importedAxiom = cards.find(c => c.id === 'ax_01');
+  assert.deepEqual(
+    importedAxiom?.fields?.source_refs,
+    ['source:chapter-1', 'source:chapter-2'],
+    'declared axiom source_refs survive legacy import',
+  );
+  assert.deepEqual(importedAxiom?.fields?.supports, { claim: 'reversibility matters', strength: 'primary' });
+  assert.deepEqual(project.source_core_structure, payload.core.core_structure);
+  assert.equal(project.source_manifest.title, manifest.title);
 
   // Pattern subtypes
   for (const sub of ['failure_pattern','design_pattern','response_pattern','stopping_pattern','completion_pattern']) {
     const match = cards.some(c => c.type === 'pattern' && c.fields?.type === sub);
     assert.ok(match, `missing legacy subtype ${sub}`);
   }
+  assert.deepEqual(
+    cards.find(c => c.id === 'fp_01')?.fields?.evidence_required,
+    ['source:field-note'],
+  );
 
   // Verify no missing worldview writes
   assert.equal('worldview' in (project.judgment_core || {}), false);
@@ -290,10 +326,68 @@ test('create --from-kdna imports a legacy asset and preserves all pattern subtyp
   // Self check count and content
   const scs = cards.filter(c => c.type === 'self_check');
   assert.equal(scs.length, 3, 'expected 3 self_checks from 3 strings');
-  assert.ok(scs.every(sc => typeof sc.fields?.check === 'string' && sc.fields.check.length > 0));
+  assert.ok(scs.every(sc => typeof sc.fields?.question === 'string' && sc.fields.question.length > 0));
 
   // Reasoning chain
-  assert.ok(cards.some(c => c.type === 'reasoning' && c.fields?.axiom === 'ax_01'), 'reasoning chain present');
+  const reasoningCard = cards.find(c => c.type === 'reasoning' && c.fields?.axiom === 'ax_01');
+  assert.ok(reasoningCard, 'reasoning chain present');
+  for (const field of ['tradeoffs', 'conflict_resolution', 'when_not_to_use', 'evidence_required', 'uncertainty_handling']) {
+    assert.deepEqual(reasoningCard.fields[field], payload.reasoning.reasoning_chains[0][field], field);
+  }
+  assert.deepEqual(cards.find(c => c.id === 'sc_01')?.fields?.source_refs, ['source:scenario-note']);
+  assert.deepEqual(cards.find(c => c.id === 'cs_01')?.fields?.source_refs, ['source:case-note']);
+  assert.deepEqual(project.source_evolution.evolution_layers, payload.evolution.evolution_layers);
+  assert.deepEqual(project.source_evolution.measurement, payload.evolution.measurement);
+  assert.deepEqual(project.source_evolution.changelog, payload.evolution.changelog);
+  assert.deepEqual(project.source_evolution.version_notes, payload.evolution.version_notes);
+
+  // Exercise the complete migration and a second current-profile cycle. A
+  // structurally valid container is not sufficient: the Runtime judgment
+  // projection must remain identical after re-import.
+  const approved = spawnSync(
+    process.execPath,
+    [BIN, 'card', 'approve', projectDir, '--all', '--by', 'test-reviewer', '--statement', 'Reviewed for semantic round-trip testing.'],
+    { encoding: 'utf8', env: { ...process.env } },
+  );
+  assert.equal(approved.status, 0, approved.stderr || approved.stdout);
+
+  const currentAsset = path.join(root, 'current.kdna');
+  assert.equal(exportAsset(projectDir, currentAsset).status, 0);
+  assert.equal(core.validate(currentAsset).overall_valid, true);
+  const unpackedCurrent = path.join(root, 'current-unpacked');
+  core.unpack(currentAsset, unpackedCurrent);
+  const currentPayload = cbor.decode(fs.readFileSync(path.join(unpackedCurrent, 'payload.kdnab')));
+  assert.deepEqual(currentPayload.core.core_structure, payload.core.core_structure);
+  assert.deepEqual(currentPayload.core.axioms[0].source_refs, payload.core.axioms[0].source_refs);
+  assert.equal(currentPayload.patterns.filter((entry) => String(entry.type || '').endsWith('_pattern')).length, 5);
+  assert.deepEqual(currentPayload.reasoning.self_check, payload.reasoning.self_check);
+  assert.equal(currentPayload.evolution.stages.length, 1, 'Studio lock audit events are not judgment evolution');
+
+  const cycleTwoProject = path.join(root, 'cycle-two-project');
+  const cycleTwoImport = spawnSync(
+    process.execPath,
+    [BIN, 'create', cycleTwoProject, '--from-kdna', currentAsset, '--name', '@test/full-cycle-two'],
+    { encoding: 'utf8', env: { ...process.env } },
+  );
+  assert.equal(cycleTwoImport.status, 0, cycleTwoImport.stderr || cycleTwoImport.stdout);
+  const cycleTwoCards = JSON.parse(
+    fs.readFileSync(path.join(cycleTwoProject, 'studio.project.json'), 'utf8'),
+  ).cards;
+  assert.equal(cycleTwoCards.length, cards.length);
+  assert.equal(cycleTwoCards.filter((card) => card.type === 'pattern').length, 5);
+
+  const cycleTwoApproved = spawnSync(
+    process.execPath,
+    [BIN, 'card', 'approve', cycleTwoProject, '--all', '--by', 'test-reviewer', '--statement', 'Reviewed for second-cycle semantic testing.'],
+    { encoding: 'utf8', env: { ...process.env } },
+  );
+  assert.equal(cycleTwoApproved.status, 0, cycleTwoApproved.stderr || cycleTwoApproved.stdout);
+  const cycleTwoAsset = path.join(root, 'cycle-two.kdna');
+  assert.equal(exportAsset(cycleTwoProject, cycleTwoAsset).status, 0);
+  const unpackedCycleTwo = path.join(root, 'cycle-two-unpacked');
+  core.unpack(cycleTwoAsset, unpackedCycleTwo);
+  const cycleTwoPayload = cbor.decode(fs.readFileSync(path.join(unpackedCycleTwo, 'payload.kdnab')));
+  assert.deepEqual(runtimeJudgmentSemantics(cycleTwoPayload), runtimeJudgmentSemantics(currentPayload));
 
   // CLI re-opens project
   const listResult = spawnSync('npx', ['kdna-studio', 'card', 'list', projectDir],
@@ -369,7 +463,7 @@ test('create --from-kdna imports a minimal legacy fixture and fails on unknown p
 
   const project = JSON.parse(fs.readFileSync(path.join(projectDir, 'studio.project.json'), 'utf8'));
   const cards = project.cards || [];
-  assert.equal(cards.length, 9, `expected 10 cards, got ${cards.length}`);
+  assert.equal(cards.length, 9, `expected 9 cards, got ${cards.length}`);
   assert.ok(cards.some(c => c.type === 'pattern' && c.fields?.type === 'failure_pattern'), 'failure_pattern subtype');
   assert.ok(cards.some(c => c.type === 'pattern' && c.fields?.type === 'design_pattern'), 'design_pattern subtype');
   assert.ok(cards.some(c => c.type === 'misunderstanding'), 'misunderstanding');

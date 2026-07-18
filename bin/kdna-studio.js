@@ -367,11 +367,12 @@ function cleanFields(fields = {}) {
 }
 
 function importedCard(type, fields = {}, id = null) {
-  try {
-    return cardApi.createCard(type, cleanFields(fields), id || null);
-  } catch (_) {
-    return null;
+  const card = cardApi.createCard(type, cleanFields(fields), id || null);
+  if (card === null) {
+    throw new Error(`failed to create card type="${type}" id="${id || '(auto)'}" — ` +
+      `the card type may require additional required fields or the fields may be malformed`);
   }
+  return card;
 }
 
 // Bug (#3 + #4 UX): payload.kdnab intentionally carries the same
@@ -401,8 +402,10 @@ function pushImportedCard(cards, type, fields = {}, id = null) {
     }
     return;
   }
-  if (id) _importedIds.add(id);
   const card = importedCard(type, fields, id);
+  // Register the id only after card creation succeeds; a failed creation
+  // must not consume the id and prevent retry.
+  if (card && id) _importedIds.add(id);
   if (card) cards.push(card);
 }
 
@@ -756,19 +759,36 @@ function importFromKdna(kdnaPath) {
   if (stats.size > 50 * 1024 * 1024) {
     fail(`KDNA file too large (${(stats.size / (1024 * 1024)).toFixed(1)} MiB, max 50 MiB): ${absKdna}`);
   }
-  let runtimeCore;
+
+  // ── read ZIP before Core validation so the profile can branch ──
+  const zipBuf = fs.readFileSync(absKdna);
+  const entries = readZipEntries(zipBuf);
+  validateZipContainer(entries);
+  if (!entries.has('kdna.json')) fail('Not a valid .kdna asset: missing kdna.json');
+  if (!entries.has('payload.kdnab')) fail('Not a valid .kdna asset: missing payload.kdnab. Use --from-folder for legacy JSON source migration.');
+
+  const manifest = JSON.parse(entries.get('kdna.json').toString());
+  const payload = decodePayload(entries.get('payload.kdnab'), manifest);
+  const profile = payload?.profile;
+
+  // ── branch: current profile requires Core validate; legacy uses a frozen contract ──
+  let runtimeCore, isLegacy;
   try { runtimeCore = require('@aikdna/kdna-core'); } catch {
     fail('@aikdna/kdna-core is required to validate --from-kdna imports.');
   }
-  const validation = runtimeCore.validate(absKdna);
-  if (!validation.overall_valid) {
-    fail(`Not a current .kdna asset: ${(validation.problems || []).join('; ')}`);
+  if (profile === 'kdna.payload.judgment') {
+    const validation = runtimeCore.validate(absKdna);
+    if (!validation.overall_valid) {
+      fail(`Not a current .kdna asset: ${(validation.problems || []).join('; ')}`);
+    }
+    isLegacy = false;
+  } else if (profile === 'judgment-profile-v1') {
+    validateLegacyImportContract(manifest, payload);
+    isLegacy = true;
+  } else {
+    fail(`Unsupported payload profile "${profile || '(none)'}". Only kdna.payload.judgment and judgment-profile-v1 are accepted for --from-kdna.`);
   }
-  const zipBuf = fs.readFileSync(absKdna);
-  const entries = readZipEntries(zipBuf);
-  if (!entries.has('kdna.json')) fail('Not a valid .kdna asset: missing kdna.json');
 
-  const manifest = JSON.parse(entries.get('kdna.json').toString());
   const lineage = {
     type: 'fork',
     parent_name: packageNameFromManifest(manifest),
@@ -777,17 +797,16 @@ function importFromKdna(kdnaPath) {
     parent_asset_digest: manifest.content_digest || manifest.asset_digest || null,
   };
 
-  // Current assets carry strict-CBOR `payload.kdnab`. Legacy source folders
-  // are migrated explicitly with --from-folder; they are not runtime assets.
   const importedCards = [];
   let judgmentCore = null;
-  if (!entries.has('payload.kdnab')) {
-    fail('Not a current .kdna asset: missing payload.kdnab. Use --from-folder for legacy JSON source migration.');
-  }
   try {
-    const payload = decodePayload(entries.get('payload.kdnab'), manifest);
-    importedCards.push(...cardsFromPayload(payload));
-    judgmentCore = judgmentCoreFromRuntimePayload(payload);
+    if (isLegacy) {
+      importedCards.push(...cardsFromLegacyPayload(payload));
+      judgmentCore = judgmentCoreFromLegacyPayload(payload);
+    } else {
+      importedCards.push(...cardsFromPayload(payload));
+      judgmentCore = judgmentCoreFromRuntimePayload(payload);
+    }
   } catch (e) {
     fail(`Could not import cards from payload.kdnab: ${e.message}`);
   }
@@ -796,12 +815,6 @@ function importFromKdna(kdnaPath) {
     fail(`No current judgment cards could be extracted from ${absKdna}.`);
   }
 
-  // Bug #15 / #28 follow-up: surface the source's KDNA_Patterns /
-  // KDNA_Reasoning / KDNA_Evolution entries so cmdCreate can store
-  // them on the project. The next export then forwards them to
-  // compileDomain via exportRuntimeAsset, which preserves
-  // changelog / version_notes / reasoning_chains / banned_terms
-  // through the round-trip.
   return {
     lineage,
     cards: importedCards,
@@ -811,6 +824,261 @@ function importFromKdna(kdnaPath) {
     source_reasoning: null,
     source_evolution: null,
   };
+}
+
+// ── legacy judgment-profile-v1 import support ───────────────────────────
+
+const LEGACY_PROFILE = 'judgment-profile-v1';
+
+const LEGACY_PATTERN_TYPE_MAP = {
+  term: 'term',
+  banned_term: 'banned_term',
+  misunderstanding: 'misunderstanding',
+  self_check: 'self_check',
+  scenario: 'scenario',
+  case: 'case',
+  reasoning: 'reasoning',
+  risk: 'risk',
+  axiom: 'axiom',
+  ontology: 'ontology',
+  framework: 'framework',
+  stance: 'stance',
+  aesthetic: 'aesthetic',
+  boundary: 'boundary',
+  evolution_stage: 'evolution_stage',
+};
+
+// Pattern subtypes that map to the generic 'pattern' card; the original
+// subtype is preserved in fields.legacy_subtype for audit and re-export.
+const LEGACY_PATTERN_SUBTYPES = new Set([
+  'failure_pattern', 'design_pattern', 'response_pattern',
+  'stopping_pattern', 'completion_pattern', 'decision_pattern',
+  'reasoning_pattern', 'action_pattern', 'recovery_pattern',
+  'responsibility_pattern',
+]);
+
+const MAX_ZIP_ENTRIES = 100;
+const MAX_SINGLE_ENTRY_UNCOMPRESSED = 10 * 1024 * 1024;
+const MAX_TOTAL_UNCOMPRESSED = 50 * 1024 * 1024;
+const REQUIRED_ZIP_ENTRIES = ['kdna.json', 'payload.kdnab', 'checksums.json', 'mimetype'];
+
+function validateZipContainer(entries) {
+  if (entries.size > MAX_ZIP_ENTRIES) {
+    fail(`ZIP container has too many entries (${entries.size}, max ${MAX_ZIP_ENTRIES})`);
+  }
+  for (const name of REQUIRED_ZIP_ENTRIES) {
+    if (!entries.has(name)) fail(`Not a valid .kdna container: missing required entry "${name}"`);
+  }
+  let totalSize = 0;
+  for (const [name, buf] of entries) {
+    if (path.isAbsolute(name) || name.includes('..') || name.includes('\\')) {
+      fail(`ZIP entry "${name}" has an unsafe path`);
+    }
+    if (Buffer.isBuffer(buf) && buf.length > MAX_SINGLE_ENTRY_UNCOMPRESSED) {
+      fail(`ZIP entry "${name}" is too large (${buf.length} bytes)`);
+    }
+    totalSize += Buffer.isBuffer(buf) ? buf.length : 0;
+  }
+  if (totalSize > MAX_TOTAL_UNCOMPRESSED) {
+    fail(`ZIP container total uncompressed size exceeds limit (${totalSize} bytes)`);
+  }
+}
+
+function validateLegacyImportContract(manifest, payload) {
+  // Frozen validation for judgment-profile-v1 assets.
+  // Only verifies structural integrity, not runtime contract conformance.
+  if (!manifest || typeof manifest !== 'object') fail('Legacy asset manifest is missing or invalid');
+  if (!manifest.asset_id || typeof manifest.asset_id !== 'string') fail('Legacy asset_id is missing');
+  if (!payload || typeof payload !== 'object') fail('Legacy asset payload is missing or invalid');
+  if (payload.profile !== LEGACY_PROFILE) fail('Legacy payload must declare profile "judgment-profile-v1"');
+  if (!payload.core || typeof payload.core !== 'object') fail('Legacy payload must contain a "core" object');
+  if (!Array.isArray(payload.core.axioms)) fail('Legacy payload must contain axioms');
+  if (!payload.patterns || !Array.isArray(payload.patterns)) fail('Legacy payload must contain patterns');
+}
+
+function judgmentCoreFromLegacyPayload(payload) {
+  const core = payload.core || {};
+  return {
+    highest_question: core.highest_question || null,
+    worldview: Array.isArray(core.worldview) ? core.worldview : [],
+    value_order: Array.isArray(core.value_order) ? core.value_order : [],
+    judgment_role: core.judgment_role && typeof core.judgment_role === 'object' ? core.judgment_role : null,
+  };
+}
+
+function cardsFromLegacyPayload(payload) {
+  const cards = [];
+  const core = payload.core || {};
+
+  // axioms
+  for (const ax of (core.axioms || [])) {
+    pushImportedCard(cards, 'axiom', {
+      one_sentence: ax.one_sentence || null,
+      full_statement: ax.full_statement || null,
+      why: ax.why || null,
+      confidence: ax.confidence || null,
+      evidence_type: ax.evidence_type || null,
+      applies_when: ax.applies_when || [],
+      does_not_apply_when: ax.does_not_apply_when || [],
+      failure_risk: ax.failure_risk || null,
+      legacy_subtype: null,
+    }, ax.id || null);
+  }
+
+  // ontology
+  for (const ont of (core.ontology || [])) {
+    pushImportedCard(cards, 'ontology', {
+      level: ont.level || null,
+      name: ont.name || null,
+      description: ont.description || null,
+      members: ont.members || [],
+    }, ont.id || null);
+  }
+
+  // frameworks
+  for (const fw of (core.frameworks || [])) {
+    pushImportedCard(cards, 'framework', {
+      name: fw.name || null,
+      description: fw.description || null,
+      relationship: fw.relationship || null,
+    }, fw.id || null);
+  }
+
+  // stances
+  for (const st of (core.stances || [])) {
+    pushImportedCard(cards, 'stance', {
+      name: st.name || null,
+      statement: st.statement || null,
+    }, st.id || null);
+  }
+
+  // aesthetics
+  for (const ae of (core.aesthetics || [])) {
+    pushImportedCard(cards, 'aesthetic', {
+      name: ae.name || null,
+      description: ae.description || null,
+      examples: ae.examples || [],
+      test: ae.test || null,
+    }, ae.id || null);
+  }
+
+  // boundaries
+  for (const bd of (core.boundaries || [])) {
+    pushImportedCard(cards, 'boundary', {
+      scope: bd.scope || null,
+      description: bd.description || null,
+      applies_when: bd.applies_when || [],
+      does_not_apply_when: bd.does_not_apply_when || [],
+    }, bd.id || null);
+  }
+
+  // risks
+  for (const risk of (core.risk_model?.risks || [])) {
+    pushImportedCard(cards, 'risk', {
+      category: risk.category || null,
+      example: risk.example || null,
+      mitigation: risk.mitigation || null,
+      severity: risk.severity || null,
+    }, risk.id || null);
+  }
+
+  // patterns (including legacy subtypes)
+  const patterns = payload.patterns || [];
+  for (const pattern of patterns) {
+    if (!pattern || typeof pattern !== 'object') continue;
+    let rawType = pattern.type;
+    // Misunderstandings, self_checks, and reasoning chains may appear
+    // in the legacy patterns array without a declared type. Detect them
+    // from their structural fields.
+    if (!rawType) {
+      if (pattern.wrong && pattern.correct) {
+        rawType = 'misunderstanding';
+      } else if (pattern.check || pattern.question) {
+        rawType = 'self_check';
+      } else {
+        fail(`Legacy pattern "${pattern.id || '(no id)'}" has no type field and cannot be mapped`);
+      }
+    }
+    if (LEGACY_PATTERN_SUBTYPES.has(rawType)) {
+      pushImportedCard(cards, 'pattern', {
+        one_sentence: pattern.one_sentence || null,
+        full_statement: pattern.full_statement || null,
+        why: pattern.why || null,
+        confidence: pattern.confidence || null,
+        evidence_type: pattern.evidence_type || null,
+        applies_when: pattern.applies_when || [],
+        does_not_apply_when: pattern.does_not_apply_when || [],
+        failure_risk: pattern.failure_risk || null,
+        legacy_subtype: rawType,
+      }, pattern.id || null);
+    } else if (rawType === 'term' || rawType === 'banned_term') {
+      pushImportedCard(cards, rawType, {
+        one_sentence: pattern.one_sentence || null,
+        full_statement: pattern.full_statement || null,
+        why: pattern.why || null,
+        confidence: pattern.confidence || null,
+      }, pattern.id || null);
+    } else if (rawType === 'misunderstanding') {
+      pushImportedCard(cards, 'misunderstanding', {
+        wrong: pattern.wrong || null,
+        why: pattern.why || null,
+        correct: pattern.correct || null,
+      }, pattern.id || null);
+    } else if (rawType === 'self_check') {
+      pushImportedCard(cards, 'self_check', {
+        check: pattern.check || null,
+        question: pattern.question || null,
+        question_type: pattern.question_type || null,
+      }, pattern.id || null);
+    } else if (LEGACY_PATTERN_TYPE_MAP.hasOwnProperty(rawType)) {
+      pushImportedCard(cards, LEGACY_PATTERN_TYPE_MAP[rawType], pattern, pattern.id || null);
+    } else {
+      fail(`Unknown legacy pattern type "${rawType}" for card "${pattern.id || '(no id)'}"`);
+    }
+  }
+
+  // scenarios
+  for (const sc of (payload.scenarios || [])) {
+    pushImportedCard(cards, 'scenario', {
+      context: sc.context || null,
+      action: sc.action || null,
+      reason: sc.reason || null,
+      expected_shift: sc.expected_shift || null,
+    }, sc.id || null);
+  }
+
+  // cases
+  for (const cs of (payload.cases || [])) {
+    pushImportedCard(cards, 'case', {
+      situation: cs.situation || null,
+      judgment: cs.judgment || null,
+      result: cs.result || null,
+      note: cs.note || null,
+    }, cs.id || null);
+  }
+
+  // reasoning chains
+  for (const chain of (payload.reasoning?.chains || [])) {
+    pushImportedCard(cards, 'reasoning', {
+      question: chain.question || null,
+      chain: chain.chain || null,
+      axioms_used: chain.axioms_used || [],
+      conclusion: chain.conclusion || null,
+    }, chain.id || null);
+  }
+
+  // evolution stages
+  for (const stage of (payload.evolution?.stages || [])) {
+    pushImportedCard(cards, 'evolution_stage', {
+      version: stage.version || null,
+      date: stage.date || null,
+      author: stage.author || null,
+      changes: stage.changes || null,
+      reason: stage.reason || null,
+    }, stage.id || null);
+  }
+
+  return cards;
 }
 
 /**

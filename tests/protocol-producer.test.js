@@ -199,6 +199,51 @@ test('Studio CLI refuses a packaged asset with a non-current payload profile', (
     { encoding: 'utf8', env: { ...process.env } },
   );
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /Not a current \.kdna asset/);
+  assert.match(result.stderr, /Unsupported payload profile/);
   assert.equal(fs.existsSync(importedProject), false);
+});
+
+test('create --from-kdna imports a legacy asset and preserves all pattern subtypes', (t) => {
+  const laoziPath = path.resolve(__dirname, '../../kdna-assets/references/public/laozi-wuwei/laozi-wuwei-0.1.0.kdna');
+  if (!fs.existsSync(laoziPath)) { t.skip('legacy laozi asset not available outside the full workspace'); return; }
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-legacy-import-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const projectDir = path.join(root, 'project');
+
+  const result = spawnSync(
+    process.execPath,
+    [BIN, 'create', projectDir, '--from-kdna', laoziPath, '--name', '@test/laozi'],
+    { encoding: 'utf8', env: { ...process.env } },
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.ok(fs.existsSync(path.join(projectDir, 'studio.project.json')));
+
+  const project = JSON.parse(fs.readFileSync(path.join(projectDir, 'studio.project.json'), 'utf8'));
+  const cards = project.cards || [];
+  assert.ok(cards.length >= 70, `expected at least 70 cards, got ${cards.length}`);
+
+  // Verify all 5 pattern subtypes are preserved
+  const patternCards = cards.filter(c => c.type === 'pattern');
+  const subtypes = [...new Set(patternCards.map(c => c.fields?.legacy_subtype).filter(Boolean))];
+  for (const subtype of ['failure_pattern', 'design_pattern', 'response_pattern', 'stopping_pattern', 'completion_pattern']) {
+    assert.ok(subtypes.includes(subtype), `missing legacy subtype ${subtype}`);
+  }
+
+  // Verify axioms preserved
+  const axioms = cards.filter(c => c.type === 'axiom');
+  assert.equal(axioms.length, 6);
+
+  // Verify the 5 lost pattern IDs are present
+  const requiredIds = ['lz_pt_empty_seat', 'lz_pt_finish_release', 'lz_pt_overgrip_loop', 'lz_pt_stop_sufficiency', 'lz_pt_waterpath'];
+  for (const id of requiredIds) {
+    assert.ok(cards.some(c => c.id === id), `missing legacy pattern ${id}`);
+  }
+
+  // Verify highest_question is preserved
+  assert.ok(project.judgment_core?.highest_question);
+  assert.ok(project.judgment_core.highest_question.length > 30);
+
+  // Core validate must still reject the old asset
+  assert.equal(core.validate(laoziPath).overall_valid, false);
 });

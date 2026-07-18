@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.10.2 (2026-07-18)
+
+### Added
+
+- `create --from-kdna` now accepts legacy `judgment-profile-v1` assets in a
+  narrow authoring-import path. The ZIP container is read before Core
+  validation; when the payload profile is the known legacy coordinate, a
+  frozen structural contract is applied instead of the current Runtime
+  schema. The Core validate gate is NOT relaxed for current assets; it
+  remains fail-closed for the `kdna.payload.judgment` profile.
+
+### Fixed
+
+- `importedCard` no longer silently catches exceptions and returns null.
+  Card creation failures now throw with the card type and ID.
+- `pushImportedCard` registers the card ID only after `createCard` succeeds,
+  preventing consumed IDs from blocking retries.
+- Legacy pattern subtypes that were silently dropped (failure_pattern,
+  design_pattern, response_pattern, stopping_pattern, completion_pattern,
+  decision_pattern, reasoning_pattern, action_pattern, recovery_pattern,
+  responsibility_pattern) are now preserved as generic `pattern` cards
+  with the original subtype recorded in `fields.legacy_subtype`.
+- Misunderstandings and self-checks that lack a `type` field in the legacy
+  payload are detected from their structural fields (`wrong`/`correct`
+  or `check`/`question`).
+
 ## 0.10.1 (2026-07-18)
 
 ### Fixed

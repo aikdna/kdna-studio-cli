@@ -134,7 +134,7 @@ test('Studio CLI pack members are fail-closed and package metadata has no librar
 });
 
 function releaseInput(overrides = {}) {
-  const version = overrides.pkg?.version || '0.10.1';
+  const version = overrides.pkg?.version || '0.10.2';
   return {
     pkg: { name: '@aikdna/kdna-studio-cli', version, ...overrides.pkg },
     changelog: overrides.changelog ?? `# Changelog\n\n## ${version} (2026-07-15)\n`,
@@ -169,7 +169,7 @@ function createReleaseRepository(t, marker) {
   git(repository, ['config', 'user.email', 'test@example.invalid']);
   fs.writeFileSync(
     path.join(repository, 'package.json'),
-    `${JSON.stringify({ name: '@aikdna/kdna-studio-cli', version: '0.10.1' }, null, 2)}\n`,
+    `${JSON.stringify({ name: '@aikdna/kdna-studio-cli', version: '0.10.2' }, null, 2)}\n`,
   );
   for (const member of REQUIRED_STUDIO_CLI_PACK_MEMBERS.filter(
     (candidate) => candidate !== 'package.json',
@@ -178,12 +178,12 @@ function createReleaseRepository(t, marker) {
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     fs.writeFileSync(destination, `${member}\n`);
   }
-  fs.writeFileSync(path.join(repository, 'CHANGELOG.md'), '# Changelog\n\n## 0.10.1 (2026-07-17)\n');
+  fs.writeFileSync(path.join(repository, 'CHANGELOG.md'), '# Changelog\n\n## 0.10.2 (2026-07-17)\n');
   fs.writeFileSync(path.join(repository, 'marker.txt'), `${marker}\n`);
   git(repository, ['add', '.']);
   git(repository, ['commit', '--quiet', '-m', marker]);
   const commit = git(repository, ['rev-parse', 'HEAD']);
-  git(repository, ['tag', '0.10.1', commit]);
+  git(repository, ['tag', '0.10.2', commit]);
   return { repository, commit };
 }
 
@@ -192,10 +192,10 @@ function candidateEvidence(bytes = releaseTarball()) {
   return {
     schema: 'kdna.studio-cli.release-evidence',
     version: '1.0',
-    source: { ref: 'refs/tags/0.10.1', commit: HASH },
-    package: { name: '@aikdna/kdna-studio-cli', version: '0.10.1' },
+    source: { ref: 'refs/tags/0.10.2', commit: HASH },
+    package: { name: '@aikdna/kdna-studio-cli', version: '0.10.2' },
     artifact: {
-      filename: 'aikdna-kdna-studio-cli-0.10.1.tgz',
+      filename: 'aikdna-kdna-studio-cli-0.10.2.tgz',
       integrity: `sha512-${crypto.createHash('sha512').update(bytes).digest('base64')}`,
       shasum: crypto.createHash('sha1').update(bytes).digest('hex'),
       packed_size: bytes.length,
@@ -209,8 +209,8 @@ function candidateEvidence(bytes = releaseTarball()) {
 function packReport(bytes, files = parseTarFiles(bytes)) {
   return [{
     name: '@aikdna/kdna-studio-cli',
-    version: '0.10.1',
-    filename: 'aikdna-kdna-studio-cli-0.10.1.tgz',
+    version: '0.10.2',
+    filename: 'aikdna-kdna-studio-cli-0.10.2.tgz',
     integrity: `sha512-${crypto.createHash('sha512').update(bytes).digest('base64')}`,
     shasum: crypto.createHash('sha1').update(bytes).digest('hex'),
     size: bytes.length,
@@ -383,7 +383,7 @@ test('release evidence entry rejects hidden worktree changes and packs exact com
     environment,
   });
   assert.equal(evidence.source.commit, release.commit);
-  assert.equal(evidence.source.ref, 'refs/tags/0.10.1');
+  assert.equal(evidence.source.ref, 'refs/tags/0.10.2');
   assert.ok(fs.existsSync(output));
   assert.ok(fs.existsSync(artifact));
   const files = parseTarFiles(fs.readFileSync(artifact)).map((entry) => entry.path);
@@ -500,9 +500,9 @@ test('release auth chain isolates the publish credential from the lookup environ
 test('release context binds package, changelog, event, tag ref, HEAD, and workflow SHA', () => {
   assert.deepEqual(validateReleaseContext(releaseInput()), {
     name: '@aikdna/kdna-studio-cli',
-    version: '0.10.1',
-    tag: '0.10.1',
-    ref: 'refs/tags/0.10.1',
+    version: '0.10.2',
+    tag: '0.10.2',
+    ref: 'refs/tags/0.10.2',
     commit: HASH,
   });
   for (const input of [
@@ -569,8 +569,8 @@ test('pack evidence independently parses a real npm tgz and rejects changed byte
   const evidence = validatePackReport({
     reportText: packed.stdout,
     tarball: bytes,
-    pkg: { name: '@aikdna/kdna-studio-cli', version: '0.10.1' },
-    source: { ref: 'refs/tags/0.10.1', commit: HASH },
+    pkg: { name: '@aikdna/kdna-studio-cli', version: '0.10.2' },
+    source: { ref: 'refs/tags/0.10.2', commit: HASH },
   });
   assert.equal(validateArtifact(evidence, bytes), evidence);
   assert.throws(() => validateArtifact(evidence, Buffer.from('changed')), /size|integrity|shasum/);
@@ -646,8 +646,8 @@ test('pack JSON and retained evidence must exactly match the independently parse
       validatePackReport({
         reportText: JSON.stringify(report),
         tarball: bytes,
-        pkg: { name: '@aikdna/kdna-studio-cli', version: '0.10.1' },
-        source: { ref: 'refs/tags/0.10.1', commit: HASH },
+        pkg: { name: '@aikdna/kdna-studio-cli', version: '0.10.2' },
+        source: { ref: 'refs/tags/0.10.2', commit: HASH },
       }),
     /file report/,
   );

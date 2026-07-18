@@ -390,7 +390,7 @@ test('create --from-kdna imports a legacy asset and preserves all pattern subtyp
   assert.deepEqual(runtimeJudgmentSemantics(cycleTwoPayload), runtimeJudgmentSemantics(currentPayload));
 
   // CLI re-opens project
-  const listResult = spawnSync('npx', ['kdna-studio', 'card', 'list', projectDir],
+  const listResult = spawnSync(process.execPath, [BIN, 'card', 'list', projectDir],
     { encoding: 'utf8', env: { ...process.env } },
   );
   assert.equal(listResult.status, 0, listResult.stderr || listResult.stdout);

@@ -1,3 +1,9 @@
+> **Development snapshot — release reset in progress**
+>
+> This repository is not currently a stable, beta, or production-ready
+> release. Published packages and documentation may describe an earlier
+> development snapshot. A new Development Preview has not been released.
+
 # @aikdna/kdna-studio-cli
 
 Official Studio command-line entry for KDNA judgment asset creation — turns your notes, documents, works, and feedback into loadable `.kdna` files.

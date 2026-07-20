@@ -60,7 +60,7 @@ jobs:
             "kdna-studio-core-candidate" \
             "KDNA_STUDIO_CORE_CANDIDATE_SOURCE"
       - name: Select the trusted release-tool runtime
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '22.23.1'
           check-latest: false
@@ -72,7 +72,7 @@ jobs:
       - name: Reproduce both checked candidate artifacts from their exact clean sources
         run: node scripts/run-trusted-npm.js run verify:candidate-sources
       - name: Select the declared product runtime
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '${{ matrix.node }}'
           check-latest: false

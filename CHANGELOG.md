@@ -9,6 +9,8 @@
   provenance.
 - Exercise ordinary and encrypted create → export → validate → plan-load →
   load behavior against the corrective local Runtime candidates.
+- Bind that chain to exact Core commit `5f7ccad07758b7766237590e5b9ba47301036f6b`
+  and exact Studio Core commit `4d39c99bd72626b185fdf88989512edf0f598c1c`.
 
 This is an unpublished Development Preview candidate. No existing registry
 version or package bytes are changed.

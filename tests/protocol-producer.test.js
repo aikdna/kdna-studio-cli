@@ -141,12 +141,12 @@ test('Studio CLI binds exact unpublished Runtime candidates and keeps the releas
       [
         '@aikdna/kdna-core',
         '0.21.0',
-        '4c327e494e4cd95d328b2632e7c1de64509c8380',
+        '5f7ccad07758b7766237590e5b9ba47301036f6b',
       ],
       [
         '@aikdna/kdna-studio-core',
-        '2.0.3',
-        '36084a79789a1e2a20ab98f94df44439ae9f608b',
+        '2.0.4',
+        '4d39c99bd72626b185fdf88989512edf0f598c1c',
       ],
     ],
   );

@@ -92,7 +92,7 @@ function main() {
       'node_modules/@aikdna/kdna-studio-cli/bin/kdna-studio.js',
     );
     assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-core/package.json')).version, '0.21.0');
-    assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-studio-core/package.json')).version, '2.0.3');
+    assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-studio-core/package.json')).version, '2.0.4');
     assert.equal(
       require(path.join(consumer, 'node_modules/@aikdna/kdna-studio-cli/package.json')).version,
       require('../package.json').version,

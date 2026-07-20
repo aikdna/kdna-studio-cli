@@ -15,6 +15,7 @@ function run(command, args, options = {}) {
     cwd: options.cwd,
     encoding: 'utf8',
     env: options.env || process.env,
+    input: options.input,
   });
   assert.equal(
     result.status,
@@ -90,9 +91,12 @@ function main() {
       consumer,
       'node_modules/@aikdna/kdna-studio-cli/bin/kdna-studio.js',
     );
-    assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-core/package.json')).version, '0.20.0');
-    assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-studio-core/package.json')).version, '2.0.2');
-    assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-studio-cli/package.json')).version, '0.10.2');
+    assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-core/package.json')).version, '0.21.0');
+    assert.equal(require(path.join(consumer, 'node_modules/@aikdna/kdna-studio-core/package.json')).version, '2.0.3');
+    assert.equal(
+      require(path.join(consumer, 'node_modules/@aikdna/kdna-studio-cli/package.json')).version,
+      require('../package.json').version,
+    );
 
     const judgmentCore = {
       highest_question: 'Which declared tradeoff controls this exact task?',
@@ -169,9 +173,8 @@ function main() {
       projectDirectory,
       '--out',
       encryptedAsset,
-      '--password',
-      password,
-    ]);
+      '--password-stdin',
+    ], { input: `${password}\n` });
     assert.equal(core.validate(encryptedAsset).overall_valid, true);
     assert.equal(core.planLoad(encryptedAsset).state, 'needs_password');
     assert.throws(

@@ -1,0 +1,40 @@
+{
+  "evidence_kind": "candidate_source_pack",
+  "package": "@aikdna/kdna-core",
+  "version": "0.21.0",
+  "git_head": "4c327e494e4cd95d328b2632e7c1de64509c8380",
+  "source_authority": "exact_git_commit_tree",
+  "source_worktree_clean": true,
+  "pack": {
+    "status": "candidate_source_pack_not_registry_artifact",
+    "npm_client": "11.17.0",
+    "npm_release_url": "https://registry.npmjs.org/npm/-/npm-11.17.0.tgz",
+    "npm_release_integrity": "sha512-PurxiZexEHDTE4SSaLI3ZrnbAGiZfeyUcQcxcP5D+hfytNAze/D1IzDuInTn9XVLIbAQUnQuSPXJx02LHjLvQw==",
+    "filename": "aikdna-kdna-core-0.21.0.tgz",
+    "size": 114049,
+    "unpacked_size": 520462,
+    "entry_count": 42,
+    "sha1": "66ede7bf321f9c3f0bf5598e9cdca211dea877ad",
+    "sha256": "e195a0fb76944cde37107ecbc2eae52b2cae8e552df00779643c8b131a423e6a",
+    "sha512": "sha512-b9bTNmg4CjCukHH1GpGdnwWatQAHLyvN2b7cWrKz5jay/3oHvUMsyCtYk0xt3rZPtJkuSCeXlLNf/jmOIqU+MA==",
+    "reproducible_runs": 2,
+    "source_equivalence": {
+      "status": "strict_install_equivalent",
+      "compared_fields": [
+        "complete_entry_set",
+        "canonical_path",
+        "regular_file_type",
+        "file_size",
+        "file_mode",
+        "file_bytes"
+      ],
+      "excluded_non_install_metadata": [
+        "gzip_wrapper",
+        "tar_mtime",
+        "tar_uid",
+        "tar_gid"
+      ]
+    }
+  },
+  "registry_artifact": null
+}

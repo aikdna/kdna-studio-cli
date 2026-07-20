@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.11.0 (2026-07-20)
+
+- Remove secret-bearing password and passphrase argv forms. Protected export
+  and identity operations now accept secrets only through stdin-backed input.
+- Reject asset-signature export because asset signatures are outside the
+  Development Preview contract; Human Lock remains separate authoring
+  provenance.
+- Exercise ordinary and encrypted create → export → validate → plan-load →
+  load behavior against the corrective local Runtime candidates.
+
+This is an unpublished Development Preview candidate. No existing registry
+version or package bytes are changed.
+
 ## 0.10.2 (2026-07-18)
 
 ### Added

@@ -7,28 +7,28 @@ const CANDIDATE_WORKFLOW_PATH = path.join('.github', 'workflows', 'ci.yml');
 const CANDIDATE_AUTHORITIES = Object.freeze([
   Object.freeze({
     name: '@aikdna/kdna-core',
-    version: '0.20.0',
+    version: '0.21.0',
     repository: 'aikdna/kdna',
     repositoryEnvironment: 'KDNA_CORE_CANDIDATE_REPOSITORY',
     commitEnvironment: 'KDNA_CORE_CANDIDATE_COMMIT',
     evidencePath: path.join(
       'fixtures',
       'runtime-candidates',
-      'kdna-core-0.20.0.evidence.json',
+      'kdna-core-0.21.0.evidence.json',
     ),
     sourceEnvironment: 'KDNA_CORE_CANDIDATE_SOURCE',
     sourcePackageSubdirectory: path.join('packages', 'kdna-core'),
   }),
   Object.freeze({
     name: '@aikdna/kdna-studio-core',
-    version: '2.0.2',
+    version: '2.0.3',
     repository: 'aikdna/kdna-studio-core',
     repositoryEnvironment: 'KDNA_STUDIO_CORE_CANDIDATE_REPOSITORY',
     commitEnvironment: 'KDNA_STUDIO_CORE_CANDIDATE_COMMIT',
     evidencePath: path.join(
       'fixtures',
       'runtime-candidates',
-      'kdna-studio-core-2.0.2.evidence.json',
+      'kdna-studio-core-2.0.3.evidence.json',
     ),
     sourceEnvironment: 'KDNA_STUDIO_CORE_CANDIDATE_SOURCE',
     sourcePackageSubdirectory: '',

@@ -54,7 +54,7 @@ function cmdNeedsLlm(args, cmdName) {
   }
   fail(
     `${cmdName} requires an LLM. Configure one with:\n` +
-    `  kdna-studio llm config --provider openai --key <api-key> --model <model>\n` +
+    `  printf '%s\\n' "$KDNA_LLM_API_KEY" | kdna-studio llm config --provider openai --key-pipe --model <model>\n` +
     `Or set env vars: KDNA_LLM_PROVIDER, KDNA_LLM_API_KEY, KDNA_LLM_MODEL.\n` +
     `Or run with --no-llm to get a static / synthesised result.`,
   );
@@ -69,12 +69,12 @@ function usage() {
 LLM (AI-powered authoring; every AI command accepts --no-llm for a static result):
   kdna-studio llm config [--provider <name>] [--model <name>] [--key-pipe] [--url <base-url>]
   kdna-studio llm show
-  (run 'kdna-studio llm config --provider openai --key <key> --model gpt-4' to enable
+  (pipe the key to 'kdna-studio llm config --provider openai --key-pipe --model gpt-4' to enable
    feynman, distill --ai, interview, and test. With --no-llm these commands
    still produce a structured but unsynthesised result.)
 
 Identity:
-  kdna-studio identity init [--name <display-name>]
+  kdna-studio identity init [--name <display-name>] [--passphrase-stdin]
   kdna-studio identity show
 
 Create (three entry paths):
@@ -83,7 +83,7 @@ Create (three entry paths):
   kdna-studio create <project-dir> --from-folder <source-dir> --name <@scope/name>
 
 Migrate (dev source or Studio project → canonical .kdna in one command):
-  kdna-studio migrate <source-dir|project> --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--allow-incomplete] [--sign] [--passphrase <pw>|--passphrase-stdin]
+  kdna-studio migrate <source-dir|project> --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--allow-incomplete] [--sign] [--passphrase-stdin]
   kdna-studio migrate <source-dir> --check --name <@scope/name>   # pre-flight: report which fields would block the export without writing the .kdna
   kdna-studio audit-locks <project> [--type axiom|risk|stance|...] [--json]   # list cards with missing Human Lock fields (per-card-type, per-field)
 
@@ -95,10 +95,10 @@ Authoring:
   kdna-studio card add <project> <type> --field key=value [--field key=value] [--template <name>] [--no-strict]
   kdna-studio card update <project> <card-id> --field key=value
   kdna-studio card remove <project> <card-id>
-  kdna-studio card approve <project> <card-id|--all> --by <id> --statement <text> [--sign] [--passphrase <pass>]
+  kdna-studio card approve <project> <card-id|--all> --by <id> --statement <text> [--sign] [--passphrase-stdin]
   kdna-studio card unlock <project> <card-id> --by <id> --statement <text>
   kdna-studio compile <project> --out <dir>
-  kdna-studio export <project> --out <file.kdna> [--allow-incomplete] [--password <pw>|--password-stdin]
+  kdna-studio export <project> --out <file.kdna> [--allow-incomplete] [--password-stdin]
   kdna-studio export-route-card <domain-id> [--out=<path>]          # Export route-card sidecar skeleton
   kdna-studio export-consumer-index [--entries=<domain-ids>] [--out=<path>]     # Export consumer-index skeleton
 
@@ -159,17 +159,20 @@ function option(args, name, fallback = null) {
 }
 
 /**
- * Resolve a passphrase from CLI flags, environment, or stdin.
- *
- * SECURITY: passing a passphrase as `--passphrase <value>` exposes it in
- * `ps aux` output and shell history. The recommended path is one of:
- *   1. --passphrase-stdin  — read from stdin (pipe-friendly, no TTY hang)
- *   2. KDNA_PASSPHRASE env var (less secure but no process-list leak)
- *   3. --passphrase <pw>   — fallback only; prints a warning
+ * Resolve a passphrase from stdin. Secrets in argv are rejected.
  *
  * Returns the passphrase string, or null if none was provided.
  */
 function resolvePassphrase(args) {
+  if (
+    args.includes('--passphrase') ||
+    args.some((arg) => arg.startsWith('--passphrase='))
+  ) {
+    fail(
+      '--passphrase is not supported because it exposes secrets in process arguments. ' +
+      'Use --passphrase-stdin.'
+    );
+  }
   if (args.includes('--passphrase-stdin')) {
     if (process.stdin.isTTY) {
       fail(
@@ -183,23 +186,21 @@ function resolvePassphrase(args) {
       fail(`Could not read passphrase from stdin: ${e.message}`);
     }
   }
-  if (process.env.KDNA_PASSPHRASE) return process.env.KDNA_PASSPHRASE;
-  const fromFlag = option(args, '--passphrase');
-  if (fromFlag) {
-    console.error('Warning: --passphrase <value> exposes the secret in `ps aux` and shell history. Prefer --passphrase-stdin or KDNA_PASSPHRASE env var.');
-    return fromFlag;
-  }
   return null;
 }
 
 function resolveApiKey(args) {
-  // 1. KDNA_API_KEY environment variable (preferred)
-  if (process.env.KDNA_API_KEY) return process.env.KDNA_API_KEY;
+  if (
+    args.includes('--key') ||
+    args.includes('-k') ||
+    args.some((arg) => arg.startsWith('--key='))
+  ) {
+    fail('API keys in process arguments are not supported. Use --key-pipe.');
+  }
 
-  // 2. Read from stdin via --key-pipe flag
   if (args.includes('--key-pipe')) {
     if (process.stdin.isTTY) {
-      console.error('Error: --key-pipe requires stdin to be piped. Example: echo $KDNA_API_KEY | kdna-studio llm config --key-pipe');
+      console.error('Error: --key-pipe requires the API key to be piped on stdin.');
       return null;
     }
     try {
@@ -208,13 +209,6 @@ function resolveApiKey(args) {
       console.error('Error reading API key from stdin:', e.message);
       return null;
     }
-  }
-
-  // 3. Deprecated --key / -k flag (backward compat)
-  const key = option(args, '--key', null) || option(args, '-k', null);
-  if (key) {
-    console.error('Warning: --key is deprecated and exposes secrets in shell history and ps output. Use KDNA_API_KEY env var or pipe via stdin (--key-pipe).');
-    return key;
   }
 
   return null;
@@ -1791,7 +1785,7 @@ function cmdCard(args) {
         const passphrase = resolvePassphrase(args);
         try {
           if (identity.encrypted && !passphrase) {
-            errors.push(`${card.id}: Private key is encrypted — provide --passphrase-stdin or KDNA_PASSPHRASE`);
+            errors.push(`${card.id}: Private key is encrypted — provide --passphrase-stdin`);
             return null;
           }
           lockPayload.signature = creatorApi.signHumanLock(
@@ -1912,7 +1906,7 @@ function cmdMigrate(args) {
   const requestedName = option(args, '--name');
   let name = requestedName || path.basename(path.resolve(sourceDir || '.'));
   if (!sourceDir || (!out && !checkOnly) || (!by && !checkOnly) || (!statement && !checkOnly)) {
-    fail('Usage: kdna-studio migrate <source-dir> --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--check] [--sign] [--passphrase <pw>|--passphrase-stdin]');
+    fail('Usage: kdna-studio migrate <source-dir> --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--check] [--sign] [--passphrase-stdin]');
   }
 
   const sourcePath = path.resolve(sourceDir);
@@ -2143,20 +2137,21 @@ function cmdExport(args) {
     fail('The --format option is not supported. KDNA has one current asset format.');
   }
   if (args.includes('--sign')) {
-    fail('Asset signing is a separate runtime step. Export first, then run: kdna sign <asset.kdna>');
+    fail('Asset signatures are outside the current Preview contract.');
   }
   {
     const { project } = readProject(projectInput);
-    // BUG-11 (2026-06-27): previous logic required --password to be set
-    // before --password-stdin would take effect. That meant callers using
-    // `--password-stdin` alone (the recommended path) got `password = null`
-    // and the export ran unencrypted. Resolve the two flags independently:
-    //   - --password-stdin  → read password from stdin (preferred)
-    //   - --password <pw>   → take password from the flag (insecure)
-    //   - --passphrase <pw> → legacy alias for --password
-    // If both are given, --password-stdin wins (it is the explicit intent).
-    // Use args.includes() for --password-stdin since it is a boolean flag
-    // (option() rejects it for "missing value").
+    if (
+      args.includes('--password') ||
+      args.some((arg) => arg.startsWith('--password=')) ||
+      args.includes('--passphrase') ||
+      args.some((arg) => arg.startsWith('--passphrase='))
+    ) {
+      fail(
+        'Password and passphrase values in process arguments are not supported. ' +
+        'Use --password-stdin.'
+      );
+    }
     const useStdin = args.includes('--password-stdin');
     let password;
     if (useStdin) {
@@ -2175,16 +2170,6 @@ function cmdExport(args) {
       } catch (e) {
         fail(`Could not read password from stdin: ${e.message}`);
       }
-    } else {
-      // Bug (#55): prior version only consulted --password / --passphrase
-      // here, so a caller who set KDNA_PASSPHRASE for the signing path
-      // (works via resolvePassphrase) found that the runtime encryption
-      // password was silently null. Resolve from the same sources as
-      // the signing path so the two stay in sync.
-      password = process.env.KDNA_PASSPHRASE
-        || process.env.KDNA_PASSWORD
-        || option(args, '--password')
-        || option(args, '--passphrase');
     }
     exportProject(project, option(args, '--name') || project.name, path.resolve(out), {
       allowIncomplete: args.includes('--allow-incomplete'),
@@ -2200,7 +2185,9 @@ function cmdStudioInstall(args) {
   if (!target) fail('Usage: kdna-studio install <@scope/name|file.kdna>');
   try {
     const kdnaArgs = ['install', target, '--yes'];
-    if (args.includes('--trusted')) kdnaArgs.push('--trusted');
+    if (args.includes('--trusted')) {
+      fail('Asset signatures are outside the current Preview contract.');
+    }
     const result = require('child_process').spawnSync('kdna', kdnaArgs, {
       stdio: 'inherit', encoding: 'utf8',
     });

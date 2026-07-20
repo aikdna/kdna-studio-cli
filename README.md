@@ -108,8 +108,9 @@ without `KDNA_LLM_PROVIDER` / `KDNA_LLM_API_KEY` by passing `--no-llm`. They
 return a structured but unsynthesised result. To enable real evaluation:
 
 ```bash
-kdna-studio llm config --provider openai --model gpt-4 --key <your-key>
-# or set KDNA_LLM_PROVIDER, KDNA_LLM_API_KEY, KDNA_LLM_MODEL
+printf '%s\n' "$KDNA_LLM_API_KEY" | \
+  kdna-studio llm config --provider openai --model gpt-4 --key-pipe
+# Provider/model/key environment variables can also configure a one-shot run.
 ```
 
 ## Runtime Export Contract

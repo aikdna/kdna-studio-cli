@@ -21,6 +21,7 @@ function run(args, options = {}) {
       ...(options.env || {}),
     },
     encoding: 'utf8',
+    input: options.input,
   });
 }
 
@@ -331,12 +332,12 @@ test('feynman --json emits parseable JSON in no-LLM mode', (t) => {
   assert.ok(parsed.feynman_restatement);
 });
 
-test('keeps asset signing as a separate runtime step', (t) => {
+test('rejects asset signatures outside the current Preview contract', (t) => {
   const { tmp, projectDir } = createLockedProject(t);
   const outFile = path.join(tmp, 'dist', 'signed.kdna');
   const result = run(['export', projectDir, '--out', outFile, '--sign'], { tmp });
   assert.equal(result.status, 2);
-  assert.match(result.stderr, /kdna sign <asset\.kdna>/);
+  assert.match(result.stderr, /outside the current Preview contract/);
 });
 
 // ── Identity ────────────────────────────────────────────────────────
@@ -658,17 +659,17 @@ test('export creates a valid non-empty KDNA asset', (t) => {
   assert.equal(loaded.manifest.payload.encrypted, false);
 });
 
-test('export --password encrypts payload and round-trips (Argon2id profile)', (t) => {
+test('export --password-stdin encrypts payload and round-trips (Argon2id profile)', (t) => {
   assert.ok(kdnaCore, '@aikdna/kdna-core is required for B2 round-trip');
   const { tmp, projectDir } = createLockedProject(t);
   const outFile = path.join(tmp, 'project-encrypted.kdna');
   const password = 'test-password-12345';
 
-  // 1. Export with --password → exit 0, file created
+  // 1. Export with password over stdin → exit 0, file created
   const result = run([
     'export', projectDir,
-    '--out', outFile, '--password', password,
-  ], { tmp });
+    '--out', outFile, '--password-stdin',
+  ], { tmp, input: `${password}\n` });
   assert.equal(result.status, 0, `export exit code: ${result.status}\nstderr: ${result.stderr}`);
   assert.ok(fs.existsSync(outFile), 'encrypted .kdna should exist');
 
@@ -680,12 +681,13 @@ test('export --password encrypts payload and round-trips (Argon2id profile)', (t
   assert.equal(planNoPw.state, 'needs_password');
   assert.equal(planNoPw.can_load_now, false);
 
-  // 4. planLoad with correct password → ready
+  // 4. planLoad never claims a password is valid before decryption
   const planOk = kdnaCore.planLoad(outFile, { password });
   assert.equal(planOk.access, 'licensed');
   assert.equal(planOk.entitlement_profile, 'password');
-  assert.equal(planOk.state, 'ready');
-  assert.equal(planOk.can_load_now, true);
+  assert.equal(planOk.state, 'needs_password');
+  assert.equal(planOk.can_load_now, false);
+  assert.ok(planOk.issues.some((issue) => issue.code === 'KDNA_AUTH_PASSWORD_UNVERIFIED'));
 
   // 5. load without password → planLoad reports needs_password and loading throws
   assert.throws(
@@ -716,6 +718,45 @@ test('export --password encrypts payload and round-trips (Argon2id profile)', (t
   );
   assert.ok(loaded.manifest.encryption?.encrypted_entries?.includes('payload.kdnab'));
   assert.equal(loaded.payload.core.axioms.length, 1);
+});
+
+test('export rejects password and passphrase values in argv', (t) => {
+  const { tmp, projectDir } = createLockedProject(t);
+  for (const flag of ['--password', '--passphrase']) {
+    const outFile = path.join(tmp, `${flag.slice(2)}-rejected.kdna`);
+    const result = run(['export', projectDir, '--out', outFile, flag, 'secret-value'], { tmp });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /process arguments|not supported|password-stdin/i);
+    assert.equal(fs.existsSync(outFile), false);
+  }
+});
+
+test('all secret-bearing commands reject secret values in argv', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  const apiKey = run(['llm', 'config', '--provider', 'openai', '--key', 'secret-value'], {
+    tmp,
+    env: { ...process.env, HOME: tmp },
+  });
+  assert.notEqual(apiKey.status, 0);
+  assert.match(apiKey.stderr, /process arguments|key-pipe/i);
+
+  const passphrase = run(['identity', 'init', '--passphrase', 'secret-value'], {
+    tmp,
+    env: { ...process.env, HOME: tmp },
+  });
+  assert.notEqual(passphrase.status, 0);
+  assert.match(passphrase.stderr, /process arguments|passphrase-stdin/i);
+});
+
+test('help advertises only stdin forms for secret input', () => {
+  const result = run(['--help']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, /--(?:password|passphrase|key)\s+<[^>]+>/);
+  assert.match(result.stdout, /--password-stdin/);
+  assert.match(result.stdout, /--passphrase-stdin/);
+  assert.match(result.stdout, /--key-pipe/);
 });
 
 test('migrate accepts an existing Studio project without dropping cards', (t) => {

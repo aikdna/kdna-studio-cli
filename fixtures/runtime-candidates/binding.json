@@ -12,11 +12,11 @@
     },
     {
       "name": "@aikdna/kdna-studio-core",
-      "version": "2.0.4",
-      "commit": "5d358d61902979ed75e07a9309159c55dc5f83c8",
-      "artifact": "fixtures/runtime-candidates/kdna-studio-core-2.0.4.tgz",
-      "integrity": "sha512-HVY/V1mG36utRSK4UJrwC9Xk+b1xkq9twr3sWXp56uUzCA8OqFPttMyCzFXKIbp7GdJRqT6FguhyXjYBFn+lsQ==",
-      "sha256": "2e21ceaeb58693571bfca36d64d309fbcb0dff9460bd263316608d965c630ba1"
+      "version": "3.0.0",
+      "commit": "b46695b56755ab1080c440bbe2b22ed667c4784b",
+      "artifact": "fixtures/runtime-candidates/kdna-studio-core-3.0.0.tgz",
+      "integrity": "sha512-J8sw24+qleRShjkbUm2PiVW7h28VKdWBpubIq0wfRX8ecD5sltxaxqUlPbhoP8qVzvXDOAmSheu4X0xkLhq42Q==",
+      "sha256": "dd6f5918c01814641f01eb6d2ac493dfe738dbb232f6b122eccfdefb24aab0a0"
     }
   ]
 }

@@ -7,9 +7,10 @@
   history in the repository.
 - Keep the supported create, evidence, card review, compile, distillation,
   interview, and Runtime export path unchanged.
-- Rebind the corrective chain to exact Studio Core commit
-  `5d358d61902979ed75e07a9309159c55dc5f83c8`, whose release tarball excludes
-  unvalidated workshop modules while preserving their repository sources.
+- Rebind the corrective chain to Studio Core `3.0.0` at exact commit
+  `b46695b56755ab1080c440bbe2b22ed667c4784b`. The major coordinate records
+  the removal of public 2.x exports; its release tarball excludes the retired
+  paths while preserving their repository sources.
 
 ## 0.11.0 (2026-07-20)
 

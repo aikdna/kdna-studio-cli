@@ -13,10 +13,10 @@
     {
       "name": "@aikdna/kdna-studio-core",
       "version": "3.0.0",
-      "commit": "b46695b56755ab1080c440bbe2b22ed667c4784b",
+      "commit": "aea2d9c035643b60f26e4e855a295c48305524a9",
       "artifact": "fixtures/runtime-candidates/kdna-studio-core-3.0.0.tgz",
-      "integrity": "sha512-J8sw24+qleRShjkbUm2PiVW7h28VKdWBpubIq0wfRX8ecD5sltxaxqUlPbhoP8qVzvXDOAmSheu4X0xkLhq42Q==",
-      "sha256": "dd6f5918c01814641f01eb6d2ac493dfe738dbb232f6b122eccfdefb24aab0a0"
+      "integrity": "sha512-q/lzJ6GdO1Mlh59IiUvBr9vDbuFFAen1ZIaDy76VY/EWXPCIf5+JTPw53oOi9ostcVMKK6Up/R7gUtChYLrwRg==",
+      "sha256": "e56cd202f09d4326ac973ec7a3c6c6752c5a2446f3e7d12bc9c9f15949f986c6"
     }
   ]
 }

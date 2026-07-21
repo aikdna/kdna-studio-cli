@@ -8,7 +8,7 @@
 - Keep the supported create, evidence, card review, compile, distillation,
   interview, and Runtime export path unchanged.
 - Rebind the corrective chain to Studio Core `3.0.0` at exact commit
-  `b46695b56755ab1080c440bbe2b22ed667c4784b`. The major coordinate records
+  `aea2d9c035643b60f26e4e855a295c48305524a9`. The major coordinate records
   the removal of public 2.x exports; its release tarball excludes the retired
   paths while preserving their repository sources.
 

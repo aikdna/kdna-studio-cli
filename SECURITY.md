@@ -40,11 +40,14 @@ in the main protocol repository.
 
 ### API Key Handling
 
-If you use the LLM features (`distill`, `interview`, etc.), provide your API key via:
-- `KDNA_API_KEY` environment variable (preferred)
-- `--key-pipe` (stdin, one-shot read)
+If you use the LLM features (`distill`, `interview`, etc.), provide your API
+key through `--key-pipe` when writing Studio configuration, or through the
+documented provider environment variable for a one-shot run. Studio rejects
+`--key` and `-k` because process arguments may be exposed through process
+inspection and shell history.
 
-The deprecated `--key` flag passes the key via process arguments and should not be used in automated environments.
+Passwords and identity passphrases are also rejected in process arguments.
+Use `--password-stdin` or `--passphrase-stdin` for those inputs.
 
 ## Best Practices
 

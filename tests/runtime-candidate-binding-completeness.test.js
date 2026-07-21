@@ -102,7 +102,7 @@ test('candidate binding completeness rejects every unbound or non-unique runtime
     (lock) => {
       lock.packages['node_modules/unbound-candidate'] = {
         version: '1.0.0',
-        resolved: 'file:fixtures/runtime-candidates/kdna-core-0.20.0.tgz',
+        resolved: 'file:fixtures/runtime-candidates/kdna-core-0.21.0.tgz',
       };
     },
     /unbound file lock package/,
@@ -153,7 +153,7 @@ test('candidate binding completeness rejects every unbound or non-unique runtime
     'package-lock.json',
     (lock) => {
       lock.packages['node_modules/foreign/node_modules/@aikdna%2fkdna-core'] = {
-        version: '0.20.0',
+        version: '0.21.0',
       };
     },
     /AIKDNA lock package path invalid/,
@@ -162,7 +162,7 @@ test('candidate binding completeness rejects every unbound or non-unique runtime
     'package-lock.json',
     (lock) => {
       lock.packages['node_modules/foreign/node_modules/%2540aikdna%252fkdna-core'] = {
-        version: '0.20.0',
+        version: '0.21.0',
       };
     },
     /AIKDNA lock package name invalid/,

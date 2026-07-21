@@ -91,9 +91,16 @@ function removeAllowedText(relative, text, allowlist) {
 
 function findingsForText(relative, text, allowlist) {
   if (relative === ALLOWLIST_FILE) return [];
-  const inspectableText = path.basename(relative) === 'package-lock.json'
-    ? text.replace(/("integrity"\s*:\s*")[^"]+(")/g, '$1<opaque digest>$2')
-    : text;
+  const basename = path.basename(relative);
+  const inspectableText =
+    basename === 'package-lock.json'
+      ? text.replace(/("integrity"\s*:\s*")[^"]+(")/g, '$1<opaque digest>$2')
+      : relative.startsWith('fixtures/runtime-candidates/')
+        ? text.replace(
+            /("(?:integrity|sha1|sha256|sha512)"\s*:\s*")[^"]+(")/g,
+            '$1<opaque digest>$2',
+          )
+        : text;
   const residual = removeAllowedText(relative, inspectableText, allowlist);
   const findings = [];
   const lines = residual.split(/\r?\n/);

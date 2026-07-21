@@ -48,18 +48,6 @@
     "reason": "GitHub Actions release selector owned by actions/stale."
   },
   {
-    "file": "fixtures/runtime-candidates/binding.json",
-    "text": "sha512-zdx5NuC4mOuN3625Dsn8Bq01/V9+MQy+kT870XXX2JHOjKJhXnBwO3BU8jke2vBrxfnzH7Jm9MmeqTM0UCBc0Q==",
-    "count": 1,
-    "reason": "npm registry artifact sha512 integrity digest for @aikdna/kdna-core@0.20.0; an opaque hash, not a KDNA-owned name."
-  },
-  {
-    "file": "fixtures/runtime-candidates/kdna-core-0.20.0.evidence.json",
-    "text": "sha512-zdx5NuC4mOuN3625Dsn8Bq01/V9+MQy+kT870XXX2JHOjKJhXnBwO3BU8jke2vBrxfnzH7Jm9MmeqTM0UCBc0Q==",
-    "count": 2,
-    "reason": "npm registry artifact sha512 integrity digest for @aikdna/kdna-core@0.20.0; an opaque hash, not a KDNA-owned name."
-  },
-  {
     "file": "bin/kdna-studio.js",
     "text": "judgment-profile-v1",
     "count": 6,

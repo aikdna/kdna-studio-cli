@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+- Remove Test Lab, Feynman, and Quality report entry points from the default
+  CLI and npm tarball while retaining their workshop source and regression
+  history in the repository.
+- Keep the supported create, evidence, card review, compile, distillation,
+  interview, and Runtime export path unchanged.
+- Rebind the corrective chain to Studio Core `3.0.0` at exact commit
+  `aea2d9c035643b60f26e4e855a295c48305524a9`. The major coordinate records
+  the removal of public 2.x exports; its release tarball excludes the retired
+  paths while preserving their repository sources.
+
+## 0.11.0 (2026-07-20)
+
+- Remove secret-bearing password and passphrase argv forms. Protected export
+  and identity operations now accept secrets only through stdin-backed input.
+- Reject asset-signature export because asset signatures are outside the
+  Development Preview contract; Human Lock remains separate authoring
+  provenance.
+- Exercise ordinary and encrypted create → export → validate → plan-load →
+  load behavior against the corrective local Runtime candidates.
+- Bind that chain to exact Core commit `3676ab0e4b54b83c4193eef3519b19cc6d0cd245`
+  and exact Studio Core commit `bc30703d9793241d0e79c895c80bba1a4bbd42d3`.
+
+This is an unpublished Development Preview candidate. No existing registry
+version or package bytes are changed.
+
 ## 0.10.2 (2026-07-18)
 
 ### Added

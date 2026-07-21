@@ -566,11 +566,12 @@ test('pack evidence independently parses a real npm tgz and rejects changed byte
   assert.equal(packed.status, 0, packed.stderr);
   const [report] = JSON.parse(packed.stdout);
   const bytes = fs.readFileSync(path.join(temp, report.filename));
+  const currentPackage = require('../package.json');
   const evidence = validatePackReport({
     reportText: packed.stdout,
     tarball: bytes,
-    pkg: { name: '@aikdna/kdna-studio-cli', version: '0.10.2' },
-    source: { ref: 'refs/tags/0.10.2', commit: HASH },
+    pkg: { name: currentPackage.name, version: currentPackage.version },
+    source: { ref: `refs/tags/${currentPackage.version}`, commit: HASH },
   });
   assert.equal(validateArtifact(evidence, bytes), evidence);
   assert.throws(() => validateArtifact(evidence, Buffer.from('changed')), /size|integrity|shasum/);

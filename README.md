@@ -1,10 +1,14 @@
 # @aikdna/kdna-studio-cli
 
+> **Status:** Pre-release authoring toolchain. This repository contains the
+> unreleased `0.11.0` corrective candidate; the published incumbent remains
+> `0.10.2`. Candidate behavior must not be described as already published.
+
 Official Studio command-line entry for KDNA judgment asset creation — turns your notes, documents, works, and feedback into loadable `.kdna` files.
 
 Two authoring paths: interview-first (articulate judgment directly) and distillation-first (provide content, find the patterns, review what belongs in scope).
 
-Distillation-first authoring is domain-first: declare the target domain, owner scope, granularity, task scope, include areas, exclude areas, and load condition before extracting candidates. A single `.kdna` should stay scoped; complex work should compose multiple domain assets through a KDNA Cluster.
+Distillation-first authoring is domain-first: declare the target domain, owner scope, granularity, task scope, include areas, exclude areas, and load condition before extracting candidates. A single `.kdna` should stay scoped. Any future multi-asset use requires an explicit, separately admitted Host contract; it is not an implicit Studio export behavior.
 
 This package provides the `kdna-studio` command. It creates Studio projects,
 imports evidence, manages judgment cards, records optional review/provenance
@@ -22,8 +26,12 @@ It is intentionally separate from `@aikdna/kdna-cli`:
 ## Install
 
 ```bash
-npm install -g @aikdna/kdna-studio-cli
+npm install -g @aikdna/kdna-studio-cli@0.10.2
 ```
+
+That command installs the published incumbent. To assess the unreleased
+`0.11.0` candidate, use this source repository and its exact candidate
+dependency coordinates; do not mix candidate documentation with npm `latest`.
 
 ## Usage
 
@@ -103,14 +111,21 @@ kdna-studio export my_domain --out my_domain.kdna
 kdna load my_domain.kdna --profile=compact
 ```
 
-The first three AI commands (feynman, distill --ai, test, interview) work
-without `KDNA_LLM_PROVIDER` / `KDNA_LLM_API_KEY` by passing `--no-llm`. They
-return a structured but unsynthesised result. To enable real evaluation:
+The supported AI-assisted authoring commands are `distill --ai` and
+`interview`. To configure their model provider:
 
 ```bash
-kdna-studio llm config --provider openai --model gpt-4 --key <your-key>
-# or set KDNA_LLM_PROVIDER, KDNA_LLM_API_KEY, KDNA_LLM_MODEL
+printf '%s\n' "$KDNA_LLM_API_KEY" | \
+  kdna-studio llm config --provider openai --model gpt-4 --key-pipe
+# Provider/model/key environment variables can also configure a one-shot run.
 ```
+
+Test Lab and Feynman workshop implementations remain in the source repository
+for research and regression coverage. Published releases up to and including
+0.10.2 shipped them as CLI commands in the npm tarball; the current
+development line removes them from the default CLI and from the npm release
+tarball, effective with the next release after 0.10.2. The public CLI
+contract remains the create, review, compile, and export path shown above.
 
 ## Runtime Export Contract
 

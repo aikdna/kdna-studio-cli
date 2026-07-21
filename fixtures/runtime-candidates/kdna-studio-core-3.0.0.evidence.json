@@ -1,0 +1,40 @@
+{
+  "evidence_kind": "candidate_source_pack",
+  "package": "@aikdna/kdna-studio-core",
+  "version": "3.0.0",
+  "git_head": "aea2d9c035643b60f26e4e855a295c48305524a9",
+  "source_authority": "exact_git_commit_tree",
+  "source_worktree_clean": true,
+  "pack": {
+    "status": "candidate_source_pack_not_registry_artifact",
+    "npm_client": "11.17.0",
+    "npm_release_url": "https://registry.npmjs.org/npm/-/npm-11.17.0.tgz",
+    "npm_release_integrity": "sha512-PurxiZexEHDTE4SSaLI3ZrnbAGiZfeyUcQcxcP5D+hfytNAze/D1IzDuInTn9XVLIbAQUnQuSPXJx02LHjLvQw==",
+    "filename": "aikdna-kdna-studio-core-3.0.0.tgz",
+    "size": 50945,
+    "unpacked_size": 185084,
+    "entry_count": 25,
+    "sha1": "e0a0b7543376e5d94cc802877bde1913d407529c",
+    "sha256": "e56cd202f09d4326ac973ec7a3c6c6752c5a2446f3e7d12bc9c9f15949f986c6",
+    "sha512": "sha512-q/lzJ6GdO1Mlh59IiUvBr9vDbuFFAen1ZIaDy76VY/EWXPCIf5+JTPw53oOi9ostcVMKK6Up/R7gUtChYLrwRg==",
+    "reproducible_runs": 2,
+    "source_equivalence": {
+      "status": "strict_install_equivalent",
+      "compared_fields": [
+        "complete_entry_set",
+        "canonical_path",
+        "regular_file_type",
+        "file_size",
+        "file_mode",
+        "file_bytes"
+      ],
+      "excluded_non_install_metadata": [
+        "gzip_wrapper",
+        "tar_mtime",
+        "tar_uid",
+        "tar_gid"
+      ]
+    }
+  },
+  "registry_artifact": null
+}

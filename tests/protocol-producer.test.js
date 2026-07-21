@@ -89,8 +89,8 @@ test('Studio CLI emits the current manifest, payload, digest, and Runtime contra
   const unpacked = path.join(root, 'unpacked');
   core.unpack(assetPath, unpacked);
   const manifest = JSON.parse(fs.readFileSync(path.join(unpacked, 'kdna.json'), 'utf8'));
-  assert.equal(Object.hasOwn(manifest, 'risk_level'), false, 'Core 0.20 manifest must not carry risk_level');
-  assert.equal(Object.hasOwn(manifest, 'quality_badge'), false, 'Core 0.20 manifest must not carry quality_badge');
+  assert.equal(Object.hasOwn(manifest, 'risk_level'), false, 'current Core manifest must not carry risk_level');
+  assert.equal(Object.hasOwn(manifest, 'quality_badge'), false, 'current Core manifest must not carry quality_badge');
   const payload = cbor.decode(fs.readFileSync(path.join(unpacked, 'payload.kdnab')));
   const checksums = JSON.parse(fs.readFileSync(path.join(unpacked, 'checksums.json'), 'utf8'));
 
@@ -132,7 +132,7 @@ test('Studio CLI emits the current manifest, payload, digest, and Runtime contra
   assert.equal(capsule.contract_version, '0.1.0');
 });
 
-test('Studio CLI binds exact published Runtime dependencies and opens the release gate', () => {
+test('Studio CLI binds exact unpublished Runtime candidates and keeps the release gate closed', () => {
   const root = path.resolve(__dirname, '..');
   const evidence = verifyCandidateBinding(root);
   assert.deepEqual(
@@ -140,18 +140,19 @@ test('Studio CLI binds exact published Runtime dependencies and opens the releas
     [
       [
         '@aikdna/kdna-core',
-        '0.20.0',
-        '1e77e3e0d486c330fe9f9262b514ef24c859d469',
+        '0.21.0',
+        '3676ab0e4b54b83c4193eef3519b19cc6d0cd245',
       ],
       [
         '@aikdna/kdna-studio-core',
-        '2.0.2',
-        'cc3ebabf119af751d6f50e2445ad4363aae88f37',
+        '3.0.0',
+        'aea2d9c035643b60f26e4e855a295c48305524a9',
       ],
     ],
   );
-  assert.doesNotThrow(
+  assert.throws(
     () => assertRegistryReleaseReady(root),
+    /still candidate-bound/,
   );
 });
 

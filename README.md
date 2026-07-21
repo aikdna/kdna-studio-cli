@@ -121,9 +121,11 @@ printf '%s\n' "$KDNA_LLM_API_KEY" | \
 ```
 
 Test Lab and Feynman workshop implementations remain in the source repository
-for research and regression coverage. They are not default CLI commands and
-are not included in the npm release tarball. The public CLI contract remains
-the create, review, compile, and export path shown above.
+for research and regression coverage. Published releases up to and including
+0.10.2 shipped them as CLI commands in the npm tarball; the current
+development line removes them from the default CLI and from the npm release
+tarball, effective with the next release after 0.10.2. The public CLI
+contract remains the create, review, compile, and export path shown above.
 
 ## Runtime Export Contract
 

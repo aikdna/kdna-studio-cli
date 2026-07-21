@@ -5,10 +5,10 @@
     {
       "name": "@aikdna/kdna-core",
       "version": "0.21.0",
-      "commit": "f13390916c0b6a71aed8a62c458b5c440985ad98",
+      "commit": "3676ab0e4b54b83c4193eef3519b19cc6d0cd245",
       "artifact": "fixtures/runtime-candidates/kdna-core-0.21.0.tgz",
-      "integrity": "sha512-hidAmD49+pZycevudesxNINhHZ8uK4DxE1FtqGe/Z0tpQ0yl8iG0t2L0g/1FOv1q9K31zgSjRUEBrgbxHTAkEw==",
-      "sha256": "27a2c34e906de089d93e3cc87941a65fddbb6c3e51a9a24dc5b32daaaf04c110"
+      "integrity": "sha512-Aje6XvpNY6028K0+u1ZoeVuB01btL8YHeCPvFSaBoGk9TV5VcE6c70MrSCI7H4ky/s7/hXC4hXpxQHXB0I3JbQ==",
+      "sha256": "8dd7f882bc08bc9123f5b2a30f9ca6b4e24655857026926871cc3b0aee3c4e88"
     },
     {
       "name": "@aikdna/kdna-studio-core",

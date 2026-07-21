@@ -22,7 +22,6 @@ const {
   cards: cardApi,
   evidence: evidenceApi,
   compile: compileApi,
-  quality,
   creator: creatorApi,
   distillation: distillationApi,
   exportRuntime,
@@ -31,34 +30,6 @@ const {
 
 const llm = require('../src/llm');
 
-// Bug (#1 UX): the LLM-requiring commands (distill, interview, feynman,
-// test) silently fail with a stack trace when no LLM is configured.
-// First-time users hit this and have no way to know what to do. The
-// fix routes every LLM call through this helper, which:
-//   1. Checks whether an LLM is configured at all
-//   2. If not and --no-llm is given, returns a static / synthesised
-//      result so the command can still be useful (5-minute path)
-//   3. If not and --no-llm is absent, exits with a clear
-//      "configure LLM with: kdna-studio llm config" message
-function cmdNeedsLlm(args, cmdName) {
-  const cfg = llm.config();
-  const hasLlm = cfg && cfg.provider && cfg.apiKey && cfg.model;
-  if (hasLlm) return { hasLlm: true, cfg };
-  if (args.includes('--no-llm')) {
-    return {
-      hasLlm: false,
-      cfg,
-      noLlm: true,
-      message: `${cmdName} invoked with --no-llm. Output will be static / synthesised; configure an LLM with \`kdna-studio llm config\` to enable real evaluation.`,
-    };
-  }
-  fail(
-    `${cmdName} requires an LLM. Configure one with:\n` +
-    `  printf '%s\\n' "$KDNA_LLM_API_KEY" | kdna-studio llm config --provider openai --key-pipe --model <model>\n` +
-    `Or set env vars: KDNA_LLM_PROVIDER, KDNA_LLM_API_KEY, KDNA_LLM_MODEL.\n` +
-    `Or run with --no-llm to get a static / synthesised result.`,
-  );
-}
 const ai = require('../src/ai');
 
 const EXIT = { OK: 0, INPUT_ERROR: 2, HUMAN_LOCK_REQUIRED: 4, TRUST_FAILED: 5 };
@@ -69,9 +40,8 @@ function usage() {
 LLM (AI-powered authoring; every AI command accepts --no-llm for a static result):
   kdna-studio llm config [--provider <name>] [--model <name>] [--key-pipe] [--url <base-url>]
   kdna-studio llm show
-  (pipe the key to 'kdna-studio llm config --provider openai --key-pipe --model gpt-4' to enable
-   feynman, distill --ai, interview, and test. With --no-llm these commands
-   still produce a structured but unsynthesised result.)
+  (pipe the key to 'kdna-studio llm config --provider openai --key-pipe --model gpt-4'
+   to enable distill --ai and interview.)
 
 Identity:
   kdna-studio identity init [--name <display-name>] [--passphrase-stdin]
@@ -106,8 +76,6 @@ AI Authoring (requires LLM config: kdna-studio llm config):
   kdna-studio distill <project> --ai                             # AI-driven candidate extraction from evidence
   kdna-studio distill <project> --candidates <file.json>          # load pre-generated AI candidates
   kdna-studio interview <project> [--stage <name>]               # 4-stage guided AI interview
-  kdna-studio feynman <project> <card-id>                        # AI Feynman evaluation (5-dimension)
-  kdna-studio test <project> --input "<text>" [--preset baseline|edge|contradiction]
 
 Distillation:
   kdna-studio target declare <project>                           # declare distillation target interactively
@@ -118,7 +86,6 @@ Distillation:
   kdna-studio candidate reject <project> <candidate-id>
   kdna-studio candidate override <project> <candidate-id>        # override scope gate
   kdna-studio candidate promote <project>                        # promote accepted+scope_fit → cards
-  kdna-studio report <project>
   kdna-studio audit-locks <project>            # list all axioms/risk/stance missing Human Lock fields
 
 Project may be a directory containing studio.project.json or a project JSON file.`);
@@ -2277,22 +2244,14 @@ function cmdIdentity(args) {
   fail('Usage: kdna-studio identity <init|show>');
 }
 
-function cmdReport(args) {
-  const { project } = readProject(args[0]);
-  const readiness = quality.computeReadiness(project);
-  const gate = projectApi.checkHumanLockGate(project);
-  console.log(JSON.stringify({ readiness, human_lock_gate: gate }, null, 2));
-  process.exit(gate.blocked ? EXIT.HUMAN_LOCK_REQUIRED : EXIT.OK);
-}
-
 // Audit-locks: list every card that would fail the current Human Lock
 // gate because of missing or empty fields. Used during the
 // pre-migration review of source-tree assets (e.g. pro-20) so an
 // author can fill in the missing confidence / evidence_type / risk
 // description / stance statement BEFORE running `migrate`.
 //
-// Bug (UX pro-20 migration): prior version of `kdna-studio report`
-// returned a flat human_lock_gate.issues list, which mixed card
+// The earlier readiness output returned a flat human_lock_gate.issues list,
+// which mixed card
 // types and field names. An author migrating 20 source-tree
 // assets with 99 axioms + 140 risk cards + 70 stance cards had no
 // way to see, for a single asset, "which axioms are missing
@@ -2669,165 +2628,6 @@ async function cmdInterview(args) {
   }
 }
 
-async function cmdFeynman(args) {
-  const projectInput = args[0];
-  const cardId = args[1];
-  if (!projectInput || !cardId) fail('Usage: kdna-studio feynman <project> <card-id>');
-  const useJson = args.includes('--json');
-  const { projectPath, project } = readProject(projectInput);
-  const cardIdx = (project.cards || []).findIndex(c => c.id === cardId);
-  if (cardIdx < 0) fail(`Card not found: ${cardId}`);
-  const card = project.cards[cardIdx];
-
-  // Canonical field name in the card schema is `feynman_restatement`, not
-  // `feynman_text`. The old check was dead code (nothing writes the wrong
-  // field) and made this command fail on every card.
-  //
-  // Bug (#62 + #68 follow-up): the prior `if (!card.feynman_restatement)
-  // fail(...)` block rejected every card that had no human-written
-  // restatement, even when the AI evaluator in feynman.js was
-  // prepared to auto-synthesise one. A caller without a configured
-  // LLM (no `KDNA_API_KEY`, no `kdna-studio llm config`) would
-  // get a `fail` instead of a structured note. The fix removes the
-  // guard: a missing restatement is now handed off to the evaluator
-  // (which either asks the LLM to evaluate a synthesised one or,
-  // without an LLM, returns a structured `synthesised_restatement`
-  // for the caller to use as a starting point). The error message
-  // is kept as a secondary path: only if the evaluator itself fails
-  // does the command exit non-zero, and only then with a clear
-  // pointer to the manual `card update` path.
-  //
-  // We do still need a restatement-shaped object to feed the
-  // evaluator, so we synthesise one in-memory when the card has
-  // none. This does NOT persist the synthesised restatement to the
-  // project (so the user still has to opt in via `card update` to
-  // keep one across runs), but it lets the no-LLM path return a
-  // useful result instead of a hard fail.
-  if (!card.feynman_restatement) {
-    const synthesised = ai.feynman.synthFeynmanRestatement(card.fields || {});
-    card.feynman_restatement = { text: synthesised, synthesised: true };
-    console.warn(`No feynman_restatement on ${cardId}; using synthesised:\n  "${synthesised}"`);
-  }
-
-  if (!useJson) console.log(`Evaluating Feynman restatement for card: ${cardId}`);
-
-  // Bug (#1 UX follow-up): if no LLM is configured and the caller
-  // did not pass --no-llm, route through cmdNeedsLlm which either
-  // gives a clear "configure LLM" error or accepts the --no-llm
-  // path. Without this branch, the no-LLM caller would fall
-  // through to the LLM call below and get a stack trace.
-  const llmGate = cmdNeedsLlm(args, 'feynmann');
-
-  let result;
-  if (llmGate.noLlm) {
-    // Static evaluation: every criterion is "unsure" (✗), score 0,
-    // but the command still produces a useful structured result and
-    // saves the synthesised restatement to the card.
-    result = {
-      score: 0,
-      criteria: Object.fromEntries(Object.keys(ai.feynman.CRITERIA).map(k => [k, false])),
-      explanations: { noLlm: llmGate.message },
-      suggestions: [
-        'No LLM configured — every criterion shows ✗. Run `kdna-studio llm config` and re-evaluate for a real score.',
-        'Or set the synthesised restatement via: kdna-studio card update <project> ' + cardId + ' --field feynman_restatement=\'{"text":"<your own restatement>"}\'',
-      ],
-    };
-  } else {
-    result = await ai.feynman.evaluate(llmGate.cfg, card, {});
-  }
-  const score = result.score || 0;
-  const passed = score >= 4;
-
-  if (useJson) {
-    console.log(JSON.stringify({
-      card_id: cardId,
-      score,
-      passed,
-      no_llm: !!llmGate.noLlm,
-      criteria: result.criteria || {},
-      suggestions: result.suggestions || [],
-      feynman_restatement: card.feynman_restatement,
-    }, null, 2));
-  } else {
-    console.log(`Score: ${score}/5 ${passed ? '✓ publishable' : '✗ below threshold (need 4/5)'}${llmGate.noLlm ? '  (--no-llm: static result)' : ''}`);
-    for (const [criterion, desc] of Object.entries(ai.feynman.CRITERIA)) {
-      const r = (result.criteria || {})[criterion] ? '✓' : '✗';
-      console.log(`  ${r} ${criterion}`);
-    }
-    if (result.suggestions && result.suggestions.length > 0) {
-      console.log('\nSuggestions:');
-      result.suggestions.forEach(s => console.log(`  - ${s}`));
-    }
-  }
-
-  card.feynman_evaluation = { score, criteria: result.criteria, suggestions: result.suggestions, evaluated_at: new Date().toISOString() };
-  project.cards[cardIdx] = card;
-  writeProject(projectPath, project);
-}
-
-async function cmdTest(args) {
-  const projectInput = args[0];
-  const input = option(args, '--input');
-  const preset = option(args, '--preset', 'baseline');
-  if (!projectInput || !input) fail('Usage: kdna-studio test <project> --input "<text>" [--preset baseline|edge|contradiction]');
-  const { project } = readProject(projectInput);
-  const domainName = project.name || 'Untitled Project';
-  const domainPrompt = `Domain: ${domainName}\n${project.description || ''}`;
-
-  // Bug (#50): prior version hand-rolled the prompt for the 3 preset
-  // names and bypassed ai.testlab.testPreset entirely. The exported
-  // testPreset function was dead code, and the help text advertised
-  // names (baseline / edge / contradiction) that did not match the
-  // actual preset keys in testlab.js (baseline / edge_case /
-  // contradiction). Result: --preset edge silently ran the
-  // contradiction branch, and any caller that asked for "edge_case"
-  // fell through to the contradiction branch too.
-  //
-  // The fix routes the call through testPreset when a known preset is
-  // given, and accepts both help-text names (baseline / edge /
-  // contradiction) and the canonical testlab names (baseline / edge_case
-  // / contradiction).
-  const PRESET_ALIASES = {
-    baseline: 'baseline',
-    edge: 'edge_case',
-    edge_case: 'edge_case',
-    contradiction: 'contradiction',
-  };
-  const canonical = PRESET_ALIASES[preset] || 'baseline';
-  console.log(`Testing: ${domainName} [${preset}]`);
-
-  // Bug (#1 UX): gate LLM-requiring paths through cmdNeedsLlm.
-  // The test command always needs an LLM (it compares without/with
-  // the loaded domain). --no-llm gives a static "no-op" comparison
-  // that lists the cards that *would* be applied.
-  const llmGate = cmdNeedsLlm(args, 'test');
-  const cfg = llmGate.noLlm ? null : llmGate.cfg;
-
-  if (canonical === 'baseline') {
-    // Baseline is a single comparison: keep the prior single-result
-    // shape so existing parsers / consumers see the same output.
-    const prompt = `Test the core judgment: ${input}`;
-    if (cfg === null) {
-      // No-LLM static result
-      const cards = (project.cards || []).filter(c => c.locked).map(c => ({ type: c.type, id: c.id, one_sentence: c.fields?.one_sentence || c.fields?.question || '' }));
-      console.log(JSON.stringify({ no_llm: true, message: llmGate.message, would_apply: cards }, null, 2));
-      return;
-    }
-    const result = await ai.testlab.compare(cfg, domainName, prompt, domainPrompt, {});
-    console.log(JSON.stringify(result, null, 2));
-    return;
-  }
-  // For non-baseline presets, run the preset + the baseline so the user
-  // can see both side by side. The preset prompt is the one in
-  // ai/testlab.js — that's the code path that was dead before.
-  if (cfg === null) {
-    console.log(JSON.stringify({ no_llm: true, message: llmGate.message }, null, 2));
-    return;
-  }
-  const result = await ai.testlab.testPreset(cfg, domainName, input, domainPrompt, {});
-  console.log(JSON.stringify(result[canonical] || result, null, 2));
-}
-
 const args = process.argv.slice(2);
 const cmd = args[0];
 if (!cmd || cmd === '--help' || cmd === '-h') {
@@ -2850,15 +2650,12 @@ try {
   else if (cmd === 'distill') await cmdDistill(args.slice(1));
   else if (cmd === 'candidate') cmdCandidate(args.slice(1));
   else if (cmd === 'interview') await cmdInterview(args.slice(1));
-  else if (cmd === 'feynman') await cmdFeynman(args.slice(1));
-  else if (cmd === 'test') await cmdTest(args.slice(1));
   else if (cmd === 'card') cmdCard(args.slice(1));
   else if (cmd === 'lock') cmdLock(args.slice(1));
   else if (cmd === 'compile') cmdCompile(args.slice(1));
   else if (cmd === 'export') cmdExport(args.slice(1));
   else if (cmd === 'llm') cmdLlm(args.slice(1));
   else if (cmd === 'identity') cmdIdentity(args.slice(1));
-  else if (cmd === 'report') cmdReport(args.slice(1));
   else if (cmd === 'audit-locks') cmdAuditLocks(args.slice(1));
   else if (cmd === 'install') cmdStudioInstall(args.slice(1));
   else if (cmd === 'update') cmdStudioUpdate(args.slice(1));

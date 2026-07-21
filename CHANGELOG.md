@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Remove Test Lab, Feynman, and Quality report entry points from the default
+  CLI and npm tarball while retaining their workshop source and regression
+  history in the repository.
+- Keep the supported create, evidence, card review, compile, distillation,
+  interview, and Runtime export path unchanged.
+
 ## 0.11.0 (2026-07-20)
 
 - Remove secret-bearing password and passphrase argv forms. Protected export

@@ -321,15 +321,16 @@ test('export rejects malformed axiom routing fields before publishing', (t) => {
   assert.match(result.stderr, /applies_when \(must be array\)/);
 });
 
-test('feynman --json emits parseable JSON in no-LLM mode', (t) => {
-  const { tmp, projectDir, cardId } = createLockedProject(t);
-  const result = run(['feynman', projectDir, cardId, '--no-llm', '--json'], { tmp });
-  assert.equal(result.status, 0, result.stderr);
-  const parsed = JSON.parse(result.stdout);
-  assert.equal(parsed.card_id, cardId);
-  assert.equal(parsed.score, 0);
-  assert.equal(parsed.no_llm, true);
-  assert.ok(parsed.feynman_restatement);
+test('unvalidated workshops are absent from the default CLI', () => {
+  const help = run(['--help']);
+  assert.equal(help.status, 0, help.stderr);
+  assert.doesNotMatch(help.stdout, /kdna-studio (?:feynman|test|report)\b/);
+
+  for (const command of ['feynman', 'test', 'report']) {
+    const result = run([command]);
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, new RegExp(`Unknown command: ${command}`));
+  }
 });
 
 test('rejects asset signatures outside the current Preview contract', (t) => {

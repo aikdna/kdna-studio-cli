@@ -7,8 +7,12 @@
     "kdna-studio": "bin/kdna-studio.js"
   },
   "files": [
-    "bin/",
-    "src/",
+    "bin/kdna-studio.js",
+    "src/ai/index.js",
+    "src/ai/distill.js",
+    "src/ai/filter.js",
+    "src/ai/interview.js",
+    "src/llm/",
     "LICENSE",
     "NOTICE",
     "README.md"

@@ -103,15 +103,19 @@ kdna-studio export my_domain --out my_domain.kdna
 kdna load my_domain.kdna --profile=compact
 ```
 
-The first three AI commands (feynman, distill --ai, test, interview) work
-without `KDNA_LLM_PROVIDER` / `KDNA_LLM_API_KEY` by passing `--no-llm`. They
-return a structured but unsynthesised result. To enable real evaluation:
+The supported AI-assisted authoring commands are `distill --ai` and
+`interview`. To configure their model provider:
 
 ```bash
 printf '%s\n' "$KDNA_LLM_API_KEY" | \
   kdna-studio llm config --provider openai --model gpt-4 --key-pipe
 # Provider/model/key environment variables can also configure a one-shot run.
 ```
+
+Test Lab and Feynman workshop implementations remain in the source repository
+for research and regression coverage. They are not default CLI commands and
+are not included in the npm release tarball. The public CLI contract remains
+the create, review, compile, and export path shown above.
 
 ## Runtime Export Contract
 

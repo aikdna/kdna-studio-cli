@@ -243,8 +243,12 @@ test('runs the trusted authoring workflow through compile and export', (t) => {
   result = run(['compile', projectDir, '--out', buildDir], { tmp });
   assert.equal(result.status, 0, result.stderr);
   assert.ok(fs.existsSync(path.join(buildDir, 'kdna.json')));
-  assert.ok(fs.existsSync(path.join(buildDir, 'KDNA_CARD.json')));
   assert.ok(fs.existsSync(path.join(buildDir, 'reports', 'provenance-report.json')));
+  assert.ok(fs.existsSync(path.join(buildDir, 'reports', 'human-lock-report.json')));
+  assert.ok(fs.existsSync(path.join(buildDir, 'build-receipt.json')));
+  assert.equal(fs.existsSync(path.join(buildDir, 'KDNA_CARD.json')), false);
+  assert.equal(fs.existsSync(path.join(buildDir, 'reports', 'quality-gate-report.json')), false);
+  assert.equal(fs.existsSync(path.join(buildDir, 'reports', 'eval-report.json')), false);
   const manifest = JSON.parse(fs.readFileSync(path.join(buildDir, 'kdna.json'), 'utf8'));
   assert.equal(manifest.authoring.compiler, '@aikdna/kdna-studio-core');
   assert.equal(manifest.authoring.human_confirmed, true);

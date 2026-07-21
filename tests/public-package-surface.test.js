@@ -8,11 +8,18 @@ const { spawnSync } = require('node:child_process');
 const ROOT = path.resolve(__dirname, '..');
 
 test('npm tarball excludes unvalidated CLI workshops', () => {
-  const packed = spawnSync(
-    'npm',
-    ['pack', '--dry-run', '--json', '--ignore-scripts'],
-    { cwd: ROOT, encoding: 'utf8', shell: false },
-  );
+  const npmExecPath = process.env.npm_execpath;
+  const packed = npmExecPath
+    ? spawnSync(
+        process.execPath,
+        [npmExecPath, 'pack', '--dry-run', '--json', '--ignore-scripts'],
+        { cwd: ROOT, encoding: 'utf8', shell: false },
+      )
+    : spawnSync(
+        'npm',
+        ['pack', '--dry-run', '--json', '--ignore-scripts'],
+        { cwd: ROOT, encoding: 'utf8', shell: false },
+      );
   assert.equal(packed.status, 0, packed.stderr);
   const reports = JSON.parse(packed.stdout);
   assert.equal(reports.length, 1);

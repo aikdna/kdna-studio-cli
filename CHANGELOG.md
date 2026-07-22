@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Classify `identity init` failures only from stable Studio Core or OS codes;
+  human-readable error text is never used as a state oracle. A verified
+  existing identity, partial identity, corrupt identity, path, permission,
+  storage, KDF, verified post-commit durability failure, and post-commit
+  inconsistency each receive distinct fail-closed guidance. In particular,
+  `IDENTITY_COMMITTED_INCONSISTENT` never suggests `identity show`, signing,
+  or normal use. The CLI is bound to the final merged Studio Core artifact
+  that defines these stable codes.
 - Make supported AI-authoring provider transport fail closed. LLM base URLs
   now require external HTTPS, with plain HTTP limited to exact numeric
   loopback hosts `127.0.0.1` and `[::1]`; `localhost`, LAN/external HTTP,
@@ -18,7 +26,7 @@
 - Keep the supported create, evidence, card review, compile, distillation,
   interview, and Runtime export path unchanged.
 - Rebind the corrective chain to final Studio Core `3.0.0` main commit
-  `65d638385f8ce4542f7a8b82d72ea35487e7b4b3`. The major coordinate records
+  `d215be1b1535e04dc865a996609c0144415575c1`. The major coordinate records
   the removal of public 2.x exports; its release tarball excludes the retired
   paths while preserving their repository sources.
 
@@ -32,7 +40,7 @@
 - Exercise ordinary and encrypted create → export → validate → plan-load →
   load behavior against the corrective local Runtime candidates.
 - Bind that chain to final Core main commit `76bbc587ce05f7e575c2373832cc5c9eee9df98a`
-  and final Studio Core main commit `65d638385f8ce4542f7a8b82d72ea35487e7b4b3`.
+  and final Studio Core main commit `d215be1b1535e04dc865a996609c0144415575c1`.
 
 This is an unpublished Development Preview candidate. No existing registry
 version or package bytes are changed.

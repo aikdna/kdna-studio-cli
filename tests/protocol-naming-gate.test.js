@@ -14,6 +14,19 @@ const {
 
 const ROOT = path.resolve(__dirname, '..');
 
+test('removed localhost transport exception is not retained in the exact allowlist', () => {
+  const providerRoute = ['v', '1'].join('');
+  const allowlist = JSON.parse(
+    fs.readFileSync(path.join(ROOT, 'scripts', 'third-party-name-allowlist.json'), 'utf8'),
+  );
+  assert.equal(
+    allowlist.some((entry) =>
+      entry.file === 'src/llm/config.js' &&
+      entry.text === `http://localhost:11434/${providerRoute}`),
+    false,
+  );
+});
+
 test('repository and actual npm tar contain only current KDNA-owned names', () => {
   assert.deepEqual(scanTree(ROOT), []);
   assert.deepEqual(scanPackedArtifact(ROOT), []);

@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { canonicalLlmBaseUrl } = require('./transport');
 
 const ENV_PREFIX = 'KDNA_LLM_';
 
@@ -14,8 +15,8 @@ const WELL_KNOWN = {
   gemini: { baseURL: 'https://generativelanguage.googleapis.com/v1beta', models: ['gemini-2.5-flash', 'gemini-2.5-pro'] },
   perplexity: { baseURL: 'https://api.perplexity.ai', models: ['sonar-pro', 'sonar'] },
   groq: { baseURL: 'https://api.groq.com/openai/v1', models: ['llama-4-scout-17b-16e-instruct', 'deepseek-r1-distill-llama-70b'] },
-  local: { baseURL: 'http://localhost:11434/v1', models: ['llama3.2'] },
-  ollama: { baseURL: 'http://localhost:11434/v1', models: ['llama3.2'] },
+  local: { baseURL: 'http://127.0.0.1:11434/v1', models: ['llama3.2'] },
+  ollama: { baseURL: 'http://127.0.0.1:11434/v1', models: ['llama3.2'] },
   openai_compatible: { baseURL: null, models: [] },
 };
 
@@ -66,10 +67,14 @@ function loadConfig() {
 }
 
 function saveConfig(updates) {
+  const safeUpdates = { ...updates };
+  if (Object.prototype.hasOwnProperty.call(safeUpdates, 'baseURL')) {
+    safeUpdates.baseURL = canonicalLlmBaseUrl(safeUpdates.baseURL);
+  }
   const configPath = path.join(os.homedir(), '.kdna', 'config.json');
   let existing = {};
   try { if (fs.existsSync(configPath)) existing = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch (e) { console.error('Error reading config file for save:', e.message); }
-  existing.llm = { ...(existing.llm || {}), ...updates };
+  existing.llm = { ...(existing.llm || {}), ...safeUpdates };
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(existing, null, 2) + '\n');
 }
@@ -79,6 +84,14 @@ function validateConfig(config) {
   if (!config.provider) errors.push('Missing KDNA_LLM_PROVIDER. Set via env var or ~/.kdna/config.json');
   if (!config.apiKey) errors.push('Missing KDNA_LLM_API_KEY');
   if (!config.model) errors.push('Missing KDNA_LLM_MODEL');
+  if (!config.baseURL) errors.push('Missing KDNA_LLM_BASE_URL');
+  else {
+    try {
+      canonicalLlmBaseUrl(config.baseURL);
+    } catch {
+      errors.push('Invalid KDNA_LLM_BASE_URL: external providers require HTTPS; HTTP is loopback-only');
+    }
+  }
   return { valid: errors.length === 0, errors };
 }
 

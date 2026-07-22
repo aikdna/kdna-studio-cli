@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Make supported AI-authoring provider transport fail closed. LLM base URLs
+  now require external HTTPS, with plain HTTP limited to exact numeric
+  loopback hosts `127.0.0.1` and `[::1]`; `localhost`, LAN/external HTTP,
+  credentials, query/fragment components, trailing or encoded paths, and URL
+  parser normalization are rejected before a request. Built-in local/Ollama
+  defaults use `127.0.0.1`. OpenAI-compatible and Anthropic requests refuse
+  all redirects, bound successful JSON response bytes, and expose only stable
+  transport/HTTP/response categories instead of provider response bodies,
+  full URLs, tokens, or raw fetch errors. Invalid provider JSON diagnostics
+  are generic and do not echo response content.
 - Remove Test Lab, Feynman, and Quality report entry points from the default
   CLI and npm tarball while retaining their workshop source and regression
   history in the repository.

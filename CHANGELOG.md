@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Classify `identity init` failures instead of reporting every error as
+  "Identity already exists." Path errors (ENOTDIR/ENOENT), permission errors
+  (EACCES/EPERM), write failures, and KDF failures now keep their accurate
+  category; only a real existing identity reports "already exists". A
+  committed-but-durability-unconfirmed result
+  (`IDENTITY_COMMITTED_DURABILITY_UNCONFIRMED`, handled forward-compatibly —
+  Studio Core `3.0.0` does not emit the marker yet) tells the user the
+  identity was created, not to re-run init, to verify with `identity show`,
+  and to back up promptly.
 - Remove Test Lab, Feynman, and Quality report entry points from the default
   CLI and npm tarball while retaining their workshop source and regression
   history in the repository.

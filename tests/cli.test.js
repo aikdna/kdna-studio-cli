@@ -411,6 +411,108 @@ test('identity show fails when not initialized', (t) => {
   assert.match(result.stderr, /No identity found/);
 });
 
+test('identity init with an ENOTDIR path does not claim the identity already exists', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const blocker = path.join(tmp, 'blocker');
+  fs.writeFileSync(blocker, 'a regular file, not a directory');
+
+  const result = run(['identity', 'init', '--name', 'Path Failure'], {
+    tmp,
+    env: { ...process.env, KDNA_IDENTITY_DIR: path.join(blocker, 'identity') },
+  });
+  assert.equal(result.status, 2);
+  assert.doesNotMatch(result.stderr, /already exists/i);
+  assert.match(result.stderr, /path is not usable/i);
+  assert.match(result.stderr, /ENOTDIR/);
+});
+
+test('identity init with an EACCES path does not claim the identity already exists', (t) => {
+  if (typeof process.geteuid === 'function' && process.geteuid() === 0) {
+    t.skip('root bypasses filesystem permission checks');
+    return;
+  }
+  const tmp = tmpDir();
+  t.after(() => {
+    fs.chmodSync(path.join(tmp, 'readonly'), 0o755);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+  const readonly = path.join(tmp, 'readonly');
+  fs.mkdirSync(readonly, { mode: 0o555 });
+
+  const result = run(['identity', 'init', '--name', 'Permission Failure'], {
+    tmp,
+    env: { ...process.env, KDNA_IDENTITY_DIR: path.join(readonly, 'identity') },
+  });
+  assert.equal(result.status, 2);
+  assert.doesNotMatch(result.stderr, /already exists/i);
+  assert.match(result.stderr, /permission denied/i);
+  assert.match(result.stderr, /EACCES|EPERM/);
+});
+
+test('identity init with a real existing identity reports already exists', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const identityDir = path.join(tmp, 'identity');
+
+  const first = run(['identity', 'init', '--name', 'First'], {
+    tmp,
+    env: { ...process.env, KDNA_IDENTITY_DIR: identityDir },
+  });
+  assert.equal(first.status, 0, first.stderr);
+
+  const second = run(['identity', 'init', '--name', 'Second'], {
+    tmp,
+    env: { ...process.env, KDNA_IDENTITY_DIR: identityDir },
+  });
+  assert.equal(second.status, 2);
+  assert.match(second.stderr, /Identity already exists\./);
+  assert.match(second.stderr, /identity show/);
+});
+
+test('identity init write failure does not claim the identity already exists', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const hook = path.join(root, 'fixtures', 'mock-init-identity-failure.js');
+
+  const result = run(['identity', 'init', '--name', 'Write Failure'], {
+    tmp,
+    env: {
+      ...process.env,
+      KDNA_IDENTITY_DIR: path.join(tmp, 'identity'),
+      KDNA_TEST_INIT_FAILURE: 'write-failure',
+      NODE_OPTIONS: `--require ${hook}`,
+    },
+  });
+  assert.equal(result.status, 2);
+  assert.doesNotMatch(result.stderr, /already exists/i);
+  assert.match(result.stderr, /Identity init failed/);
+  assert.match(result.stderr, /ENOSPC/);
+});
+
+test('identity init post-commit durability failure reports committed but unconfirmed', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const hook = path.join(root, 'fixtures', 'mock-init-identity-failure.js');
+
+  const result = run(['identity', 'init', '--name', 'Durability Failure'], {
+    tmp,
+    env: {
+      ...process.env,
+      KDNA_IDENTITY_DIR: path.join(tmp, 'identity'),
+      KDNA_TEST_INIT_FAILURE: 'durability-unconfirmed',
+      NODE_OPTIONS: `--require ${hook}`,
+    },
+  });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Identity committed, durability unconfirmed/);
+  assert.match(result.stderr, /IDENTITY_COMMITTED_DURABILITY_UNCONFIRMED/);
+  assert.match(result.stderr, /Do NOT re-run/);
+  assert.match(result.stderr, /identity show/);
+  assert.match(result.stderr, /Back up your private key/);
+  assert.doesNotMatch(result.stderr, /already exists/i);
+});
+
 // ── Create from folder ──────────────────────────────────────────────
 
 test('create --from-folder imports legacy JSON source, outputs audit', (t) => {

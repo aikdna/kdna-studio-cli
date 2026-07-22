@@ -2208,6 +2208,40 @@ function cmdLlm(args) {
   fail('Usage: kdna-studio llm <config|show>');
 }
 
+// initIdentity fails for several distinct reasons and each needs a different
+// user message. A catch-all "Identity already exists." would lie about path
+// (ENOTDIR/ENOENT), permission (EACCES/EPERM), write, and KDF failures and
+// would send the user to `identity show`, which then reports no identity.
+function failIdentityInit(err) {
+  const message = (err && err.message) || String(err);
+  const code = err && err.code;
+  // Forward-compatible with Studio Core's committed-but-durability-unconfirmed
+  // marker: the identity was committed to disk by the atomic publish, but the
+  // post-commit durability confirmation failed. The identity exists — re-running
+  // init would fail with "already exists" — so the user must verify and back up
+  // instead of retrying.
+  if (code === 'IDENTITY_COMMITTED_DURABILITY_UNCONFIRMED') {
+    fail(
+      `Identity committed, durability unconfirmed [${code}]: your identity was created, `
+      + 'but confirming it is fully durable on disk failed.\n'
+      + 'Do NOT re-run `kdna-studio identity init`.\n'
+      + '  1. Verify the identity with: kdna-studio identity show\n'
+      + '  2. Back up your private key promptly.\n'
+      + `  Detail: ${message}`
+    );
+  }
+  if (/already exist/i.test(message)) {
+    fail(`Identity already exists. Use 'kdna-studio identity show' to view. ${message}`);
+  }
+  if (code === 'ENOTDIR' || code === 'ENOENT' || /not a directory/i.test(message)) {
+    fail(`Identity init failed — the identity path is not usable: ${message}`);
+  }
+  if (code === 'EACCES' || code === 'EPERM') {
+    fail(`Identity init failed — permission denied: ${message}`);
+  }
+  fail(`Identity init failed: ${message}`);
+}
+
 function cmdIdentity(args) {
   const sub = args[0];
   if (sub === 'init') {
@@ -2226,7 +2260,7 @@ function cmdIdentity(args) {
         console.log(`  Private key is encrypted — keep your passphrase safe.`);
       }
     } catch (err) {
-      fail(`Identity already exists. Use 'kdna-studio identity show' to view. ${err.message}`);
+      failIdentityInit(err);
     }
     return;
   }

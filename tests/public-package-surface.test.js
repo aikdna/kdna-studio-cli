@@ -33,6 +33,7 @@ test('npm tarball excludes unvalidated CLI workshops', () => {
     'src/ai/distill.js',
     'src/ai/interview.js',
     'src/llm/index.js',
+    'src/llm/transport.js',
   ]) {
     assert.ok(files.includes(required), `supported CLI dependency missing from npm tarball: ${required}`);
   }

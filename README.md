@@ -120,6 +120,13 @@ printf '%s\n' "$KDNA_LLM_API_KEY" | \
 # Provider/model/key environment variables can also configure a one-shot run.
 ```
 
+External AI providers must use a canonical HTTPS base URL. Plain HTTP is
+accepted only for local development at the exact numeric loopback hosts
+`127.0.0.1` or `[::1]`; `localhost`, LAN addresses, URL credentials, query
+strings, and fragments are rejected. Provider redirects are not followed with
+API keys or authoring material, and provider response bodies are not copied
+into CLI errors.
+
 Test Lab and Feynman workshop implementations remain in the source repository
 for research and regression coverage. Published releases up to and including
 0.10.2 shipped them as CLI commands in the npm tarball; the current

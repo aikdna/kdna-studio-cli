@@ -5,18 +5,18 @@
     {
       "name": "@aikdna/kdna-core",
       "version": "0.21.0",
-      "commit": "3676ab0e4b54b83c4193eef3519b19cc6d0cd245",
+      "commit": "76bbc587ce05f7e575c2373832cc5c9eee9df98a",
       "artifact": "fixtures/runtime-candidates/kdna-core-0.21.0.tgz",
-      "integrity": "sha512-Aje6XvpNY6028K0+u1ZoeVuB01btL8YHeCPvFSaBoGk9TV5VcE6c70MrSCI7H4ky/s7/hXC4hXpxQHXB0I3JbQ==",
-      "sha256": "8dd7f882bc08bc9123f5b2a30f9ca6b4e24655857026926871cc3b0aee3c4e88"
+      "integrity": "sha512-lT9+pKaQ8RV+0gZI4GAZke85SjA39ef6ppU29w/dEn8D4Byzbtsqn9MuxxShOBKDUPf4f8U4YCF24qKzMVWdxw==",
+      "sha256": "b1de7d37b647e91371fdafbfa76d645b4d2f51cd9b77020f2a0b26087bfd03d8"
     },
     {
       "name": "@aikdna/kdna-studio-core",
       "version": "3.0.0",
-      "commit": "aea2d9c035643b60f26e4e855a295c48305524a9",
+      "commit": "d215be1b1535e04dc865a996609c0144415575c1",
       "artifact": "fixtures/runtime-candidates/kdna-studio-core-3.0.0.tgz",
-      "integrity": "sha512-q/lzJ6GdO1Mlh59IiUvBr9vDbuFFAen1ZIaDy76VY/EWXPCIf5+JTPw53oOi9ostcVMKK6Up/R7gUtChYLrwRg==",
-      "sha256": "e56cd202f09d4326ac973ec7a3c6c6752c5a2446f3e7d12bc9c9f15949f986c6"
+      "integrity": "sha512-c4N9/rLRdeXgb20Vr16QZSM5l6PmaFRdRPpjQEv766FpCg4n7aQlad07yAwO1lRcKXWd747XwxmBf+jg1sW5Vw==",
+      "sha256": "055bd7a309ecec9c53da2c4e5e1f91b922aa501ca17a7208ac91ea13cc3cc171"
     }
   ]
 }

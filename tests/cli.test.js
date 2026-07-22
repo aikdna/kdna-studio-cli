@@ -1014,6 +1014,53 @@ test('all secret-bearing commands reject secret values in argv', (t) => {
   assert.match(passphrase.stderr, /process arguments|passphrase-stdin/i);
 });
 
+test('llm config rejects unsafe transport before persisting it', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const env = { ...process.env, HOME: tmp };
+  const providerRoute = ['v', '1'].join('');
+
+  for (const unsafe of [
+    `http://localhost:11434/${providerRoute}`,
+    `http://192.168.1.10:11434/${providerRoute}`,
+    `http://provider.example.test/${providerRoute}`,
+    `https://user:pass@provider.example.test/${providerRoute}`,
+    `https://provider.example.test/${providerRoute}?token=secret`,
+    `https://provider.example.test/${providerRoute}#fragment`,
+  ]) {
+    const result = run([
+      'llm',
+      'config',
+      '--provider',
+      'openai_compatible',
+      '--model',
+      'test-model',
+      '--url',
+      unsafe,
+    ], { tmp, env });
+    assert.notEqual(result.status, 0, unsafe);
+    assert.match(result.stderr, /LLM base URL/);
+    assert.doesNotMatch(result.stderr, /localhost|192\.168|user:pass|token=secret|fragment/);
+    assert.equal(fs.existsSync(path.join(tmp, '.kdna', 'config.json')), false);
+  }
+
+  const accepted = run([
+    'llm',
+    'config',
+    '--provider',
+    'openai_compatible',
+    '--model',
+    'test-model',
+    '--url',
+    `http://127.0.0.1:11434/${providerRoute}`,
+  ], { tmp, env });
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(tmp, '.kdna', 'config.json'), 'utf8')).llm.baseURL,
+    `http://127.0.0.1:11434/${providerRoute}`,
+  );
+});
+
 test('help advertises only stdin forms for secret input', () => {
   const result = run(['--help']);
   assert.equal(result.status, 0, result.stderr);

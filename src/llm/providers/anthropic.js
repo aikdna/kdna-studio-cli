@@ -1,7 +1,8 @@
 // Anthropic Messages API provider
 
+const { postLlmJson } = require('../transport');
+
 async function chat(config, messages, options = {}) {
-  const url = `${config.baseURL}/messages`;
   const model = options.model || config.model;
   const maxTokens = options.maxTokens || config.maxTokens || 4096;
 
@@ -21,12 +22,12 @@ async function chat(config, messages, options = {}) {
     'anthropic-version': '2023-06-01',
   };
 
-  const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(120000) });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Anthropic API error ${res.status}: ${text.slice(0, 500)}`);
-  }
-  const data = await res.json();
+  const data = await postLlmJson({
+    baseUrl: config.baseURL,
+    endpoint: '/messages',
+    headers,
+    body,
+  });
   const content = data.content?.[0]?.text;
   if (!content) throw new Error('Anthropic returned empty response');
 

@@ -2213,33 +2213,70 @@ function cmdLlm(args) {
 // (ENOTDIR/ENOENT), permission (EACCES/EPERM), write, and KDF failures and
 // would send the user to `identity show`, which then reports no identity.
 function failIdentityInit(err) {
-  const message = (err && err.message) || String(err);
   const code = err && err.code;
-  // Forward-compatible with Studio Core's committed-but-durability-unconfirmed
-  // marker: the identity was committed to disk by the atomic publish, but the
-  // post-commit durability confirmation failed. The identity exists — re-running
-  // init would fail with "already exists" — so the user must verify and back up
-  // instead of retrying.
-  if (code === 'IDENTITY_COMMITTED_DURABILITY_UNCONFIRMED') {
+  // Identity state is classified only by Studio Core's stable machine codes
+  // (or by stable OS error codes). Human-readable error text is diagnostic
+  // material, never a state oracle.
+  if (code === 'IDENTITY_ALREADY_EXISTS') {
+    fail(
+      `Identity already exists [${code}] and passed consistency verification. `
+      + "Use 'kdna-studio identity show' to view it."
+    );
+  }
+  if (code === 'IDENTITY_INCOMPLETE') {
+    fail(
+      `Identity is incomplete [${code}]: only part of the canonical three-file identity exists. `
+      + 'No existing file was changed or removed. Preserve the files and recover the identity manually.'
+    );
+  }
+  if (code === 'IDENTITY_CORRUPT') {
+    fail(
+      `Identity is corrupt [${code}]: all canonical files exist but failed consistency verification. `
+      + 'Do not sign with or use this identity. Preserve the files and recover from a trusted backup.'
+    );
+  }
+  if (code === 'IDENTITY_COMMITTED_DURABILITY_UNCONFIRMED'
+      && err.committed === true && err.identityVerified === true) {
     fail(
       `Identity committed, durability unconfirmed [${code}]: your identity was created, `
       + 'but confirming it is fully durable on disk failed.\n'
       + 'Do NOT re-run `kdna-studio identity init`.\n'
       + '  1. Verify the identity with: kdna-studio identity show\n'
-      + '  2. Back up your private key promptly.\n'
-      + `  Detail: ${message}`
+      + '  2. Back up your private key promptly.'
     );
   }
-  if (/already exist/i.test(message)) {
-    fail(`Identity already exists. Use 'kdna-studio identity show' to view. ${message}`);
+  if (code === 'IDENTITY_COMMITTED_INCONSISTENT') {
+    fail(
+      `Identity committed but inconsistent [${code}]: files reached the canonical identity directory, `
+      + 'but they did not pass post-commit consistency verification.\n'
+      + 'Do NOT sign with, show as valid, delete, or automatically retry this identity.\n'
+      + 'Preserve and restrict access to the directory, then recover from a trusted backup or have an '
+      + 'administrator inspect all three files.'
+    );
   }
-  if (code === 'ENOTDIR' || code === 'ENOENT' || /not a directory/i.test(message)) {
-    fail(`Identity init failed — the identity path is not usable: ${message}`);
+  if (code === 'IDENTITY_COMMITTED_DURABILITY_UNCONFIRMED') {
+    fail(
+      'Identity init returned an invalid committed-state result '
+      + `[${code}]: verified identity evidence is missing. Do not retry or use the identity; recover manually.`
+    );
+  }
+  if (code === 'ENOTDIR' || code === 'ENOENT') {
+    fail(`Identity init failed — the identity path is not usable [${code}].`);
   }
   if (code === 'EACCES' || code === 'EPERM') {
-    fail(`Identity init failed — permission denied: ${message}`);
+    fail(`Identity init failed — permission denied [${code}].`);
   }
-  fail(`Identity init failed: ${message}`);
+  if (code === 'ENOSPC') {
+    fail(`Identity init failed — storage is full [${code}]. No identity was committed.`);
+  }
+  if (code === 'EIO') {
+    fail(`Identity init failed — storage I/O failed [${code}]. Do not assume an identity was created.`);
+  }
+  if (code === 'IDENTITY_KDF_FAILED') {
+    fail(`Identity init failed — key derivation failed [${code}]. No identity was committed.`);
+  }
+  const displayCode = typeof code === 'string' && /^[A-Z0-9_]+$/.test(code) ? code : 'UNKNOWN';
+  fail(`Identity init failed [${displayCode}]. No recognized identity state was reported.`);
 }
 
 function cmdIdentity(args) {

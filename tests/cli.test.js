@@ -369,13 +369,6 @@ test('identity init creates local creator identity', (t) => {
   assert.equal(creatorJson.display_name, 'Test Creator');
   assert.equal(creatorJson.verified, false);
 
-  // Double init should fail
-  const result2 = run(['identity', 'init', '--name', 'Duplicate'], {
-    tmp,
-    env: { ...process.env, KDNA_IDENTITY_DIR: identityDir },
-  });
-  assert.equal(result2.status, 2);
-  assert.match(result2.stderr, /already exists/);
 });
 
 test('identity show displays current identity', (t) => {
@@ -463,11 +456,119 @@ test('identity init with a real existing identity reports already exists', (t) =
 
   const second = run(['identity', 'init', '--name', 'Second'], {
     tmp,
-    env: { ...process.env, KDNA_IDENTITY_DIR: identityDir },
+    env: {
+      ...process.env,
+      KDNA_IDENTITY_DIR: identityDir,
+      KDNA_TEST_INIT_FAILURE: 'already-exists',
+      NODE_OPTIONS: `--require ${path.join(root, 'fixtures', 'mock-init-identity-failure.js')}`,
+    },
   });
   assert.equal(second.status, 2);
-  assert.match(second.stderr, /Identity already exists\./);
+  assert.match(second.stderr, /Identity already exists \[IDENTITY_ALREADY_EXISTS\]/);
+  assert.match(second.stderr, /passed consistency verification/);
   assert.match(second.stderr, /identity show/);
+});
+
+for (const file of ['creator.json', 'kdna.key', 'kdna.pub']) {
+  test(`identity init classifies only ${file} as incomplete and preserves it`, (t) => {
+    const tmp = tmpDir();
+    t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+    const identityDir = path.join(tmp, 'identity');
+    fs.mkdirSync(identityDir);
+    const content = file === 'creator.json'
+      ? JSON.stringify({ creator_id: 'kdna:creator:ed25519:partial' })
+      : `partial-${file}`;
+    fs.writeFileSync(path.join(identityDir, file), content);
+
+    const result = run(['identity', 'init', '--name', 'Incomplete'], {
+      tmp,
+      env: {
+        ...process.env,
+        KDNA_IDENTITY_DIR: identityDir,
+        KDNA_TEST_INIT_FAILURE: 'incomplete',
+        NODE_OPTIONS: `--require ${path.join(root, 'fixtures', 'mock-init-identity-failure.js')}`,
+      },
+    });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /Identity is incomplete \[IDENTITY_INCOMPLETE\]/);
+    assert.doesNotMatch(result.stderr, /already exists/i);
+    assert.equal(fs.readFileSync(path.join(identityDir, file), 'utf8'), content);
+    assert.deepEqual(fs.readdirSync(identityDir), [file]);
+  });
+}
+
+test('identity init classifies a three-file creator_id mismatch as corrupt', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const identityDir = path.join(tmp, 'identity');
+  const initial = run(['identity', 'init', '--name', 'Original'], {
+    tmp,
+    env: { ...process.env, KDNA_IDENTITY_DIR: identityDir },
+  });
+  assert.equal(initial.status, 0, initial.stderr);
+  const creatorPath = path.join(identityDir, 'creator.json');
+  const creator = JSON.parse(fs.readFileSync(creatorPath, 'utf8'));
+  creator.creator_id = `${creator.creator_id}-wrong`;
+  fs.writeFileSync(creatorPath, JSON.stringify(creator, null, 2));
+
+  const result = run(['identity', 'init', '--name', 'Replacement'], {
+    tmp,
+    env: {
+      ...process.env,
+      KDNA_IDENTITY_DIR: identityDir,
+      KDNA_TEST_INIT_FAILURE: 'corrupt',
+      NODE_OPTIONS: `--require ${path.join(root, 'fixtures', 'mock-init-identity-failure.js')}`,
+    },
+  });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Identity is corrupt \[IDENTITY_CORRUPT\]/);
+  assert.match(result.stderr, /Do not sign with or use/);
+  assert.doesNotMatch(result.stderr, /already exists/i);
+});
+
+test('identity init classifies cross-copied public keys as corrupt', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const identityA = path.join(tmp, 'identity-a');
+  const identityB = path.join(tmp, 'identity-b');
+  for (const [name, dir] of [['A', identityA], ['B', identityB]]) {
+    const initial = run(['identity', 'init', '--name', name], {
+      tmp,
+      env: { ...process.env, KDNA_IDENTITY_DIR: dir },
+    });
+    assert.equal(initial.status, 0, initial.stderr);
+  }
+  fs.copyFileSync(path.join(identityB, 'kdna.pub'), path.join(identityA, 'kdna.pub'));
+
+  const result = run(['identity', 'init', '--name', 'Replacement'], {
+    tmp,
+    env: {
+      ...process.env,
+      KDNA_IDENTITY_DIR: identityA,
+      KDNA_TEST_INIT_FAILURE: 'corrupt',
+      NODE_OPTIONS: `--require ${path.join(root, 'fixtures', 'mock-init-identity-failure.js')}`,
+    },
+  });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Identity is corrupt \[IDENTITY_CORRUPT\]/);
+  assert.doesNotMatch(result.stderr, /already exists/i);
+});
+
+test('identity init does not misclassify an unrelated EEXIST as an existing identity', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const result = run(['identity', 'init', '--name', 'Unrelated'], {
+    tmp,
+    env: {
+      ...process.env,
+      KDNA_IDENTITY_DIR: path.join(tmp, 'identity'),
+      KDNA_TEST_INIT_FAILURE: 'unrelated-eexist',
+      NODE_OPTIONS: `--require ${path.join(root, 'fixtures', 'mock-init-identity-failure.js')}`,
+    },
+  });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Identity init failed \[EEXIST\]/);
+  assert.doesNotMatch(result.stderr, /already exists/i);
 });
 
 test('identity init write failure does not claim the identity already exists', (t) => {
@@ -487,7 +588,31 @@ test('identity init write failure does not claim the identity already exists', (
   assert.equal(result.status, 2);
   assert.doesNotMatch(result.stderr, /already exists/i);
   assert.match(result.stderr, /Identity init failed/);
+  assert.match(result.stderr, /storage is full/);
   assert.match(result.stderr, /ENOSPC/);
+});
+
+test('identity init reports storage I/O and KDF failures by stable code', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const hook = path.join(root, 'fixtures', 'mock-init-identity-failure.js');
+  for (const [mode, expected] of [
+    ['io-failure', /storage I\/O failed \[EIO\]/],
+    ['kdf-failure', /key derivation failed \[IDENTITY_KDF_FAILED\]/],
+  ]) {
+    const result = run(['identity', 'init', '--name', mode], {
+      tmp,
+      env: {
+        ...process.env,
+        KDNA_IDENTITY_DIR: path.join(tmp, `identity-${mode}`),
+        KDNA_TEST_INIT_FAILURE: mode,
+        NODE_OPTIONS: `--require ${hook}`,
+      },
+    });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, expected);
+    assert.doesNotMatch(result.stderr, /already exists/i);
+  }
 });
 
 test('identity init post-commit durability failure reports committed but unconfirmed', (t) => {
@@ -511,6 +636,38 @@ test('identity init post-commit durability failure reports committed but unconfi
   assert.match(result.stderr, /identity show/);
   assert.match(result.stderr, /Back up your private key/);
   assert.doesNotMatch(result.stderr, /already exists/i);
+});
+
+test('identity init post-commit inconsistency blocks normal use and gives recovery guidance', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const hook = path.join(root, 'fixtures', 'mock-init-identity-failure.js');
+
+  const result = run(['identity', 'init', '--name', 'Inconsistent'], {
+    tmp,
+    env: {
+      ...process.env,
+      KDNA_IDENTITY_DIR: path.join(tmp, 'identity'),
+      KDNA_TEST_INIT_FAILURE: 'committed-inconsistent',
+      NODE_OPTIONS: `--require ${hook}`,
+    },
+  });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Identity committed but inconsistent \[IDENTITY_COMMITTED_INCONSISTENT\]/);
+  assert.match(result.stderr, /Do NOT sign with/);
+  assert.match(result.stderr, /Preserve and restrict access/);
+  assert.doesNotMatch(result.stderr, /identity show/);
+  assert.doesNotMatch(result.stderr, /Back up your private key promptly/);
+  assert.doesNotMatch(result.stderr, /already exists/i);
+});
+
+test('identity init classification contains no human-text state inference', () => {
+  const source = fs.readFileSync(path.join(root, 'bin', 'kdna-studio.js'), 'utf8');
+  const functionSource = source.slice(
+    source.indexOf('function failIdentityInit'),
+    source.indexOf('function cmdIdentity'),
+  );
+  assert.doesNotMatch(functionSource, /\.test\(message\)|\/already exist\/i|\/not a directory\/i/);
 });
 
 // ── Create from folder ──────────────────────────────────────────────

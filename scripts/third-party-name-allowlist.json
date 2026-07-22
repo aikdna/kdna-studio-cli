@@ -37,9 +37,9 @@
   },
   {
     "file": "src/llm/config.js",
-    "text": "http://localhost:11434/v1",
+    "text": "http://127.0.0.1:11434/v1",
     "count": 2,
-    "reason": "Provider-owned local OpenAI-compatible API route."
+    "reason": "Provider-owned local OpenAI-compatible API route on the exact numeric loopback transport exception."
   },
   {
     "file": ".github/workflows/stale.yml",

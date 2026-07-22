@@ -2,13 +2,23 @@
 
 ## Unreleased
 
+- Make supported AI-authoring provider transport fail closed. LLM base URLs
+  now require external HTTPS, with plain HTTP limited to exact numeric
+  loopback hosts `127.0.0.1` and `[::1]`; `localhost`, LAN/external HTTP,
+  credentials, query/fragment components, trailing or encoded paths, and URL
+  parser normalization are rejected before a request. Built-in local/Ollama
+  defaults use `127.0.0.1`. OpenAI-compatible and Anthropic requests refuse
+  all redirects, bound successful JSON response bytes, and expose only stable
+  transport/HTTP/response categories instead of provider response bodies,
+  full URLs, tokens, or raw fetch errors. Invalid provider JSON diagnostics
+  are generic and do not echo response content.
 - Remove Test Lab, Feynman, and Quality report entry points from the default
   CLI and npm tarball while retaining their workshop source and regression
   history in the repository.
 - Keep the supported create, evidence, card review, compile, distillation,
   interview, and Runtime export path unchanged.
-- Rebind the corrective chain to Studio Core `3.0.0` at exact commit
-  `aea2d9c035643b60f26e4e855a295c48305524a9`. The major coordinate records
+- Rebind the corrective chain to final Studio Core `3.0.0` main commit
+  `65d638385f8ce4542f7a8b82d72ea35487e7b4b3`. The major coordinate records
   the removal of public 2.x exports; its release tarball excludes the retired
   paths while preserving their repository sources.
 
@@ -21,8 +31,8 @@
   provenance.
 - Exercise ordinary and encrypted create → export → validate → plan-load →
   load behavior against the corrective local Runtime candidates.
-- Bind that chain to exact Core commit `3676ab0e4b54b83c4193eef3519b19cc6d0cd245`
-  and exact Studio Core commit `bc30703d9793241d0e79c895c80bba1a4bbd42d3`.
+- Bind that chain to final Core main commit `76bbc587ce05f7e575c2373832cc5c9eee9df98a`
+  and final Studio Core main commit `65d638385f8ce4542f7a8b82d72ea35487e7b4b3`.
 
 This is an unpublished Development Preview candidate. No existing registry
 version or package bytes are changed.

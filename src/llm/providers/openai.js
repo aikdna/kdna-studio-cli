@@ -1,8 +1,9 @@
 // OpenAI-compatible chat completions provider
 // Works with: OpenAI, DeepSeek, OpenRouter, Groq, Ollama, LM Studio, Perplexity, and any OpenAI-compatible API
 
+const { postLlmJson } = require('../transport');
+
 async function chat(config, messages, options = {}) {
-  const url = `${config.baseURL}/chat/completions`;
   const model = options.model || config.model;
   const temperature = options.temperature ?? config.temperature ?? 0.7;
   const maxTokens = options.maxTokens || config.maxTokens || 4096;
@@ -22,12 +23,12 @@ async function chat(config, messages, options = {}) {
     headers['X-Title'] = 'KDNA Studio CLI';
   }
 
-  const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(120000) });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`LLM API error ${res.status}: ${text.slice(0, 500)}`);
-  }
-  const data = await res.json();
+  const data = await postLlmJson({
+    baseUrl: config.baseURL,
+    endpoint: '/chat/completions',
+    headers,
+    body,
+  });
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error('LLM returned empty response');
 

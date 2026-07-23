@@ -26,7 +26,7 @@
 - Keep the supported create, evidence, card review, compile, distillation,
   interview, and Runtime export path unchanged.
 - Rebind the corrective chain to final Studio Core `3.0.0` main commit
-  `d215be1b1535e04dc865a996609c0144415575c1`. The major coordinate records
+  `8ca7df19cadd32a08b4067a39992bb28039bf294`. The major coordinate records
   the removal of public 2.x exports; its release tarball excludes the retired
   paths while preserving their repository sources.
 
@@ -40,7 +40,7 @@
 - Exercise ordinary and encrypted create → export → validate → plan-load →
   load behavior against the corrective local Runtime candidates.
 - Bind that chain to final Core main commit `76bbc587ce05f7e575c2373832cc5c9eee9df98a`
-  and final Studio Core main commit `d215be1b1535e04dc865a996609c0144415575c1`.
+  and final Studio Core main commit `8ca7df19cadd32a08b4067a39992bb28039bf294`.
 
 This is an unpublished Development Preview candidate. No existing registry
 version or package bytes are changed.

@@ -737,7 +737,8 @@ function importFromKdna(kdnaPath) {
     fail(`KDNA file too large (${(stats.size / (1024 * 1024)).toFixed(1)} MiB, max 50 MiB): ${absKdna}`);
   }
 
-  // ── read ZIP before Core validation so the profile can branch ──
+  // Read the container before Core validation only to produce a stable
+  // profile error. Studio does not retain a second Runtime contract.
   const zipBuf = fs.readFileSync(absKdna);
   const entries = readZipEntries(zipBuf);
   validateZipContainer(entries);
@@ -748,22 +749,17 @@ function importFromKdna(kdnaPath) {
   const payload = decodePayload(entries.get('payload.kdnab'), manifest);
   const profile = payload?.profile;
 
-  // ── branch: current profile requires Core validate; legacy uses a frozen contract ──
-  let runtimeCore, isLegacy;
+  if (profile !== 'kdna.payload.judgment') {
+    fail(`Unsupported payload profile "${profile || '(none)'}". Only kdna.payload.judgment is accepted for --from-kdna.`);
+  }
+
+  let runtimeCore;
   try { runtimeCore = require('@aikdna/kdna-core'); } catch {
     fail('@aikdna/kdna-core is required to validate --from-kdna imports.');
   }
-  if (profile === 'kdna.payload.judgment') {
-    const validation = runtimeCore.validate(absKdna);
-    if (!validation.overall_valid) {
-      fail(`Not a current .kdna asset: ${(validation.problems || []).join('; ')}`);
-    }
-    isLegacy = false;
-  } else if (profile === 'judgment-profile-v1') {
-    validateLegacyImportContract(manifest, payload);
-    isLegacy = true;
-  } else {
-    fail(`Unsupported payload profile "${profile || '(none)'}". Only kdna.payload.judgment and judgment-profile-v1 are accepted for --from-kdna.`);
+  const validation = runtimeCore.validate(absKdna);
+  if (!validation.overall_valid) {
+    fail(`Not a current .kdna asset: ${(validation.problems || []).join('; ')}`);
   }
 
   const lineage = {
@@ -777,13 +773,8 @@ function importFromKdna(kdnaPath) {
   const importedCards = [];
   let judgmentCore = null;
   try {
-    if (isLegacy) {
-      importedCards.push(...cardsFromLegacyPayload(payload));
-      judgmentCore = judgmentCoreFromLegacyPayload(payload);
-    } else {
-      importedCards.push(...cardsFromPayload(payload));
-      judgmentCore = judgmentCoreFromRuntimePayload(payload);
-    }
+    importedCards.push(...cardsFromPayload(payload));
+    judgmentCore = judgmentCoreFromRuntimePayload(payload);
   } catch (e) {
     fail(`Could not import cards from payload.kdnab: ${e.message}`);
   }
@@ -809,10 +800,6 @@ function importFromKdna(kdnaPath) {
       : null,
   };
 }
-
-// ── legacy judgment-profile-v1 import support ───────────────────────────
-
-const LEGACY_PROFILE = 'judgment-profile-v1';
 
 const LEGACY_PATTERN_TYPE_MAP = {
   term: 'term',
@@ -866,28 +853,6 @@ function validateZipContainer(entries) {
   if (totalSize > MAX_TOTAL_UNCOMPRESSED) {
     fail(`ZIP container total uncompressed size exceeds limit (${totalSize} bytes)`);
   }
-}
-
-function validateLegacyImportContract(manifest, payload) {
-  // Frozen validation for judgment-profile-v1 assets.
-  if (!manifest || typeof manifest !== 'object') fail('Legacy asset manifest is missing or invalid');
-  if (manifest.kdna_version !== '1.0') fail(`Legacy asset must declare kdna_version "1.0", got "${manifest.kdna_version}"`);
-  if (!manifest.asset_id || typeof manifest.asset_id !== 'string') fail('Legacy asset_id is missing');
-  if (!manifest.compatibility || manifest.compatibility.profile !== LEGACY_PROFILE) {
-    fail(`Legacy asset compatibility.profile must be "${LEGACY_PROFILE}"`);
-  }
-  if (!manifest.payload || manifest.payload.path !== 'payload.kdnab') {
-    fail('Legacy asset payload.path must be "payload.kdnab"');
-  }
-  if (manifest.payload.encoding !== 'cbor') {
-    fail('Legacy asset payload.encoding must be "cbor"');
-  }
-  if (manifest.payload.encrypted) fail('Legacy asset must not be encrypted');
-  if (!payload || typeof payload !== 'object') fail('Legacy asset payload is missing or invalid');
-  if (payload.profile !== LEGACY_PROFILE) fail('Legacy payload must declare profile "judgment-profile-v1"');
-  if (!payload.core || typeof payload.core !== 'object') fail('Legacy payload must contain a "core" object');
-  if (!Array.isArray(payload.core.axioms)) fail('Legacy payload must contain axioms');
-  if (!payload.patterns || !Array.isArray(payload.patterns)) fail('Legacy payload must contain patterns');
 }
 
 function judgmentCoreFromLegacyPayload(payload) {

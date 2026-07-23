@@ -219,18 +219,17 @@ test('Studio CLI refuses a packaged asset with a non-current payload profile', (
   assert.equal(fs.existsSync(importedProject), false);
 });
 
-test('create --from-kdna imports a legacy asset and preserves all pattern subtypes', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-legacy-full-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-
-  // Build a comprehensive legacy .kdna inline exercising every card type
+test('create --from-kdna imports a current asset and preserves all pattern subtypes', (t) => {
+  const { root, projectDir: baseProjectDir } = fixture(t);
+  const baseAsset = path.join(root, 'base.kdna');
+  assert.equal(exportAsset(baseProjectDir, baseAsset).status, 0);
   const srcDir = path.join(root, 'source');
-  fs.mkdirSync(srcDir, { recursive: true });
-  fs.writeFileSync(path.join(srcDir, 'mimetype'), 'application/vnd.kdna.asset');
+  core.unpack(baseAsset, srcDir);
 
   const cbor = require('cbor-x');
   const payload = {
-    profile: ['judgment','profile',['v','1'].join('')].join('-'),
+    profile: 'kdna.payload.judgment',
+    profile_version: '0.1.0',
     core: {
       highest_question: 'What is the right action?',
       axioms: [
@@ -261,7 +260,7 @@ test('create --from-kdna imports a legacy asset and preserves all pattern subtyp
       self_check: ['Did I consider all options?', 'Is this reversible?', 'Would a reasonable person agree?'],
     },
     evolution: {
-      stages: [{ id: 'ev_01', name: 'Initial draft', level: 'alpha', description: 'First pass.', indicators: ['reviewed'] }],
+      stages: [{ id: 'ev_01', name: 'Initial draft', level: 'alpha', description: 'First pass.', indicators: ['reviewed'], source_authored: true }],
       evolution_layers: [{ id: 'layer_01', from_stage: 'ev_01', to_stage: 'ev_01', capability: 'baseline' }],
       measurement: [{ id: 'measure_01', what: 'coverage', how: 'count', threshold: '1' }],
       changelog: [{ version: '0.1.0', changes: ['initial'] }],
@@ -269,28 +268,17 @@ test('create --from-kdna imports a legacy asset and preserves all pattern subtyp
     },
   };
   fs.writeFileSync(path.join(srcDir, 'payload.kdnab'), cbor.encode(payload));
-
-  const manifest = {
-    kdna_version: '1.0', asset_id: 'kdna:test:full-fixture', asset_uid: 'urn:uuid:00000000-0000-4000-8000-ffffffffffff',
-    asset_type: 'domain', title: 'Full Legacy Fixture', version: '0.1.0', judgment_version: '0.1.0',
-    compatibility: { profile: ['judgment','profile',['v','1'].join('')].join('-') },
-    payload: { path: 'payload.kdnab', encoding: 'cbor', encrypted: false },
-    access: 'public', language: 'en', license: { type: 'CC-BY-4.0' }, lineage: { type: 'original' },
-    creator: { name: 'Test', id: 'test' }, created_at: '2026-01-01T00:00:00.000Z',
-  };
-  fs.writeFileSync(path.join(srcDir, 'kdna.json'), JSON.stringify(manifest, null, 2) + '\n');
+  const manifest = JSON.parse(fs.readFileSync(path.join(srcDir, 'kdna.json'), 'utf8'));
   fs.writeFileSync(path.join(srcDir, 'checksums.json'), JSON.stringify(core.buildChecksums(srcDir), null, 2) + '\n');
 
-  const legacyKdna = path.join(root, 'full.kdna');
-  core.pack(srcDir, legacyKdna);
+  const sourceKdna = path.join(root, 'full.kdna');
+  core.pack(srcDir, sourceKdna);
 
-  // Core 0.20 must reject it
-  assert.equal(core.validate(legacyKdna).overall_valid, false, 'Core 0.20 must reject legacy format');
+  assert.equal(core.validate(sourceKdna).overall_valid, true, 'Core must accept the current asset');
 
-  // Studio create --from-kdna must succeed
-  const projectDir = path.join(root, 'project');
+  const projectDir = path.join(root, 'full-import');
   const result = spawnSync(process.execPath,
-    [BIN, 'create', projectDir, '--from-kdna', legacyKdna, '--name', '@test/full'],
+    [BIN, 'create', projectDir, '--from-kdna', sourceKdna, '--name', '@test/full'],
     { encoding: 'utf8', env: { ...process.env } },
   );
   assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -303,7 +291,7 @@ test('create --from-kdna imports a legacy asset and preserves all pattern subtyp
   assert.deepEqual(
     importedAxiom?.fields?.source_refs,
     ['source:chapter-1', 'source:chapter-2'],
-    'declared axiom source_refs survive legacy import',
+    'declared axiom source_refs survive current import',
   );
   assert.deepEqual(importedAxiom?.fields?.supports, { claim: 'reversibility matters', strength: 'primary' });
   assert.deepEqual(project.source_core_structure, payload.core.core_structure);
@@ -312,7 +300,7 @@ test('create --from-kdna imports a legacy asset and preserves all pattern subtyp
   // Pattern subtypes
   for (const sub of ['failure_pattern','design_pattern','response_pattern','stopping_pattern','completion_pattern']) {
     const match = cards.some(c => c.type === 'pattern' && c.fields?.type === sub);
-    assert.ok(match, `missing legacy subtype ${sub}`);
+    assert.ok(match, `missing pattern subtype ${sub}`);
   }
   assert.deepEqual(
     cards.find(c => c.id === 'fp_01')?.fields?.evidence_required,
@@ -398,11 +386,12 @@ test('create --from-kdna imports a legacy asset and preserves all pattern subtyp
 });
 
 
-test('create --from-kdna imports a minimal legacy fixture and fails on unknown profiles', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-legacy-fixture-'));
+test('create --from-kdna rejects the retired KDNA-owned payload profile', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-retired-profile-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
-  // Build a minimal legacy judgment-profile-v1 .kdna inline
+  // Construct the retired identifier without retaining it as a live source
+  // token. This is hostile input, not a compatibility reader.
   const srcDir = path.join(root, 'source');
   fs.mkdirSync(srcDir, { recursive: true });
   fs.writeFileSync(path.join(srcDir, 'mimetype'), 'application/vnd.kdna.asset');
@@ -447,29 +436,18 @@ test('create --from-kdna imports a minimal legacy fixture and fails on unknown p
   };
   fs.writeFileSync(path.join(srcDir, 'payload.kdnab'), cbor.encode(payload));
   fs.writeFileSync(path.join(srcDir, 'checksums.json'), JSON.stringify(core.buildChecksums(srcDir), null, 2) + '\n');
-  const legacyKdna = path.join(root, 'legacy.kdna');
-  core.pack(srcDir, legacyKdna);
+  const retiredKdna = path.join(root, 'retired.kdna');
+  core.pack(srcDir, retiredKdna);
 
-  // Core 0.20 must reject it
-  assert.equal(core.validate(legacyKdna).overall_valid, false, 'Core 0.20 must reject legacy asset');
+  assert.equal(core.validate(retiredKdna).overall_valid, false, 'Core must reject the retired profile');
 
-  // Studio create --from-kdna must succeed
   const projectDir = path.join(root, 'project');
   const result = spawnSync(
     process.execPath,
-    [BIN, 'create', projectDir, '--from-kdna', legacyKdna, '--name', '@test/legacy'],
+    [BIN, 'create', projectDir, '--from-kdna', retiredKdna, '--name', '@test/retired'],
     { encoding: 'utf8', env: { ...process.env } },
   );
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-
-  const project = JSON.parse(fs.readFileSync(path.join(projectDir, 'studio.project.json'), 'utf8'));
-  const cards = project.cards || [];
-  assert.equal(cards.length, 9, `expected 9 cards, got ${cards.length}`);
-  assert.ok(cards.some(c => c.type === 'pattern' && c.fields?.type === 'failure_pattern'), 'failure_pattern subtype');
-  assert.ok(cards.some(c => c.type === 'pattern' && c.fields?.type === 'design_pattern'), 'design_pattern subtype');
-  assert.ok(cards.some(c => c.type === 'misunderstanding'), 'misunderstanding');
-  assert.ok(cards.some(c => c.type === 'self_check'), 'self_check');
-  assert.ok(cards.some(c => c.type === 'reasoning'), 'reasoning');
-  assert.equal(project.judgment_core?.highest_question, 'What is the right action?');
-  assert.equal('worldview' in (project.judgment_core || {}), false, 'missing worldview must be absent, not [] or null');
+  assert.notEqual(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stderr, /Only kdna\.payload\.judgment is accepted/);
+  assert.equal(fs.existsSync(projectDir), false);
 });

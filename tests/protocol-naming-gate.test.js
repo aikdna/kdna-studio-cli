@@ -27,6 +27,22 @@ test('removed localhost transport exception is not retained in the exact allowli
   );
 });
 
+test('KDNA-owned retired names are isolated to exact frozen history', () => {
+  const thirdParty = JSON.parse(
+    fs.readFileSync(path.join(ROOT, 'scripts', 'third-party-name-allowlist.json'), 'utf8'),
+  );
+  const frozenHistory = JSON.parse(
+    fs.readFileSync(path.join(ROOT, 'scripts', 'frozen-history-name-allowlist.json'), 'utf8'),
+  );
+  const retiredProfile = ['judgment', 'profile', ['v', '1'].join('')].join('-');
+
+  assert.equal(thirdParty.some((entry) => entry.text === retiredProfile), false);
+  assert.deepEqual(
+    frozenHistory.map(({ file, text, count }) => ({ file, text, count })),
+    [{ file: 'CHANGELOG.md', text: retiredProfile, count: 1 }],
+  );
+});
+
 test('repository and actual npm tar contain only current KDNA-owned names', () => {
   assert.deepEqual(scanTree(ROOT), []);
   assert.deepEqual(scanPackedArtifact(ROOT), []);

@@ -46,29 +46,5 @@
     "text": "actions/stale@v10",
     "count": 1,
     "reason": "GitHub Actions release selector owned by actions/stale."
-  },
-  {
-    "file": "bin/kdna-studio.js",
-    "text": "judgment-profile-v1",
-    "count": 6,
-    "reason": "Legacy asset profile coordinate from the KDNA 0.17 era. A known historical format identifier, not a current generation label."
-  },
-  {
-    "file": "CHANGELOG.md",
-    "text": "judgment-profile-v1",
-    "count": 1,
-    "reason": "Legacy asset profile coordinate referenced in changelog. A known historical format identifier, not a current generation label."
-  },
-  {
-    "file": "tests/protocol-producer.test.js",
-    "text": "['v','1'].join('')",
-    "count": 4,
-    "reason": "Legacy profile coordinate construction in test fixture; the source string avoids violating the naming gate while testing the human-readable value."
-  },
-  {
-    "file": "tests/protocol-producer.test.js",
-    "text": "judgment-profile-v1",
-    "count": 1,
-    "reason": "Legacy asset profile coordinate in test comment and string construction. Known historical format identifier."
   }
 ]

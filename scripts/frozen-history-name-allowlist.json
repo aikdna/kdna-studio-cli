@@ -1,0 +1,8 @@
+[
+  {
+    "file": "CHANGELOG.md",
+    "text": "judgment-profile-v1",
+    "count": 1,
+    "reason": "Immutable released-history record for Studio CLI 0.10.2; executable code and package bytes no longer accept this KDNA-owned profile."
+  }
+]

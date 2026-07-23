@@ -22,7 +22,12 @@ const TEXT_EXTENSIONS = new Set([
   '.yml',
 ]);
 const SKIPPED_DIRECTORIES = new Set(['.git', 'node_modules']);
-const ALLOWLIST_FILE = 'scripts/third-party-name-allowlist.json';
+const THIRD_PARTY_ALLOWLIST_FILE = 'scripts/third-party-name-allowlist.json';
+const FROZEN_HISTORY_ALLOWLIST_FILE = 'scripts/frozen-history-name-allowlist.json';
+const ALLOWLIST_FILES = new Set([
+  THIRD_PARTY_ALLOWLIST_FILE,
+  FROZEN_HISTORY_ALLOWLIST_FILE,
+]);
 const GENERATION_PATTERN = new RegExp(`\\b${'v'}[0-9]+(?:\\.[0-9]+){0,2}\\b`, 'gi');
 const TEMPLATE_PATTERN = new RegExp(`\\b${'v'}\\$\\{`, 'gi');
 const IDENTIFIER_PATTERN = new RegExp(
@@ -50,8 +55,8 @@ function isTextFile(relative) {
   return TEXT_EXTENSIONS.has(path.extname(relative));
 }
 
-function readAllowlist(root) {
-  const file = path.join(root, ALLOWLIST_FILE);
+function readExactAllowlist(root, relativeFile, { frozenHistory = false } = {}) {
+  const file = path.join(root, relativeFile);
   if (!fs.existsSync(file)) return [];
   const entries = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (!Array.isArray(entries)) throw new Error('third-party naming allowlist must be an array');
@@ -71,8 +76,26 @@ function readAllowlist(root) {
         'third-party naming allowlist entries require file, text, count, and reason',
       );
     }
+    if (
+      frozenHistory &&
+      entry.file !== 'CHANGELOG.md' &&
+      !entry.file.startsWith('docs/archive/')
+    ) {
+      throw new Error(
+        `frozen-history naming entry is not isolated to immutable history: ${entry.file}`,
+      );
+    }
   }
   return entries;
+}
+
+function readAllowlist(root) {
+  return [
+    ...readExactAllowlist(root, THIRD_PARTY_ALLOWLIST_FILE),
+    ...readExactAllowlist(root, FROZEN_HISTORY_ALLOWLIST_FILE, {
+      frozenHistory: true,
+    }),
+  ];
 }
 
 function removeAllowedText(relative, text, allowlist) {
@@ -90,7 +113,7 @@ function removeAllowedText(relative, text, allowlist) {
 }
 
 function findingsForText(relative, text, allowlist) {
-  if (relative === ALLOWLIST_FILE) return [];
+  if (ALLOWLIST_FILES.has(relative)) return [];
   const basename = path.basename(relative);
   const inspectableText =
     basename === 'package-lock.json'

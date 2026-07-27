@@ -32,13 +32,19 @@
 
 ## 0.11.0 (2026-07-27)
 
+- Remove secret-bearing password and passphrase argv forms. Protected export
+  and identity operations now accept secrets only through stdin-backed input.
+- Reject asset-signature export because asset signatures are outside the
+  Development Preview contract; Human Lock remains separate authoring
+  provenance.
+- Exercise ordinary and encrypted create → export → validate → plan-load →
+  load behavior against the corrective local Runtime candidates.
+- Bind that chain to final Core main commit `76bbc587ce05f7e575c2373832cc5c9eee9df98a`
+  and final Studio Core main commit `8ca7df19cadd32a08b4067a39992bb28039bf294`.
 - Remove the compatibility reader for packaged .kdna assets with retired
   payload profiles. --from-kdna now accepts only the current
   kdna.payload.judgment profile and fails explicitly for unsupported profiles.
-- Old JSON source folders remain migratable through --from-folder with no
-  profile restriction — only the packaged container path is narrowed.
-- Exercise the corrected import path against Core and Studio Core current
-  main coordinates.
+- Old JSON source folders remain migratable through --from-folder.
 - Update protocol naming gate, frozen-history name allowlist, and third-party
   name allowlist to reflect the current responsibility naming closure.
 

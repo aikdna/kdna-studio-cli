@@ -2,6 +2,103 @@
 
 ## Unreleased
 
+- Add the default Agent-guided Creation Engine command surface:
+  `create-agent`, `resume`, `status`, `answer`, `review`, `try`, `repair`, and
+  `export-agent`. Natural-language creation input is accepted through stdin or
+  files, and stable JSON status uses purpose/material/judgment/boundary/example/
+  confirmation terms rather than Studio implementation vocabulary.
+- Let `resume` advance Studio Core's private distributed export version before
+  a same-semantic rebuild. Reusing or lowering the last built version fails
+  closed, while semantic revision and judgment version remain unchanged and
+  the rebuilt exact asset must still cross the format and application gates.
+  Prepared, verified and completed export operations are bound to that plan;
+  stale operation replay fails, and exact Runtime verification cross-checks
+  the asset Manifest's distributed and judgment versions.
+- Make `export-agent` require creation acceptance, compile through Studio Core,
+  emit the four-entry Runtime container, and automatically run Core validate,
+  inspect, plan-load, compact/full load, Studio re-import, and semantic
+  round-trip checks before recording a build receipt.
+- Pass the same post-publication byte snapshot and transient stdin password to
+  Studio Core when recording the build receipt. Core now independently
+  recomputes, validates, loads, and semantically reads back those exact bytes;
+  the CLI's own seven result fields cannot mint `FORMAT_VALID`.
+- Keep the Creation workspace loading condition in private compile evidence.
+  Runtime round-trip verification compares only fields in the existing public
+  Runtime contract, so it does not require or mint an undeclared
+  `payload.core.load_condition`.
+- Derive dirty-source development baselines only from an adjacent immutable
+  WP0 candidate-runtime receipt. Source checkouts cannot mint candidate
+  evidence from caller-supplied BOM coordinates, and candidate runtimes reject
+  any caller value that differs from their exact bound baseline.
+- Persist expert interview results, accept both short and internal stage names,
+  include the declared load condition in distillation context, and retain the
+  complete candidate judgment fields. Candidate promotion now fails closed on
+  missing semantics instead of inventing placeholder text.
+- Stop implicitly inheriting a configured local creator identity during
+  `create` and `migrate`. The identity is used only when
+  `--use-local-identity` is explicitly requested.
+- Accept current packaged `.kdna` assets as Creation Engine material after
+  Runtime validation, inspection, load planning, authorized loading, and
+  Studio semantic re-import. Complete judgments become proposed derivation
+  candidates; raw payload bytes are not stored in the workspace. Directory
+  input is labeled as migration provenance rather than assumed current.
+  KDNA input at workspace creation establishes exact fork lineage, while
+  later source additions remain supporting material and never inherit source
+  confirmation.
+- Require `expected_revision` for confirmations and semantic-test acceptance
+  so consent fails closed if the workspace changed after the reviewed status,
+  including semantic changes earlier in the same request. Semantic-test
+  acceptance must be the final submitted evaluation.
+- Clarify that creator labels classify the requested case rather than rate a
+  correctly refusing expected response; a request that crosses the declared
+  scope remains `超出范围`.
+- Pass through Studio Core's private selective application-plan contract:
+  KDNA-sensitive paired advantage is evaluated separately from non-sensitive
+  non-inferiority, while loaded quality, critical safety, and stability remain
+  independent gates. Legacy whole-set plans keep their original semantics.
+- Bind every write command to a private operation ID and canonical request
+  digest. Exact create/resume/answer/review/try/repair/export retries are
+  inert while their semantic coordinate remains current; stale semantic replay
+  and changing JSON, material bytes, output, force, or protected mode under
+  the same ID fail closed.
+- Make export a recoverable `prepared → verified → completed` transaction.
+  Protected retries reuse the exact verified encrypted bytes after process
+  termination, reconcile only digest-bound regular files, and clean only the
+  transaction-owned exact backup. Real SIGKILL regressions cover termination
+  after publish and after operation completion.
+- Expand `status --json` with non-secret material ownership/hash,
+  candidate-review, relation/split, Engine-owned creator-label, and frozen
+  test-plan projections so a fresh Agent can resume without private artifact
+  editing or source-body disclosure.
+- Let `review` record post-ingest material classification decisions without
+  adding a new command. Status exposes the private source-review receipts plus
+  judgment source references and Agent-inference declarations; source bytes,
+  lookup paths and bodies remain excluded.
+- Preserve original PDF/Word bytes separately from transient extracted text:
+  the material digest binds the file snapshot while source-safety scanning
+  uses the extracted text and persists only stable detection codes rather than
+  matched excerpts. Status also exposes the persisted observed creator
+  label; Studio Core, not the caller, derives labelled test results.
+- Add separate pre-result test-plan freezing, preserve candidate reviewer
+  correction receipts, and keep creator-label expectations in Engine test
+  definitions instead of mutable evaluation evidence.
+- Report compile readiness, judgment acceptance, exact-byte format validity,
+  signed application verification, and final Creation completion separately.
+  `export-agent` no longer implies completion; private application plans and
+  signed receipts are separate `try` operations, and `workflow_mode` remains
+  orthogonal to source/claim mode.
+- Let the official `try` flow submit one private coordinator-signed
+  `application_attempt_abandonment` after an isolated Consumer runner failure.
+  The thin CLI accepts no asset or password for this action; Studio Core owns
+  exact attempt/observation/run/timestamp binding, atomic closure, hostile
+  replay rejection, and readiness for a fresh one-use attempt.
+- Bind material digest, validation, authorized loading, protected Capsule
+  re-import, semantic comparison, receipt hash, and publication to immutable
+  byte snapshots. Files are opened without following symlinks and material is
+  cumulatively bounded. Source records retain declared timestamps, file
+  modification time, or authorized asset-manifest time with an explicit time
+  basis. Relation decisions now flow through Agent review using promoted
+  JudgmentUnit IDs.
 - Classify `identity init` failures only from stable Studio Core or OS codes;
   human-readable error text is never used as a state oracle. A verified
   existing identity, partial identity, corrupt identity, path, permission,
@@ -23,12 +120,13 @@
 - Remove Test Lab, Feynman, and Quality report entry points from the default
   CLI and npm tarball while retaining their workshop source and regression
   history in the repository.
-- Keep the supported create, evidence, card review, compile, distillation,
-  interview, and Runtime export path unchanged.
-- Rebind the corrective chain to final Studio Core `3.0.0` main commit
-  `8ca7df19cadd32a08b4067a39992bb28039bf294`. The major coordinate records
-  the removal of public 2.x exports; its release tarball excludes the retired
-  paths while preserving their repository sources.
+- Keep the existing expert create, evidence, card review, compile,
+  distillation, interview, and Runtime export path available alongside the
+  new default Creation Engine surface.
+- Rebind the Creation candidate chain to Core
+  `1b919605988eb514f2491195d6a77b96b17151c4` and Studio Core
+  `087d72f47e53a324fe6345d253c79f2e459767c1`, with exact
+  source-equivalent package artifacts for both dependencies.
 
 ## 0.11.0 (2026-07-27)
 

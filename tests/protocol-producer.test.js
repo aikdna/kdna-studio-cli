@@ -141,12 +141,12 @@ test('Studio CLI binds exact unpublished Runtime candidates and keeps the releas
       [
         '@aikdna/kdna-core',
         '0.21.0',
-        '76bbc587ce05f7e575c2373832cc5c9eee9df98a',
+        '1b919605988eb514f2491195d6a77b96b17151c4',
       ],
       [
         '@aikdna/kdna-studio-core',
         '3.0.0',
-        '8ca7df19cadd32a08b4067a39992bb28039bf294',
+        '087d72f47e53a324fe6345d253c79f2e459767c1',
       ],
     ],
   );
@@ -241,7 +241,7 @@ test('create --from-kdna imports a current asset and preserves all pattern subty
       stances: [{ id: 'st_01', statement: 'Default to restraint.', applies_when: ['high uncertainty'] }],
       boundaries: [{ id: 'bd_01', scope: 'Professional decisions', out_of_scope: 'Personal relationships', acceptable_exceptions: ['life safety'] }],
       risk_model: { risks: [{ id: 'risk_01', name: 'Over-control', description: 'Excessive rules can suppress local judgment.', mitigation: 'Periodic review' }] },
-      core_structure: [{ id: 'rel_01', from: 'ax_01', to: 'ax_02', via: { relation: 'constrains' } }],
+      core_structure: [{ from: 'ax_01', to: 'ax_02', via: 'priority' }],
     },
     patterns: [
       { type: 'term', term: 'wuwei', definition: 'Effortless action', id: 't_01' },

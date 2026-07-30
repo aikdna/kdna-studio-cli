@@ -3,18 +3,263 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+
+function bootstrapCanonical(value) {
+  if (value === undefined) return 'null';
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map(bootstrapCanonical).join(',')}]`;
+  }
+  return `{${Object.keys(value)
+    .filter((key) => value[key] !== undefined)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${bootstrapCanonical(value[key])}`)
+    .join(',')}}`;
+}
+
+function bootstrapSha256(bytes) {
+  return `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
+}
+
+function bootstrapRuntimeTree(runtimeRoot) {
+  const entries = [];
+  const visit = (relative = '') => {
+    const target = relative ? path.join(runtimeRoot, relative) : runtimeRoot;
+    const before = fs.lstatSync(target, { bigint: true });
+    if (before.isSymbolicLink()) {
+      throw new Error('The WP0 candidate runtime contains a symbolic link.');
+    }
+    if ((before.mode & 0o222n) !== 0n) {
+      throw new Error('The WP0 candidate runtime contains a writable entry.');
+    }
+    if (before.isDirectory()) {
+      entries.push({
+        path: relative || '.',
+        type: 'directory',
+        mode: Number(before.mode & 0o777n),
+      });
+      for (const name of fs.readdirSync(target).sort()) {
+        visit(path.join(relative, name));
+      }
+      const after = fs.lstatSync(target, { bigint: true });
+      if (
+        !after.isDirectory() ||
+        after.dev !== before.dev ||
+        after.ino !== before.ino ||
+        after.mtimeNs !== before.mtimeNs ||
+        after.ctimeNs !== before.ctimeNs
+      ) {
+        throw new Error(
+          'The WP0 candidate runtime changed during bootstrap verification.',
+        );
+      }
+      return;
+    }
+    if (!before.isFile()) {
+      throw new Error('The WP0 candidate runtime contains a special file.');
+    }
+    const bytes = fs.readFileSync(target);
+    const after = fs.lstatSync(target, { bigint: true });
+    if (
+      !after.isFile() ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      after.mtimeNs !== before.mtimeNs ||
+      after.ctimeNs !== before.ctimeNs
+    ) {
+      throw new Error(
+        'The WP0 candidate runtime changed during bootstrap verification.',
+      );
+    }
+    entries.push({
+      path: relative,
+      type: 'file',
+      mode: Number(before.mode & 0o777n),
+      size: bytes.length,
+      sha256: bootstrapSha256(bytes),
+    });
+  };
+  visit();
+  return bootstrapSha256(
+    Buffer.from(
+      bootstrapCanonical(
+        entries.filter(
+          (entry) => entry.path !== 'wp0-runtime-receipt.json',
+        ),
+      ),
+      'utf8',
+    ),
+  );
+}
+
+function candidateRuntimeBootstrap(packageRoot) {
+  const absolutePackageRoot = path.resolve(packageRoot);
+  if (path.basename(absolutePackageRoot) !== 'package') return null;
+  const runtimeRoot = path.dirname(absolutePackageRoot);
+  const receiptPath = path.join(runtimeRoot, 'wp0-runtime-receipt.json');
+  let receiptBytes;
+  try {
+    const stat = fs.lstatSync(receiptPath);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) {
+      throw new Error('invalid receipt');
+    }
+    receiptBytes = fs.readFileSync(receiptPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw new Error('The adjacent WP0 candidate runtime receipt is invalid.');
+  }
+  let receipt;
+  try {
+    receipt = JSON.parse(receiptBytes.toString('utf8'));
+  } catch {
+    throw new Error('The adjacent WP0 candidate runtime receipt is invalid JSON.');
+  }
+  const unsigned = { ...receipt };
+  delete unsigned.receipt_sha256;
+  const baseline = receipt.development_baseline;
+  if (
+    receipt.schema !== 'aikdna.creation-engine.wp0-candidate-runtime/1.0' ||
+    receipt.evidence_class !==
+      'IMMUTABLE_WP0_CANDIDATE_ARTIFACT_RUNTIME' ||
+    receipt.release_authorized !== false ||
+    receipt.receipt_sha256 !==
+      bootstrapSha256(Buffer.from(bootstrapCanonical(unsigned), 'utf8')) ||
+    !/^sha256:[0-9a-f]{64}$/.test(
+      String(receipt.runtime_tree_sha256 || ''),
+    ) ||
+    !/^sha256:[0-9a-f]{64}$/.test(
+      String(baseline?.bom_semantic_digest || ''),
+    ) ||
+    !/^sha256:[0-9a-f]{64}$/.test(
+      String(baseline?.bom_file_digest || ''),
+    )
+  ) {
+    throw new Error(
+      'The adjacent WP0 candidate runtime receipt failed self-validation.',
+    );
+  }
+  if (bootstrapRuntimeTree(runtimeRoot) !== receipt.runtime_tree_sha256) {
+    throw new Error(
+      'The adjacent WP0 candidate runtime tree failed exact bootstrap verification.',
+    );
+  }
+  return {
+    developmentRuntime: {
+      schema: 'aikdna.creation-build-runtime/0.1.0',
+      evidence_class: receipt.evidence_class,
+      candidate_runtime_receipt_sha256: receipt.receipt_sha256,
+      candidate_runtime_tree_sha256: receipt.runtime_tree_sha256,
+      cli_entrypoint_sha256: bootstrapSha256(fs.readFileSync(__filename)),
+      bom_semantic_digest: baseline.bom_semantic_digest,
+      bom_file_digest: baseline.bom_file_digest,
+    },
+    developmentBaseline: JSON.parse(JSON.stringify(baseline)),
+  };
+}
+
+const BOOTSTRAP_PACKAGE_ROOT = path.resolve(__dirname, '..');
+const BOOTSTRAP_DEVELOPMENT_AUTHORITY =
+  candidateRuntimeBootstrap(BOOTSTRAP_PACKAGE_ROOT);
+const BOOTSTRAP_DEVELOPMENT_RUNTIME =
+  BOOTSTRAP_DEVELOPMENT_AUTHORITY?.developmentRuntime || null;
+const BOOTSTRAP_DEVELOPMENT_BASELINE =
+  BOOTSTRAP_DEVELOPMENT_AUTHORITY?.developmentBaseline || null;
+
 const zlib = require('zlib');
 const cbor = require('cbor-x');
 const { execFileSync } = require('child_process');
 
+function deterministicSourceDigest(paths) {
+  const files = [];
+  function visit(target, root) {
+    const stat = fs.lstatSync(target);
+    if (stat.isSymbolicLink()) {
+      throw new Error('Studio Core source checkout contains a symbolic link.');
+    }
+    if (stat.isFile()) {
+      files.push({ target, relative: path.relative(root, target) });
+      return;
+    }
+    if (!stat.isDirectory()) return;
+    for (const entry of fs.readdirSync(target).sort()) {
+      visit(path.join(target, entry), root);
+    }
+  }
+  for (const target of paths) {
+    const absolute = path.resolve(target);
+    visit(absolute, path.dirname(absolute));
+  }
+  files.sort((left, right) => left.relative.localeCompare(right.relative));
+  const hash = crypto.createHash('sha256');
+  for (const file of files) {
+    hash.update(file.relative);
+    hash.update('\0');
+    hash.update(fs.readFileSync(file.target));
+    hash.update('\0');
+  }
+  return `sha256:${hash.digest('hex')}`;
+}
+
 function loadStudioCore() {
   const publishedCore = require('@aikdna/kdna-studio-core');
-  if (publishedCore.exportRuntime && publishedCore.protocolContract) return publishedCore;
-  try {
-    return require('../../kdna-studio-core/src');
-  } catch (_) {
-    return publishedCore;
+  const publishedVersion = require('@aikdna/kdna-studio-core/package.json').version;
+  if (
+    publishedCore.exportRuntime &&
+    publishedCore.protocolContract &&
+    publishedCore.creationEngine
+  ) {
+    return {
+      ...publishedCore,
+      creationExportRuntime: publishedCore.exportRuntime,
+      creationStudioCoreCoordinate: {
+        package: '@aikdna/kdna-studio-core',
+        version: publishedVersion,
+        distribution: 'installed-package',
+      },
+    };
   }
+  try {
+    const sourcePaths = [
+      path.join(__dirname, '../../kdna-studio-core/src'),
+      path.join(
+        __dirname,
+        '../../kdna-studio-core/schemas/creation-workspace.schema.json',
+      ),
+      path.join(__dirname, '../../kdna-studio-core/package.json'),
+      path.join(__dirname, '../../kdna-studio-core/package-lock.json'),
+    ].filter((target) => fs.existsSync(target));
+    const sourceDigestBeforeLoad = deterministicSourceDigest(sourcePaths);
+    const sourceCore = require('../../kdna-studio-core/src');
+    const sourceDigestAfterLoad = deterministicSourceDigest(sourcePaths);
+    if (sourceDigestBeforeLoad !== sourceDigestAfterLoad) {
+      throw new Error('Studio Core source changed while it was being loaded.');
+    }
+    if (
+      sourceCore.exportRuntime &&
+      sourceCore.protocolContract &&
+      sourceCore.creationEngine
+    ) {
+      // Keep the installed package as the binding for established expert
+      // commands. A sibling source checkout supplies only the unreleased
+      // Creation Engine and its matching exporter during coordinated
+      // development; it must not silently replace expert APIs.
+      return {
+        ...publishedCore,
+        creationEngine: sourceCore.creationEngine,
+        creationExportRuntime: sourceCore.exportRuntime,
+        creationStudioCoreCoordinate: {
+          package: '@aikdna/kdna-studio-core',
+          version: require('../../kdna-studio-core/package.json').version,
+          distribution: 'source-checkout',
+          source_tree_digest: sourceDigestAfterLoad,
+        },
+      };
+    }
+  } catch (_) {
+    // Installed packages do not have a sibling source checkout.
+  }
+  return publishedCore;
 }
 
 const {
@@ -25,19 +270,42 @@ const {
   creator: creatorApi,
   distillation: distillationApi,
   exportRuntime,
+  creationExportRuntime,
+  creationStudioCoreCoordinate,
   protocolContract,
+  creationEngine,
 } = loadStudioCore();
 
 const llm = require('../src/llm');
 
 const ai = require('../src/ai');
+const {
+  CREATION_COMMANDS,
+  executeCreationCommand,
+} = require('../src/creation-cli');
 
 const EXIT = { OK: 0, INPUT_ERROR: 2, HUMAN_LOCK_REQUIRED: 4, TRUST_FAILED: 5 };
 
 function usage() {
-  console.log(`kdna-studio — Studio-compatible KDNA authoring CLI
+  console.log(`kdna-studio — Agent-guided KDNA Creation Engine
 
-LLM (AI-powered authoring; every AI command accepts --no-llm for a static result):
+Create without schema editing:
+  kdna-studio create-agent <workspace> [--input-file <json> | --input-stdin] [--material <path>] [--password-stdin] [--operation-id <id>] [--json]
+  kdna-studio resume <workspace> [--input-file <json> | --input-stdin] [--material <path>] [--password-stdin] [--operation-id <id>] [--json]
+  kdna-studio status <workspace> [--json]
+  kdna-studio answer <workspace> [--input-file <json> | --input-stdin] [--operation-id <id>] [--json]
+  kdna-studio review <workspace> [--input-file <json> | --input-stdin] [--operation-id <id>] [--json]
+  kdna-studio try <workspace> [--input-file <json> | --input-stdin] [--operation-id <id>] [--json]
+  kdna-studio repair <workspace> [--input-file <json> | --input-stdin] [--operation-id <id>] [--json]
+  kdna-studio export-agent <workspace> --out <file.kdna> [--password-stdin] [--operation-id <id>] [--json]
+
+The default Creation Engine speaks in purpose, material, judgment, boundary,
+example, confirmation, and export terms. Natural-language answers belong in
+stdin or an input file, never process arguments.
+
+Expert authoring:
+
+LLM configuration for expert AI-assisted authoring:
   kdna-studio llm config [--provider <name>] [--model <name>] [--key-pipe] [--url <base-url>]
   kdna-studio llm show
   (pipe the key to 'kdna-studio llm config --provider openai --key-pipe --model gpt-4'
@@ -48,12 +316,12 @@ Identity:
   kdna-studio identity show
 
 Create (three entry paths):
-  kdna-studio create <project-dir> --name <@scope/name> [--author <name>]                        # blank
+  kdna-studio create <project-dir> --name <@scope/name> [--author <name>] [--use-local-identity] # blank
   kdna-studio create <project-dir> --from-kdna <file.kdna> --name <@scope/name>
   kdna-studio create <project-dir> --from-folder <source-dir> --name <@scope/name>
 
 Migrate (dev source or Studio project → canonical .kdna in one command):
-  kdna-studio migrate <source-dir|project> --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--allow-incomplete] [--sign] [--passphrase-stdin]
+  kdna-studio migrate <source-dir|project> --out <file.kdna> --name <@scope/name> --by <id> --statement <text> [--allow-incomplete] [--sign] [--use-local-identity] [--passphrase-stdin]
   kdna-studio migrate <source-dir> --check --name <@scope/name>   # pre-flight: report which fields would block the export without writing the .kdna
   kdna-studio audit-locks <project> [--type axiom|risk|stance|...] [--json]   # list cards with missing Human Lock fields (per-card-type, per-field)
 
@@ -637,8 +905,19 @@ function cmdCreate(args) {
   let lineage = null;
   let creatorIdentity = null;
 
-  // Load creator identity if available
-  try { creatorIdentity = creatorApi.loadIdentity(); } catch { /* no identity yet */ }
+  // A machine-local identity is never inherited implicitly. Creating for
+  // another person, an organization, or an interpretive source must not pick
+  // up whichever identity happens to be configured on this computer.
+  if (args.includes('--use-local-identity')) {
+    try {
+      creatorIdentity = creatorApi.loadIdentity();
+    } catch {
+      fail(
+        '--use-local-identity was requested, but no usable local identity is available.',
+        EXIT.TRUST_FAILED,
+      );
+    }
+  }
 
   if (fromKdna) {
     sourceMode = 'kdna_asset';
@@ -770,23 +1049,54 @@ function importFromKdna(kdnaPath) {
     parent_asset_digest: manifest.content_digest || manifest.asset_digest || null,
   };
 
-  const importedCards = [];
-  let judgmentCore = null;
+  let imported;
   try {
-    importedCards.push(...cardsFromPayload(payload));
-    judgmentCore = judgmentCoreFromRuntimePayload(payload);
+    imported = importFromRuntimeContent(manifest, payload);
   } catch (e) {
     fail(`Could not import cards from payload.kdnab: ${e.message}`);
   }
 
-  if (importedCards.length === 0) {
+  if (imported.cards.length === 0) {
     fail(`No current judgment cards could be extracted from ${absKdna}.`);
   }
 
   return {
     lineage,
-    cards: importedCards,
-    judgment_core: judgmentCore,
+    ...imported,
+  };
+}
+
+function importFromRuntimeContent(manifest, payload) {
+  if (payload?.profile !== 'kdna.payload.judgment') {
+    throw new Error(
+      `unsupported payload profile "${payload?.profile || '(none)'}"`,
+    );
+  }
+  resetImportedIds();
+  const cards = cardsFromPayload(payload);
+  const runtimeBoundaries = Array.isArray(payload.core?.boundaries)
+    ? payload.core.boundaries
+    : [];
+  const taskScopes = Array.from(new Set(
+    runtimeBoundaries
+      .map((boundary) => boundary?.scope)
+      .filter((scope) => typeof scope === 'string' && scope.trim().length > 0),
+  ));
+  const excludedAreas = runtimeBoundaries
+    .map((boundary) => boundary?.out_of_scope)
+    .filter((area) => typeof area === 'string' && area.trim().length > 0);
+  return {
+    cards,
+    judgment_core: judgmentCoreFromRuntimePayload(payload),
+    distillation_target: {
+      task_scope: taskScopes.length === 1 ? taskScopes[0] : null,
+      include_areas: taskScopes,
+      exclude_areas: excludedAreas,
+      load_condition:
+        typeof payload.core?.load_condition === 'string'
+          ? payload.core.load_condition
+          : null,
+    },
     source_manifest: manifest,
     source_patterns: null,
     source_reasoning: payload.reasoning && typeof payload.reasoning === 'object'
@@ -799,6 +1109,24 @@ function importFromKdna(kdnaPath) {
       ? JSON.parse(JSON.stringify(payload.core.core_structure))
       : null,
   };
+}
+
+function importFromRuntimeCapsule(capsule) {
+  if (capsule?.type !== 'kdna.runtime-capsule' || capsule.profile !== 'full') {
+    throw new Error('A full Runtime Capsule is required for Studio re-import.');
+  }
+  const manifest = capsule.context?.manifest;
+  const payload = capsule.context?.payload;
+  if (!manifest || !payload) {
+    throw new Error(
+      'The Runtime Capsule does not contain current manifest and payload semantics.',
+    );
+  }
+  const imported = importFromRuntimeContent(manifest, payload);
+  if (imported.cards.length === 0) {
+    throw new Error('No current judgment cards could be re-imported.');
+  }
+  return imported;
 }
 
 const LEGACY_PATTERN_TYPE_MAP = {
@@ -1858,7 +2186,16 @@ function cmdMigrate(args) {
   try {
   // Step 1: import dev source, or use an existing Studio project directly.
   let creatorIdentity = null;
-  try { creatorIdentity = creatorApi.loadIdentity(); } catch { /* proceed without */ }
+  if (args.includes('--use-local-identity')) {
+    try {
+      creatorIdentity = creatorApi.loadIdentity();
+    } catch {
+      fail(
+        '--use-local-identity was requested, but no usable local identity is available.',
+        EXIT.TRUST_FAILED,
+      );
+    }
+  }
   if (isStudioProject) {
     const loaded = readProject(sourcePath);
     project = loaded.project;
@@ -2549,6 +2886,16 @@ async function cmdDistill(args) {
       suggested_card_type: c.type || c.suggested_card_type || 'axiom',
       supporting_evidence_ids: (c.evidence_ids || c.evidenceIds || c.supporting_evidence_ids || []).map(String),
       confidence: c.confidence || 'medium',
+      rationale: c.rationale || c.why || '',
+      applies_when: Array.isArray(c.applies_when) ? c.applies_when.map(String) : [],
+      does_not_apply_when: Array.isArray(c.does_not_apply_when)
+        ? c.does_not_apply_when.map(String)
+        : [],
+      misuse_risk: c.misuse_risk || c.failure_risk || '',
+      agent_inference: c.agent_inference === true,
+      fields: c.fields && typeof c.fields === 'object' && !Array.isArray(c.fields)
+        ? JSON.parse(JSON.stringify(c.fields))
+        : {},
       candidate_status: 'proposed',
       scope_fit: c.scope_fit ?? c.scopeFit ?? true,
     };
@@ -2607,36 +2954,68 @@ function cmdCandidate(args) {
   }
 
   if (sub === 'promote') {
-    const accepted = candidates.filter(c => c.candidate_status === 'accepted' && c.scope_fit !== false);
+    const accepted = candidates.filter(
+      c =>
+        c.candidate_status === 'accepted' &&
+        c.scope_fit !== false &&
+        !c.promoted_card_id,
+    );
     if (accepted.length === 0) fail('No candidates to promote. Accept some candidates first.');
 
+    const incomplete = [];
+    for (const candidate of accepted) {
+      const missing = [];
+      if (!String(candidate.one_sentence || '').trim()) missing.push('one_sentence');
+      if (!String(candidate.full_statement || '').trim()) missing.push('full_statement');
+      if (!String(candidate.rationale || candidate.why || '').trim()) missing.push('rationale');
+      if (!Array.isArray(candidate.applies_when) || candidate.applies_when.length === 0) {
+        missing.push('applies_when');
+      }
+      if (
+        !Array.isArray(candidate.does_not_apply_when) ||
+        candidate.does_not_apply_when.length === 0
+      ) {
+        missing.push('does_not_apply_when');
+      }
+      if (!String(candidate.misuse_risk || candidate.failure_risk || '').trim()) {
+        missing.push('misuse_risk');
+      }
+      if (missing.length > 0) incomplete.push(`${candidate.id}: ${missing.join(', ')}`);
+    }
+    if (incomplete.length > 0) {
+      fail(
+        `Accepted candidates are incomplete and were not promoted:\n  - ${incomplete.join(
+          '\n  - ',
+        )}\nRefine or re-distill them before promotion.`,
+      );
+    }
+
     for (const c of accepted) {
-      // Promote candidates to draft cards. For axioms we must populate every
-      // field the Human Lock gate and migrate path require — empty strings
-      // cause migrate to fail ("critical fields missing from axioms"). When
-      // a candidate lacks the field, fall back to the candidate's own
-      // one_sentence/full_statement so the lock gate at least has substance
-      // to verify. Authors are expected to enrich these fields before
-      // locking.
-      const fields = {};
+      // Candidate review is the place to resolve missing semantics. Promotion
+      // preserves the reviewed fields and never fabricates placeholder text.
+      const fields = {
+        ...(c.fields && typeof c.fields === 'object' ? c.fields : {}),
+        one_sentence: c.one_sentence,
+        full_statement: c.full_statement,
+        rationale: c.rationale || c.why,
+        applies_when: c.applies_when,
+        does_not_apply_when: c.does_not_apply_when,
+        misuse_risk: c.misuse_risk || c.failure_risk,
+        confidence: c.confidence || 'unknown',
+        evidence_type: c.agent_inference === true ? 'analogy' : 'practice',
+        agent_inference: c.agent_inference === true,
+      };
       if (c.suggested_card_type === 'axiom') {
-        fields.one_sentence = c.one_sentence || '';
-        fields.full_statement = c.full_statement || c.one_sentence || '<TBD: full_statement>';
-        fields.why = c.why || '<TBD: why>';
-        // applies_when / does_not_apply_when are arrays, not strings.
-        // Empty string is invalid; emit an empty array so checkRequiredFields
-        // (which treats `length === 0` as missing) correctly reports them.
-        fields.applies_when = Array.isArray(c.applies_when) ? c.applies_when : [];
-        fields.does_not_apply_when = Array.isArray(c.does_not_apply_when) ? c.does_not_apply_when : [];
-        fields.failure_risk = c.failure_risk || '<TBD: failure_risk>';
-      } else {
-        fields.one_sentence = c.one_sentence || '';
-        fields.full_statement = c.full_statement || c.one_sentence || '';
+        fields.why = c.rationale || c.why;
+        fields.failure_risk = c.misuse_risk || c.failure_risk;
       }
       const card = cardApi.createCard(c.suggested_card_type, fields);
-      card.evidence_refs = c.supporting_evidence_ids;
+      card.evidence_refs = Array.isArray(c.supporting_evidence_ids)
+        ? c.supporting_evidence_ids
+        : [];
       project.cards = project.cards || [];
       project.cards.push(card);
+      c.promoted_card_id = card.id;
     }
     if (project.stages?.judgment_cards) {
       project.stages.judgment_cards.total = project.cards.length;
@@ -2654,14 +3033,44 @@ async function cmdInterview(args) {
   const projectInput = args[0];
   const stage = option(args, '--stage');
   if (!projectInput) fail('Usage: kdna-studio interview <project> [--stage distill|clarify|correct|replay]');
-  const { project } = readProject(projectInput);
+  const { projectPath, project } = readProject(projectInput);
+  let results;
 
   if (stage) {
-    const result = await ai.interview.runInterview(llm.config(), project, stage, '', {});
+    const normalizedStage = ai.interview.normalizeInterviewStage(stage);
+    const result = await ai.interview.runInterview(
+      llm.config(),
+      project,
+      normalizedStage,
+      '',
+      {},
+    );
+    results = [result];
     console.log(`\n=== ${result.label} ===\n${result.content}`);
   } else {
-    await ai.interview.runInterviewInteractive(llm.config(), project, {});
+    results = await ai.interview.runInterviewInteractive(llm.config(), project, {});
   }
+  project.interview_sessions = Array.isArray(project.interview_sessions)
+    ? project.interview_sessions
+    : [];
+  project.interview_sessions.push({
+    recorded_at: new Date().toISOString(),
+    results,
+  });
+  if (project.stages?.interview_room) {
+    project.stages.interview_room.status = 'in_progress';
+    project.stages.interview_room.questions_asked =
+      Number(project.stages.interview_room.questions_asked || 0) +
+      results.reduce(
+        (total, result) =>
+          total +
+          (Array.isArray(result.conversation)
+            ? result.conversation.filter(message => message.role === 'user').length
+            : 1),
+        0,
+      );
+  }
+  writeProject(projectPath, project);
 }
 
 const args = process.argv.slice(2);
@@ -2677,7 +3086,35 @@ if (cmd === '--version' || cmd === '-v') {
 
 (async () => {
 try {
-  if (cmd === 'create') cmdCreate(args.slice(1));
+  if (CREATION_COMMANDS.has(cmd)) {
+    const runtimeCore = require('@aikdna/kdna-core');
+    await executeCreationCommand(cmd, args.slice(1), {
+      creationEngine,
+      runtimeCore,
+      exportRuntime: creationExportRuntime || exportRuntime,
+      reimportCapsule: importFromRuntimeCapsule,
+      cliVersion:
+        `@aikdna/kdna-studio-cli@${require('../package.json').version}`,
+      studioCoreVersion:
+        creationStudioCoreCoordinate ||
+        `@aikdna/kdna-studio-core@${require('@aikdna/kdna-studio-core/package.json').version}`,
+      runtimeCoreVersion:
+        `@aikdna/kdna-core@${require('@aikdna/kdna-core/package.json').version}`,
+      developmentRuntime: BOOTSTRAP_DEVELOPMENT_RUNTIME,
+      developmentBaseline: BOOTSTRAP_DEVELOPMENT_BASELINE,
+    });
+    const authorityAfterCommand =
+      candidateRuntimeBootstrap(BOOTSTRAP_PACKAGE_ROOT);
+    if (
+      bootstrapCanonical(authorityAfterCommand) !==
+      bootstrapCanonical(BOOTSTRAP_DEVELOPMENT_AUTHORITY)
+    ) {
+      throw new Error(
+        'The WP0 candidate runtime changed during Creation command execution.',
+      );
+    }
+  }
+  else if (cmd === 'create') cmdCreate(args.slice(1));
   else if (cmd === 'migrate') cmdMigrate(args.slice(1));
   else if (cmd === 'import') cmdImport(args.slice(1));
   else if (cmd === 'filter') cmdFilter(args.slice(1));

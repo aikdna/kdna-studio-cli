@@ -12,7 +12,10 @@
     "src/ai/distill.js",
     "src/ai/filter.js",
     "src/ai/interview.js",
+    "src/creation-cli.js",
     "src/llm/",
+    "docs/CREATION_COMMAND_CONTRACT.md",
+    "docs/TERMINAL_AGENT_CREATION.md",
     "LICENSE",
     "NOTICE",
     "README.md"

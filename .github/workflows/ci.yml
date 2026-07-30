@@ -15,9 +15,9 @@ jobs:
         node: ['18.20.8', '22.23.1']
     env:
       KDNA_CORE_CANDIDATE_REPOSITORY: aikdna/kdna
-      KDNA_CORE_CANDIDATE_COMMIT: 76bbc587ce05f7e575c2373832cc5c9eee9df98a
+      KDNA_CORE_CANDIDATE_COMMIT: 1b919605988eb514f2491195d6a77b96b17151c4
       KDNA_STUDIO_CORE_CANDIDATE_REPOSITORY: aikdna/kdna-studio-core
-      KDNA_STUDIO_CORE_CANDIDATE_COMMIT: 8ca7df19cadd32a08b4067a39992bb28039bf294
+      KDNA_STUDIO_CORE_CANDIDATE_COMMIT: 087d72f47e53a324fe6345d253c79f2e459767c1
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       - name: Check out the exact Runtime candidates outside the Studio CLI workspace

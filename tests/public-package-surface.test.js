@@ -32,8 +32,11 @@ test('npm tarball excludes unvalidated CLI workshops', () => {
     'bin/kdna-studio.js',
     'src/ai/distill.js',
     'src/ai/interview.js',
+    'src/creation-cli.js',
     'src/llm/index.js',
     'src/llm/transport.js',
+    'docs/CREATION_COMMAND_CONTRACT.md',
+    'docs/TERMINAL_AGENT_CREATION.md',
   ]) {
     assert.ok(files.includes(required), `supported CLI dependency missing from npm tarball: ${required}`);
   }

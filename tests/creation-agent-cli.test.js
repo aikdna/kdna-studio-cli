@@ -180,8 +180,6 @@ function currentCorePreload(temporary) {
 }
 
 function creationEngineForTest() {
-  const source = require('../../kdna-studio-core/src');
-  if (source.creationEngine) return source.creationEngine;
   return require('@aikdna/kdna-studio-core').creationEngine;
 }
 

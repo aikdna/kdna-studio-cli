@@ -62,9 +62,29 @@ The user's responses become the basis for eval cases and scenario cards.`,
   },
 };
 
+const STAGE_ALIASES = Object.freeze({
+  distill: 'distillJudgment',
+  clarify: 'clarifyBoundaries',
+  correct: 'correctMisreadings',
+  replay: 'replayScenario',
+});
+
+function normalizeInterviewStage(stage) {
+  const normalized = STAGE_ALIASES[stage] || stage;
+  if (!STAGES[normalized]) {
+    throw new Error(
+      `Unknown interview stage: ${stage}. Valid: ${[
+        ...Object.keys(STAGE_ALIASES),
+        ...Object.keys(STAGES),
+      ].join(', ')}`,
+    );
+  }
+  return normalized;
+}
+
 async function runInterview(config, project, stage, context, options = {}) {
+  stage = normalizeInterviewStage(stage);
   const stageConfig = STAGES[stage];
-  if (!stageConfig) throw new Error(`Unknown interview stage: ${stage}. Valid: ${Object.keys(STAGES).join(', ')}`);
 
   const systemPrompt = stageConfig.system;
   const userPrompt = [
@@ -141,4 +161,10 @@ async function runInterviewInteractive(config, project, options = {}) {
   return results;
 }
 
-module.exports = { STAGES, runInterview, runInterviewInteractive };
+module.exports = {
+  STAGES,
+  STAGE_ALIASES,
+  normalizeInterviewStage,
+  runInterview,
+  runInterviewInteractive,
+};

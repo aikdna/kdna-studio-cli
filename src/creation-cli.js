@@ -2,23 +2,37 @@
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
+const { TextDecoder } = require('node:util');
+const {
+  ApplicationHostError,
+  createCodexApplicationHost,
+} = require('./application-host');
 
 const INPUT_LIMIT_BYTES = 8 * 1024 * 1024;
 const MATERIAL_LIMIT_BYTES = 50 * 1024 * 1024;
 const MATERIAL_TOTAL_LIMIT_BYTES = 50 * 1024 * 1024;
-const MATERIAL_TEXT_LIMIT_BYTES = 2 * 1024 * 1024;
+const MATERIAL_EXTRACTION_LIMIT_BYTES = 50 * 1024 * 1024;
+const HOST_OBSERVATION_SOURCE_LIMIT_BYTES = 8 * 1024 * 1024 * 1024;
+const STREAM_HASH_CHUNK_BYTES = 1024 * 1024;
 const MATERIAL_FILE_LIMIT = 256;
+const SECRET_STDIN_LIMIT_BYTES = 64 * 1024;
 const CREATION_COMMANDS = new Set([
+  'guide-agent',
   'create-agent',
+  'inventory-agent',
+  'deliver-material',
   'resume',
   'status',
   'answer',
   'review',
   'try',
+  'verify-application-agent',
   'repair',
   'export-agent',
+  'finalize-agent',
 ]);
 const TEXT_EXTENSIONS = new Set([
   '.csv',
@@ -33,12 +47,47 @@ const TEXT_EXTENSIONS = new Set([
   '.yaml',
   '.yml',
 ]);
+const DEFAULT_EXCLUDED_DIRECTORY_NAMES = new Set([
+  '.git',
+  '.hg',
+  '.svn',
+  '.cache',
+  '.next',
+  '.nuxt',
+  '.parcel-cache',
+  '.turbo',
+  '.yarn',
+  'build',
+  'coverage',
+  'dist',
+  'managed-candidate',
+  'node_modules',
+  'out',
+  'target',
+]);
+const SECRET_LIKE_FILE_PATTERNS = Object.freeze([
+  /^\.env(?:\.|$)/i,
+  /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\.|$)/i,
+  /\.(?:key|pem|p12|pfx|jks|keystore)$/i,
+  /(?:credential|secret|token)s?\.(?:json|ya?ml|txt)$/i,
+]);
+const MATERIAL_INVENTORY_CONTRACT =
+  'kdna.studio.material-inventory/0.1.0';
+const HOST_OBSERVATION_KINDS = new Set([
+  'image',
+  'audio',
+  'video',
+  'binary',
+  'pdf',
+  'document',
+]);
 
 class CreationCliError extends Error {
-  constructor(code, message, exitCode = 2) {
+  constructor(code, message, exitCode = 2, details = null) {
     super(message);
     this.code = code;
     this.exitCode = exitCode;
+    this.details = details;
   }
 }
 
@@ -163,6 +212,281 @@ function readBoundedFile(file, maximum = INPUT_LIMIT_BYTES) {
   }
 }
 
+function streamHashRegularFile(
+  file,
+  maximum = HOST_OBSERVATION_SOURCE_LIMIT_BYTES,
+) {
+  const absolute = path.resolve(file);
+  const flags =
+    fs.constants.O_RDONLY |
+    (typeof fs.constants.O_NOFOLLOW === 'number'
+      ? fs.constants.O_NOFOLLOW
+      : 0);
+  let descriptor;
+  const chunk = Buffer.allocUnsafe(STREAM_HASH_CHUNK_BYTES);
+  try {
+    try {
+      descriptor = fs.openSync(absolute, flags);
+    } catch (error) {
+      if (error?.code === 'ELOOP') {
+        throw new CreationCliError(
+          'input_invalid',
+          'Input must be a regular file.',
+        );
+      }
+      throw new CreationCliError(
+        'input_unavailable',
+        'The requested input file is unavailable.',
+      );
+    }
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    if (!before.isFile()) {
+      throw new CreationCliError(
+        'input_invalid',
+        'Input must be a regular file.',
+      );
+    }
+    if (before.size > BigInt(maximum)) {
+      throw new CreationCliError(
+        'host_observation_source_too_large',
+        `Host-observed source exceeds the ${maximum}-byte streaming safety limit.`,
+      );
+    }
+    let pathStat;
+    try {
+      pathStat = fs.lstatSync(absolute, { bigint: true });
+    } catch {
+      throw new CreationCliError(
+        'input_changed',
+        'The requested input changed while it was being opened.',
+      );
+    }
+    if (
+      pathStat.isSymbolicLink() ||
+      pathStat.dev !== before.dev ||
+      pathStat.ino !== before.ino
+    ) {
+      throw new CreationCliError(
+        'input_changed',
+        'The requested input changed while it was being opened.',
+      );
+    }
+    const hash = crypto.createHash('sha256');
+    let byteLength = 0;
+    for (;;) {
+      const read = fs.readSync(
+        descriptor,
+        chunk,
+        0,
+        chunk.length,
+        null,
+      );
+      if (read === 0) break;
+      byteLength += read;
+      if (byteLength > maximum) {
+        throw new CreationCliError(
+          'host_observation_source_too_large',
+          `Host-observed source exceeds the ${maximum}-byte streaming safety limit.`,
+        );
+      }
+      hash.update(chunk.subarray(0, read));
+    }
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    if (
+      BigInt(byteLength) !== before.size ||
+      after.size !== before.size ||
+      after.mtimeNs !== before.mtimeNs ||
+      after.ctimeNs !== before.ctimeNs
+    ) {
+      throw new CreationCliError(
+        'input_changed',
+        'The requested input changed while it was being streamed.',
+      );
+    }
+    const modifiedAt = Number(before.mtimeMs);
+    return {
+      absolute,
+      source_digest: `sha256:${hash.digest('hex')}`,
+      byte_length: byteLength,
+      fileMetadata: {
+        source_created_at: null,
+        source_updated_at:
+          Number.isFinite(modifiedAt) && modifiedAt > 0
+            ? new Date(modifiedAt).toISOString()
+            : null,
+        time_basis: 'file-metadata',
+      },
+    };
+  } finally {
+    chunk.fill(0);
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
+function nearestExistingDirectory(candidate) {
+  let current = path.resolve(candidate);
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+  return fs.lstatSync(current).isDirectory() ? current : path.dirname(current);
+}
+
+function gitOutput(cwd, args) {
+  const result = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+    timeout: 5_000,
+  });
+  if (result.error || result.status !== 0) return null;
+  return result.stdout.trim();
+}
+
+function nearestGitControlDirectory(candidate) {
+  let current = path.resolve(candidate);
+  for (;;) {
+    if (fs.existsSync(path.join(current, '.git'))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+function canonicalFuturePath(candidate) {
+  const absolute = path.resolve(candidate);
+  const existing = nearestExistingDirectory(absolute);
+  if (!existing) return absolute;
+  const canonicalExisting = fs.realpathSync.native(existing);
+  const suffix = path.relative(existing, absolute);
+  return path.resolve(canonicalExisting, suffix);
+}
+
+function escapeGitIgnorePath(relativePath) {
+  if (relativePath.includes('\n') || relativePath.includes('\r')) {
+    throw new CreationCliError(
+      'workspace_git_privacy_unavailable',
+      'A Creation workspace path cannot contain a line break.',
+      5,
+    );
+  }
+  return relativePath
+    .split(path.sep)
+    .map((segment) =>
+      segment.replace(/([\\ #!\[\]])/g, '\\$1'))
+    .join('/');
+}
+
+function protectCreationWorkspaceFromGit(workspacePath) {
+  const existingAncestor = nearestExistingDirectory(
+    path.dirname(workspacePath),
+  );
+  if (!existingAncestor) return null;
+  const repositoryRoot = gitOutput(
+    existingAncestor,
+    ['rev-parse', '--show-toplevel'],
+  );
+  if (!repositoryRoot) {
+    if (nearestGitControlDirectory(existingAncestor)) {
+      throw new CreationCliError(
+        'workspace_git_privacy_unavailable',
+        'A Git repository contains the requested Creation workspace, but its private exclude storage could not be resolved.',
+        5,
+      );
+    }
+    return null;
+  }
+  const absoluteRoot = fs.realpathSync.native(path.resolve(repositoryRoot));
+  const absoluteWorkspace = canonicalFuturePath(workspacePath);
+  if (
+    absoluteWorkspace === absoluteRoot ||
+    !absoluteWorkspace.startsWith(`${absoluteRoot}${path.sep}`)
+  ) {
+    if (absoluteWorkspace === absoluteRoot) {
+      throw new CreationCliError(
+        'workspace_git_root_forbidden',
+        'A Creation workspace cannot replace the Git repository root.',
+      );
+    }
+    return null;
+  }
+  const relative = path.relative(absoluteRoot, absoluteWorkspace);
+  const gitDirectory = gitOutput(
+    absoluteRoot,
+    ['rev-parse', '--absolute-git-dir'],
+  );
+  if (!gitDirectory) {
+    throw new CreationCliError(
+      'workspace_git_privacy_unavailable',
+      'Git private exclude storage could not be resolved.',
+      5,
+    );
+  }
+  const infoDirectory = path.join(gitDirectory, 'info');
+  const excludeFile = path.join(infoDirectory, 'exclude');
+  fs.mkdirSync(infoDirectory, { recursive: true, mode: 0o700 });
+  let before = Buffer.alloc(0);
+  if (fs.existsSync(excludeFile)) {
+    const stat = fs.lstatSync(excludeFile);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new CreationCliError(
+        'workspace_git_privacy_unavailable',
+        'Git private exclude storage is not a regular file.',
+        5,
+      );
+    }
+    before = fs.readFileSync(excludeFile);
+  }
+  const ignoreRule = `/${escapeGitIgnorePath(relative)}/`;
+  const existingLines = before
+    .toString('utf8')
+    .split(/\r?\n/);
+  if (existingLines.includes(ignoreRule)) {
+    return {
+      repository_root: absoluteRoot,
+      relative_workspace: relative,
+      added: false,
+      rollback() {},
+    };
+  }
+  const prefix =
+    before.length === 0 || before.at(-1) === 0x0a ? '' : '\n';
+  const appended = Buffer.from(
+    `${prefix}# kdna-studio private Creation workspace\n${ignoreRule}\n`,
+  );
+  const descriptor = fs.openSync(
+    excludeFile,
+    fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT,
+    0o600,
+  );
+  try {
+    fs.writeFileSync(descriptor, appended);
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  return {
+    repository_root: absoluteRoot,
+    relative_workspace: relative,
+    added: true,
+    rollback() {
+      if (fs.existsSync(absoluteWorkspace)) return;
+      let current;
+      try {
+        current = fs.readFileSync(excludeFile);
+      } catch {
+        return;
+      }
+      const expected = Buffer.concat([before, appended]);
+      if (!current.equals(expected)) return;
+      const temporary = `${excludeFile}.kdna-rollback-${process.pid}`;
+      fs.writeFileSync(temporary, before, { mode: 0o600 });
+      fs.renameSync(temporary, excludeFile);
+    },
+  };
+}
+
 function consumeMaterialBudget(budget, byteLength) {
   budget.used += byteLength;
   if (budget.used > budget.maximum) {
@@ -262,6 +586,47 @@ function readCommandInput(args, options = {}) {
   return {};
 }
 
+function decodeSecretTransport(bytes) {
+  if (!Buffer.isBuffer(bytes)) {
+    throw new CreationCliError(
+      'secret_invalid',
+      'Secret transport input must be bytes.',
+    );
+  }
+  if (bytes.length === 0 || bytes.length > SECRET_STDIN_LIMIT_BYTES) {
+    throw new CreationCliError(
+      bytes.length === 0 ? 'secret_unavailable' : 'secret_too_large',
+      bytes.length === 0
+        ? 'The piped password is empty.'
+        : 'The piped password exceeds the bounded secret input limit.',
+    );
+  }
+  let decoded;
+  try {
+    decoded = new TextDecoder('utf-8', {
+      fatal: true,
+      ignoreBOM: true,
+    }).decode(bytes);
+  } catch (_) {
+    throw new CreationCliError(
+      'secret_invalid_encoding',
+      'The piped password is not valid UTF-8.',
+    );
+  }
+  if (decoded.endsWith('\r\n')) {
+    decoded = decoded.slice(0, -2);
+  } else if (decoded.endsWith('\n')) {
+    decoded = decoded.slice(0, -1);
+  }
+  if (decoded.length === 0) {
+    throw new CreationCliError(
+      'secret_unavailable',
+      'The piped password is empty.',
+    );
+  }
+  return decoded;
+}
+
 function readPassword(args) {
   if (
     args.includes('--password') ||
@@ -273,17 +638,42 @@ function readPassword(args) {
     );
   }
   if (!args.includes('--password-stdin')) return null;
+  if (args.includes('--input-stdin')) {
+    throw new CreationCliError(
+      'secret_input_conflict',
+      '--password-stdin cannot share stdin with --input-stdin; use --input-file for structured input.',
+    );
+  }
   if (process.stdin.isTTY) {
     throw new CreationCliError(
       'secret_unavailable',
       '--password-stdin requires a password piped on stdin.',
     );
   }
-  const password = fs.readFileSync(0, 'utf8').trim();
-  if (!password) {
-    throw new CreationCliError('secret_unavailable', 'The piped password is empty.');
+  const storage = Buffer.alloc(SECRET_STDIN_LIMIT_BYTES + 1);
+  let length = 0;
+  try {
+    while (length < storage.length) {
+      const count = fs.readSync(
+        0,
+        storage,
+        length,
+        storage.length - length,
+        null,
+      );
+      if (count === 0) break;
+      length += count;
+    }
+    if (length > SECRET_STDIN_LIMIT_BYTES) {
+      throw new CreationCliError(
+        'secret_too_large',
+        'The piped password exceeds the bounded secret input limit.',
+      );
+    }
+    return decodeSecretTransport(storage.subarray(0, length));
+  } finally {
+    storage.fill(0);
   }
-  return password;
 }
 
 function applicationExecutionInput(input, args) {
@@ -395,10 +785,15 @@ function requireCreationEngine(engine) {
     'loadWorkspace',
     'saveWorkspace',
     'setPurpose',
+    'recordMaterialInventory',
+    'recordSourceDelivery',
     'ingestMaterial',
+    'recordImportMappingReport',
+    'reviewImportMapping',
     'reviewMaterial',
     'addCandidate',
     'recordInterviewAnswer',
+    'resolveUncertainty',
     'promoteCandidate',
     'analyzeRelations',
     'recordConfirmation',
@@ -415,6 +810,7 @@ function requireCreationEngine(engine) {
     'assessReadiness',
     'compileProject',
     'recordBuildReceipt',
+    'readManagedCandidate',
     'nextAction',
     'canonicalOperationRequestDigest',
     'operationCoordinate',
@@ -452,14 +848,21 @@ function extractedText(file, bytes) {
         `Material is not recognized as text: ${path.basename(file)}`,
       );
     }
-    return bytes.subarray(0, MATERIAL_TEXT_LIMIT_BYTES).toString('utf8');
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch (_) {
+      throw new CreationCliError(
+        'material_invalid_encoding',
+        `Text material is not valid UTF-8: ${path.basename(file)}`,
+      );
+    }
   }
   if (extension === '.pdf') {
     try {
       return execFileSync('pdftotext', ['-', '-'], {
         encoding: 'utf8',
         input: bytes,
-        maxBuffer: MATERIAL_TEXT_LIMIT_BYTES,
+        maxBuffer: MATERIAL_EXTRACTION_LIMIT_BYTES,
         shell: false,
         timeout: 30_000,
       });
@@ -478,7 +881,7 @@ function extractedText(file, bytes) {
         {
           encoding: 'utf8',
           input: bytes,
-          maxBuffer: MATERIAL_TEXT_LIMIT_BYTES,
+          maxBuffer: MATERIAL_EXTRACTION_LIMIT_BYTES,
           shell: false,
           timeout: 30_000,
         },
@@ -496,44 +899,821 @@ function extractedText(file, bytes) {
   );
 }
 
-function collectMaterialFiles(inputPaths) {
-  const files = [];
-  function visit(candidate) {
-    const absolute = path.resolve(candidate);
+function extractionReceipt(file, bytes, content) {
+  const mediaType = safeMaterialKind(file);
+  const extension = path.extname(file).toLowerCase();
+  const extractor =
+    extension === '.pdf'
+      ? { name: 'pdftotext' }
+      : (
+          ['.doc', '.docx'].includes(extension)
+            ? { name: 'textutil' }
+            : { name: 'kdna-strict-utf8' }
+        );
+  return {
+    source_digest: sha256Bytes(bytes),
+    media_type: mediaType,
+    output_digest: sha256Bytes(Buffer.from(content, 'utf8')),
+    extractor,
+    coverage:
+      ['text', 'json', 'transcript'].includes(mediaType)
+        ? 'The complete exact source byte sequence was decoded with strict UTF-8.'
+        : 'The complete bounded source byte sequence was submitted to the declared extractor.',
+    uncertainty:
+      mediaType === 'pdf'
+        ? 'Image-only or partially scanned pages may require a separate OCR observation.'
+        : (
+            mediaType === 'document'
+              ? 'Embedded media and layout not represented in extracted text remain outside this extraction.'
+              : 'No bytes were truncated or silently replaced.'
+          ),
+  };
+}
+
+function commandCapability(command, args, availableReason, unavailableReason) {
+  const result = spawnSync(command, args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'ignore', 'ignore'],
+    timeout: 3_000,
+  });
+  const available =
+    !result.error &&
+    typeof result.status === 'number';
+  return {
+    available,
+    provider: available ? command : null,
+    reason: available ? availableReason : unavailableReason,
+  };
+}
+
+function materialCapabilities() {
+  const pdf = commandCapability(
+    'pdftotext',
+    ['-v'],
+    'PDF text extraction is available through the Host pdftotext capability.',
+    'PDF text extraction is unavailable; install pdftotext or provide a digest-bound Host observation.',
+  );
+  const word =
+    process.platform === 'darwin'
+      ? commandCapability(
+          'textutil',
+          ['-help'],
+          'Word text extraction is available through the macOS textutil Host capability.',
+          'Word text extraction is unavailable; provide a digest-bound Host observation.',
+        )
+      : {
+          available: false,
+          provider: null,
+          reason:
+            'Word extraction is not portable in this build; provide a digest-bound Host observation.',
+        };
+  return { pdf, word };
+}
+
+function inventoryKind(file) {
+  const extension = path.extname(file).toLowerCase();
+  if (extension === '.kdna') return 'kdna';
+  if (extension === '.pdf') return 'pdf';
+  if (extension === '.doc' || extension === '.docx') return 'document';
+  if (extension === '.srt' || extension === '.vtt') return 'transcript';
+  if (extension === '.json') return 'json';
+  if (TEXT_EXTENSIONS.has(extension) || extension === '') return 'text';
+  if (
+    ['.avif', '.bmp', '.gif', '.heic', '.jpeg', '.jpg', '.png', '.tif', '.tiff', '.webp']
+      .includes(extension)
+  ) {
+    return 'image';
+  }
+  if (
+    ['.aac', '.flac', '.m4a', '.mp3', '.ogg', '.wav']
+      .includes(extension)
+  ) {
+    return 'audio';
+  }
+  if (
+    ['.avi', '.mkv', '.mov', '.mp4', '.webm']
+      .includes(extension)
+  ) {
+    return 'video';
+  }
+  return 'binary';
+}
+
+function publicInventoryEntry(entry) {
+  return {
+    id: entry.id,
+    input_index: entry.input_index,
+    input_scope_id: entry.input_scope_id,
+    relative_path: entry.relative_path,
+    kind: entry.kind,
+    status: entry.status,
+    reason_code: entry.reason_code,
+    reason: entry.reason,
+    size_bytes: entry.size_bytes,
+    coordinate_digest: entry.coordinate_digest,
+    approved_for_content_read: entry.approved_for_content_read,
+    content_hash: entry.content_hash,
+    ingested_material_id: entry.ingested_material_id,
+  };
+}
+
+function inventorySummary(entries) {
+  return {
+    eligible: entries.filter((entry) => entry.status === 'eligible').length,
+    accepted: entries.filter((entry) => entry.status === 'accepted').length,
+    unsupported: entries.filter((entry) => entry.status === 'unsupported').length,
+    excluded: entries.filter((entry) => entry.status === 'excluded').length,
+    failed: entries.filter((entry) => entry.status === 'failed').length,
+    total: entries.length,
+  };
+}
+
+function normalizeMaterialProcessingPolicy(
+  value,
+  { allowUndeclared = false } = {},
+) {
+  if (!value || typeof value !== 'object') {
+    if (allowUndeclared) return null;
+    throw new CreationCliError(
+      'material_processing_policy_required',
+      'Declare local-only, a named remote processor, or prohibited processing before any material content is read.',
+      4,
+    );
+  }
+  const policy = value;
+  const destination = policy.destination;
+  if (![
+    'local-only',
+    'named-remote-processor',
+    'prohibited',
+  ].includes(destination)) {
+    throw new CreationCliError(
+      'material_processing_policy_invalid',
+      'Material processing must be local-only, a named remote processor, or prohibited.',
+    );
+  }
+  const assurance = policy.assurance;
+  if (!['host-declared', 'verified-host-required'].includes(assurance)) {
+    throw new CreationCliError(
+      'material_processing_assurance_required',
+      'Material processing must explicitly use host-declared assurance or require a separately trusted verified Host adapter.',
+      4,
+    );
+  }
+  const processor =
+    typeof policy.processor === 'string' && policy.processor.trim()
+      ? policy.processor.trim()
+      : null;
+  if (
+    (destination === 'named-remote-processor' && !processor) ||
+    (destination !== 'named-remote-processor' && processor !== null)
+  ) {
+    throw new CreationCliError(
+      'material_processing_policy_invalid',
+      'A named remote processor requires one processor name; local-only and prohibited processing must not name one.',
+    );
+  }
+  return {
+    destination,
+    processor,
+    assurance,
+    purpose: 'creation-material-analysis',
+    retention: destination === 'named-remote-processor'
+      ? 'named-processor-policy'
+      : 'ephemeral-session',
+  };
+}
+
+function materialProcessingPolicyDigest(policy) {
+  if (!policy) return null;
+  return sha256Bytes(Buffer.from(canonical({
+    contract: 'kdna.studio.material-processing-policy/0.1.0',
+    ...policy,
+  })));
+}
+
+function materialInventoryDigest(capabilities, entries, processingPolicy) {
+  return sha256Bytes(Buffer.from(canonical({
+    contract: MATERIAL_INVENTORY_CONTRACT,
+    processing_policy: processingPolicy,
+    capabilities,
+    entries: entries.map(publicInventoryEntry),
+  })));
+}
+
+function materialInputDescriptor(value) {
+  return typeof value === 'string' ? { path: value } : { ...(value || {}) };
+}
+
+function materialCoordinateDigest(relativePath, kind, stat) {
+  if (!stat) return null;
+  return sha256Bytes(Buffer.from(canonical({
+    relative_path: relativePath || '.',
+    kind,
+    entry_type: stat.isFile()
+      ? 'file'
+      : (
+          stat.isDirectory()
+            ? 'directory'
+            : (stat.isSymbolicLink() ? 'symlink' : 'special')
+        ),
+    size: stat.isFile() ? Number(stat.size) : null,
+    modified_ns:
+      typeof stat.mtimeNs === 'bigint'
+        ? stat.mtimeNs.toString()
+        : String(Math.round(Number(stat.mtimeMs) * 1_000_000)),
+    changed_ns:
+      typeof stat.ctimeNs === 'bigint'
+        ? stat.ctimeNs.toString()
+        : String(Math.round(Number(stat.ctimeMs) * 1_000_000)),
+  })));
+}
+
+function inventoryMaterialInputs(values, options = {}) {
+  const capabilities = materialCapabilities();
+  const processingPolicy = normalizeMaterialProcessingPolicy(
+    options.processingPolicy,
+    { allowUndeclared: true },
+  );
+  const entries = [];
+  const seenEntryIds = new Set();
+  const seenPaths = new Set();
+  const seenFiles = new Set();
+  const rootCoordinates = [];
+  const inputScopeIds = new Map();
+  const inputIndexByScopeId = new Map();
+  const operationFileLimit = options.fileLimit || MATERIAL_FILE_LIMIT;
+  const operationByteLimit = options.totalLimit || MATERIAL_TOTAL_LIMIT_BYTES;
+  let approvedCount = 0;
+  let approvedBytes = 0;
+  let hasDirectoryInput = false;
+  const canonicalWorkspace = options.workspacePath
+    ? canonicalFuturePath(options.workspacePath)
+    : null;
+  const existingMaterials = new Map(
+    (options.existingMaterials || []).map(
+      (material) => [material.id, material],
+    ),
+  );
+  const previouslyAccepted = new Map();
+  for (const inventory of options.existingInventories || []) {
+    for (const entry of inventory.entries || []) {
+      const material = existingMaterials.get(entry.ingested_material_id);
+      const expectedDigest =
+        material?.observation?.source_digest ||
+        material?.extraction?.source_digest ||
+        material?.content_hash;
+      if (
+        entry.status === 'accepted' &&
+        entry.approved_for_content_read === true &&
+        material &&
+        entry.content_hash === expectedDigest
+      ) {
+        previouslyAccepted.set(entry.id, {
+          entry,
+          material,
+        });
+      }
+    }
+  }
+
+  function scopeIdFor(absolute, stat) {
+    const coordinate = stat
+      ? [
+          stat.dev,
+          stat.ino,
+          stat.isDirectory()
+            ? 'directory'
+            : (stat.isFile() ? 'file' : 'other'),
+        ].join(':')
+      : `unavailable:${canonicalFuturePath(absolute)}`;
+    return `material-scope-${crypto
+      .createHash('sha256')
+      .update(coordinate)
+      .digest('hex')
+      .slice(0, 20)}`;
+  }
+
+  function entryId(inputIndex, relativePath) {
+    const inputScopeId =
+      inputScopeIds.get(inputIndex) ||
+      `material-scope-unresolved-${inputIndex}`;
+    return `material-entry-${crypto
+      .createHash('sha256')
+      .update(`${inputScopeId}\0${relativePath}`)
+      .digest('hex')
+      .slice(0, 20)}`;
+  }
+
+  function addEntry(inputIndex, relativePath, kind, status, reasonCode, reason, stat, extra = {}) {
+    const coordinateDigest = materialCoordinateDigest(
+      relativePath,
+      kind,
+      stat,
+    );
+    const entry = {
+      id: entryId(inputIndex, relativePath),
+      input_index: inputIndex,
+      input_scope_id: inputScopeIds.get(inputIndex),
+      relative_path: relativePath || '.',
+      kind,
+      status,
+      reason_code: reasonCode,
+      reason,
+      size_bytes: stat?.isFile() ? Number(stat.size) : null,
+      coordinate_digest: coordinateDigest,
+      approved_for_content_read: false,
+      content_hash: null,
+      ingested_material_id: null,
+      ...extra,
+    };
+    entries.push(entry);
+    seenEntryIds.add(entry.id);
+    return entry;
+  }
+
+  function classifyFile(absolute, root, inputIndex, descriptor, stat, explicitFile) {
+    const relative = explicitFile
+      ? path.basename(absolute)
+      : path.relative(root, absolute).split(path.sep).join('/');
+    const basename = path.basename(absolute);
+    const kind = inventoryKind(absolute);
+    const canonicalPath = fs.realpathSync.native(absolute);
+    const fileIdentity = `${stat.dev}:${stat.ino}`;
+    if (seenPaths.has(canonicalPath) || seenFiles.has(fileIdentity)) {
+      addEntry(
+        inputIndex,
+        relative,
+        kind,
+        'excluded',
+        'duplicate-path-or-inode',
+        'The same file coordinate is already represented once in this operation.',
+        stat,
+      );
+      return;
+    }
+    seenPaths.add(canonicalPath);
+    seenFiles.add(fileIdentity);
+
+    if (
+      canonicalWorkspace &&
+      (
+        canonicalPath === canonicalWorkspace ||
+        canonicalPath.startsWith(`${canonicalWorkspace}${path.sep}`)
+      )
+    ) {
+      addEntry(
+        inputIndex,
+        relative,
+        kind,
+        'failed',
+        'workspace-material-path-forbidden',
+        'The managed Creation workspace and its private artifacts cannot be selected as source material.',
+        stat,
+      );
+      return;
+    }
+    const prior = previouslyAccepted.get(
+      entryId(inputIndex, relative),
+    );
+    if (
+      prior &&
+      prior.entry.coordinate_digest ===
+        materialCoordinateDigest(relative, kind, stat)
+    ) {
+      addEntry(
+        inputIndex,
+        relative,
+        kind,
+        'excluded',
+        'already-ingested-coordinate',
+        'This unchanged exact coordinate was accepted in an earlier batch and does not consume the current operation quota.',
+        stat,
+        {
+          content_hash: prior.entry.content_hash,
+          ingested_material_id: prior.material.id,
+        },
+      );
+      return;
+    }
+
+    if (
+      !explicitFile &&
+      SECRET_LIKE_FILE_PATTERNS.some((pattern) => pattern.test(basename))
+    ) {
+      addEntry(
+        inputIndex,
+        relative,
+        kind,
+        'excluded',
+        'secret-like-file-requires-explicit-authorization',
+        'A secret-like file is excluded from directory authorization; select the file explicitly only when its content is intended material.',
+        stat,
+      );
+      return;
+    }
+    if (!explicitFile && kind === 'kdna') {
+      addEntry(
+        inputIndex,
+        relative,
+        kind,
+        'excluded',
+        'packaged-output-excluded',
+        'Packaged KDNA files inside a directory are excluded to prevent output re-ingestion; select one explicitly to derive from it.',
+        stat,
+      );
+      return;
+    }
+    if (
+      stat.size > MATERIAL_LIMIT_BYTES &&
+      HOST_OBSERVATION_KINDS.has(kind) &&
+      stat.size <= HOST_OBSERVATION_SOURCE_LIMIT_BYTES
+    ) {
+      addEntry(
+        inputIndex,
+        relative,
+        kind,
+        'unsupported',
+        'host-observation-required',
+        'This source exceeds the direct extraction budget; the Host may stream-hash the exact bytes and provide a bounded digest-bound observation.',
+        stat,
+        {
+          _absolute: absolute,
+          _descriptor: descriptor,
+          _directory_member: !explicitFile,
+        },
+      );
+      return;
+    }
+    if (stat.size > MATERIAL_LIMIT_BYTES) {
+      const hostObservationSourceTooLarge =
+        stat.size > HOST_OBSERVATION_SOURCE_LIMIT_BYTES &&
+        HOST_OBSERVATION_KINDS.has(kind);
+      addEntry(
+        inputIndex,
+        relative,
+        kind,
+        hostObservationSourceTooLarge ? 'excluded' : 'unsupported',
+        hostObservationSourceTooLarge
+          ? 'host-observation-source-byte-limit'
+          : 'single-file-chunking-not-implemented',
+        hostObservationSourceTooLarge
+          ? `The source exceeds this build's ${HOST_OBSERVATION_SOURCE_LIMIT_BYTES}-byte streaming observation safety limit.`
+          : `This build cannot yet process one file larger than ${MATERIAL_LIMIT_BYTES} bytes as resumable content chunks. Provide an explicitly selected split copy whose parts preserve full ordering and coverage, or exclude the source knowingly.`,
+        stat,
+      );
+      return;
+    }
+    if (
+      ['image', 'audio', 'video', 'binary'].includes(kind)
+    ) {
+      addEntry(
+        inputIndex,
+        relative,
+        kind,
+        'unsupported',
+        'host-observation-required',
+        'This build does not extract this format directly; provide a digest-bound Host observation or exclude it knowingly.',
+        stat,
+        {
+          _absolute: absolute,
+          _descriptor: descriptor,
+          _directory_member: !explicitFile,
+        },
+      );
+      return;
+    }
+    if (kind === 'pdf' && !capabilities.pdf.available) {
+      addEntry(
+        inputIndex,
+        relative,
+        kind,
+        'unsupported',
+        'pdf-capability-unavailable',
+        capabilities.pdf.reason,
+        stat,
+        {
+          _absolute: absolute,
+          _descriptor: descriptor,
+          _directory_member: !explicitFile,
+        },
+      );
+      return;
+    }
+    if (kind === 'document' && !capabilities.word.available) {
+      addEntry(
+        inputIndex,
+        relative,
+        kind,
+        'unsupported',
+        'word-capability-unavailable',
+        capabilities.word.reason,
+        stat,
+        {
+          _absolute: absolute,
+          _descriptor: descriptor,
+          _directory_member: !explicitFile,
+        },
+      );
+      return;
+    }
+    if (approvedCount >= operationFileLimit) {
+      addEntry(
+        inputIndex,
+        relative,
+        kind,
+        'excluded',
+        'operation-file-batch-limit',
+        `This file is deferred because the current operation batch is limited to ${operationFileLimit} files; it may be included in a later explicit batch.`,
+        stat,
+      );
+      return;
+    }
+    if (approvedBytes + Number(stat.size) > operationByteLimit) {
+      addEntry(
+        inputIndex,
+        relative,
+        kind,
+        'excluded',
+        'operation-total-byte-limit',
+        `This file is deferred because the current operation batch is limited to ${operationByteLimit} bytes; it may be included in a later explicit batch.`,
+        stat,
+      );
+      return;
+    }
+    approvedCount += 1;
+    approvedBytes += Number(stat.size);
+    addEntry(
+      inputIndex,
+      relative,
+      kind,
+      'eligible',
+      'awaiting-approved-read',
+      'The file is within the reviewed operation boundary and may be read after approval.',
+      stat,
+      {
+        _absolute: absolute,
+        _descriptor: descriptor,
+        _directory_member: !explicitFile,
+      },
+    );
+  }
+
+  function visit(absolute, root, inputIndex, descriptor) {
     let stat;
     try {
       stat = fs.lstatSync(absolute);
     } catch {
-      throw new CreationCliError(
-        'material_unavailable',
-        `Material is unavailable: ${path.basename(candidate)}`,
+      addEntry(
+        inputIndex,
+        path.relative(root, absolute).split(path.sep).join('/') || '.',
+        'unknown',
+        'failed',
+        'unavailable',
+        'The material coordinate became unavailable during inventory.',
+        null,
       );
+      return;
+    }
+    const relative = path.relative(root, absolute).split(path.sep).join('/') || '.';
+    const canonicalAbsolute = canonicalFuturePath(absolute);
+    if (
+      canonicalWorkspace &&
+      canonicalAbsolute === canonicalWorkspace
+    ) {
+      addEntry(
+        inputIndex,
+        relative,
+        'directory',
+        'excluded',
+        'creation-workspace-excluded',
+        'The exact managed Creation workspace is an opaque private subtree and is never traversed as material.',
+        stat,
+      );
+      return;
     }
     if (stat.isSymbolicLink()) {
-      throw new CreationCliError(
-        'material_invalid',
-        `Material symlinks are not accepted: ${path.basename(candidate)}`,
+      addEntry(
+        inputIndex,
+        relative,
+        'symlink',
+        'excluded',
+        'symlink-not-followed',
+        'Symbolic links are not followed by directory authorization.',
+        stat,
       );
+      return;
     }
     if (stat.isFile()) {
-      files.push(absolute);
-      if (files.length > MATERIAL_FILE_LIMIT) {
-        throw new CreationCliError(
-          'material_limit_exceeded',
-          `A creation operation accepts at most ${MATERIAL_FILE_LIMIT} material files.`,
-        );
-      }
+      classifyFile(absolute, root, inputIndex, descriptor, stat, false);
       return;
     }
     if (!stat.isDirectory()) {
-      throw new CreationCliError('material_invalid', 'Material must be a file or directory.');
+      addEntry(
+        inputIndex,
+        relative,
+        'special',
+        'unsupported',
+        'non-regular-entry',
+        'Only regular files are eligible material.',
+        stat,
+      );
+      return;
     }
-    for (const entry of fs.readdirSync(absolute).sort()) {
-      visit(path.join(absolute, entry));
+    if (absolute !== root) {
+      const basename = path.basename(absolute);
+      if (
+        DEFAULT_EXCLUDED_DIRECTORY_NAMES.has(basename) ||
+        basename.startsWith('.')
+      ) {
+        addEntry(
+          inputIndex,
+          relative,
+          'directory',
+          'excluded',
+          'default-directory-exclusion',
+          'Tool, version-control, hidden, cache, build, dependency, or output directories are excluded by default.',
+          stat,
+        );
+        return;
+      }
     }
+    let names;
+    try {
+      names = fs.readdirSync(absolute).sort();
+    } catch {
+      addEntry(
+        inputIndex,
+        relative,
+        'directory',
+        'failed',
+        'directory-unreadable',
+        'The directory could not be enumerated.',
+        stat,
+      );
+      return;
+    }
+    for (const name of names) visit(path.join(absolute, name), root, inputIndex, descriptor);
   }
-  for (const candidate of inputPaths) visit(candidate);
-  return files;
+
+  values.map(materialInputDescriptor).forEach((descriptor, inputIndex) => {
+    const pathname = descriptor.path || descriptor.reference;
+    if (!pathname) return;
+    const absolute = path.resolve(pathname);
+    let stat;
+    try {
+      stat = fs.lstatSync(absolute);
+    } catch {
+      const inputScopeId = scopeIdFor(absolute, null);
+      inputScopeIds.set(inputIndex, inputScopeId);
+      inputIndexByScopeId.set(inputScopeId, inputIndex);
+      addEntry(
+        inputIndex,
+        path.basename(absolute) || `input-${inputIndex + 1}`,
+        'unknown',
+        'failed',
+        'unavailable',
+        'The requested material is unavailable.',
+        null,
+      );
+      return;
+    }
+    const inputScopeId = scopeIdFor(absolute, stat);
+    inputScopeIds.set(inputIndex, inputScopeId);
+    inputIndexByScopeId.set(inputScopeId, inputIndex);
+    if (stat.isSymbolicLink()) {
+      addEntry(
+        inputIndex,
+        path.basename(absolute),
+        'symlink',
+        'excluded',
+        'symlink-not-followed',
+        'Material symlinks are not followed; select the resolved regular file explicitly.',
+        stat,
+      );
+      return;
+    }
+    if (stat.isFile()) {
+      classifyFile(absolute, absolute, inputIndex, descriptor, stat, true);
+      return;
+    }
+    if (!stat.isDirectory()) {
+      addEntry(
+        inputIndex,
+        path.basename(absolute),
+        'special',
+        'unsupported',
+        'non-regular-root',
+        'Material input must be a regular file or directory.',
+        stat,
+      );
+      return;
+    }
+    const canonicalRoot = fs.realpathSync.native(absolute);
+    hasDirectoryInput = true;
+    if (
+      canonicalWorkspace &&
+      (
+        canonicalRoot === canonicalWorkspace ||
+        canonicalRoot.startsWith(`${canonicalWorkspace}${path.sep}`)
+      )
+    ) {
+      addEntry(
+        inputIndex,
+        '.',
+        'directory',
+        'failed',
+        'workspace-material-root-overlap',
+        'The Creation workspace itself, or a directory inside it, cannot be selected as material.',
+        stat,
+      );
+      return;
+    }
+    const overlapping = rootCoordinates.find(
+      (root) =>
+        absolute === root ||
+        absolute.startsWith(`${root}${path.sep}`) ||
+        root.startsWith(`${absolute}${path.sep}`),
+    );
+    if (overlapping) {
+      addEntry(
+        inputIndex,
+        '.',
+        'directory',
+        'excluded',
+        'overlapping-material-root',
+        'This directory overlaps another supplied root and is not traversed twice.',
+        stat,
+      );
+      return;
+    }
+    rootCoordinates.push(absolute);
+    visit(absolute, absolute, inputIndex, descriptor);
+  });
+
+  for (const { entry, material } of previouslyAccepted.values()) {
+    const inputIndex = inputIndexByScopeId.get(entry.input_scope_id);
+    if (
+      inputIndex === undefined ||
+      seenEntryIds.has(entry.id)
+    ) {
+      continue;
+    }
+    addEntry(
+      inputIndex,
+      entry.relative_path,
+      entry.kind,
+      'failed',
+      'previously-ingested-coordinate-missing',
+      'A coordinate accepted in an earlier batch is now missing; review the changed content-free inventory before continuing.',
+      null,
+      {
+        content_hash: entry.content_hash,
+        ingested_material_id: material.id,
+      },
+    );
+  }
+
+  const approvedInventoryDigest = materialInventoryDigest(
+    capabilities,
+    entries,
+    processingPolicy,
+  );
+  return {
+    document_type: MATERIAL_INVENTORY_CONTRACT,
+    contract_version: '0.1.0',
+    id: `material-inventory-${approvedInventoryDigest
+      .slice('sha256:'.length, 'sha256:'.length + 20)}`,
+    approved_inventory_digest: approvedInventoryDigest,
+    final_inventory_digest: approvedInventoryDigest,
+    approved_at: null,
+    processing_policy: processingPolicy,
+    processing_policy_digest:
+      materialProcessingPolicyDigest(processingPolicy),
+    processing_policy_required: processingPolicy === null,
+    capabilities,
+    summary: inventorySummary(entries),
+    entries,
+    has_directory_input: hasDirectoryInput,
+  };
+}
+
+function publicMaterialInventory(inventory) {
+  return {
+    document_type: inventory.document_type,
+    contract_version: inventory.contract_version,
+    id: inventory.id,
+    approved_inventory_digest: inventory.approved_inventory_digest,
+    final_inventory_digest: inventory.final_inventory_digest,
+    approved_at: inventory.approved_at,
+    processing_policy: inventory.processing_policy,
+    processing_policy_digest: inventory.processing_policy_digest,
+    processing_policy_required:
+      inventory.processing_policy_required === true,
+    capabilities: inventory.capabilities,
+    summary: inventory.summary,
+    entries: inventory.entries.map(publicInventoryEntry),
+  };
 }
 
 function descriptorForMaterial(value, budget) {
@@ -544,16 +1724,30 @@ function descriptorForMaterial(value, budget) {
       throw new CreationCliError('material_invalid', 'Inline material content must be text.');
     }
     consumeMaterialBudget(budget, Buffer.byteLength(descriptor.content));
+    const computedContentHash =
+      `sha256:${crypto
+        .createHash('sha256')
+        .update(descriptor.content)
+        .digest('hex')}`;
+    if (
+      descriptor.content_hash !== undefined &&
+      descriptor.content_hash !== computedContentHash
+    ) {
+      throw new CreationCliError(
+        'material_content_hash_mismatch',
+        'Supplied inline material content_hash does not match the exact content bytes.',
+      );
+    }
     const inline = {
       ...descriptor,
       kind: descriptor.kind || 'text',
       title: descriptor.title || 'Provided material',
-      content_hash:
-        descriptor.content_hash ||
-        `sha256:${crypto.createHash('sha256').update(descriptor.content).digest('hex')}`,
+      content_hash: computedContentHash,
       authority: descriptor.authority || 'unknown',
       currentness: descriptor.currentness || 'unknown',
-      sensitivity: descriptor.sensitivity || 'private',
+      ...(descriptor.sensitivity
+        ? { sensitivity: descriptor.sensitivity }
+        : {}),
       in_scope: descriptor.in_scope ?? 'unknown',
       source_created_at: descriptor.source_created_at ?? null,
       source_updated_at: descriptor.source_updated_at ?? null,
@@ -579,6 +1773,7 @@ function descriptorForMaterial(value, budget) {
   } = readBoundedFile(materialPath, MATERIAL_LIMIT_BYTES);
   consumeMaterialBudget(budget, bytes.length);
   const content = extractedText(absolute, bytes);
+  const extraction = extractionReceipt(absolute, bytes, content);
   delete descriptor.path;
   delete descriptor.reference;
   delete descriptor.opaque_reference;
@@ -589,10 +1784,13 @@ function descriptorForMaterial(value, budget) {
     bytes,
     content,
     content_hash: `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`,
+    extraction,
     reference: value?.opaque_reference || path.basename(absolute),
     authority: descriptor.authority || 'unknown',
     currentness: descriptor.currentness || 'unknown',
-    sensitivity: descriptor.sensitivity || 'private',
+    ...(descriptor.sensitivity
+      ? { sensitivity: descriptor.sensitivity }
+      : {}),
     in_scope: descriptor.in_scope ?? 'unknown',
     source_created_at:
       descriptor.source_created_at ?? fileMetadata.source_created_at,
@@ -602,7 +1800,236 @@ function descriptorForMaterial(value, budget) {
   };
 }
 
-function candidateFromImportedCard(card, sourceId, index) {
+function digestValue(value, label) {
+  if (
+    typeof value !== 'string' ||
+    !/^sha256:[0-9a-f]{64}$/.test(value)
+  ) {
+    throw new CreationCliError(
+      'material_observation_invalid',
+      `${label} must be a lowercase sha256 digest.`,
+    );
+  }
+  return value;
+}
+
+function hostObservationMap(input, inventory) {
+  const observations = asList(input.material_observations);
+  if (observations.length > MATERIAL_FILE_LIMIT) {
+    throw new CreationCliError(
+      'material_observation_batch_limit',
+      `This operation accepts at most ${MATERIAL_FILE_LIMIT} Host observations; submit a recoverable next batch for the remainder.`,
+    );
+  }
+  const entries = new Map(
+    inventory.entries.map((entry) => [entry.id, entry]),
+  );
+  const result = new Map();
+  for (const raw of observations) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new CreationCliError(
+        'material_observation_invalid',
+        'Each material observation must be an object.',
+      );
+    }
+    const entryId = String(raw.inventory_entry_id || '').trim();
+    const entry = entries.get(entryId);
+    if (!entry) {
+      throw new CreationCliError(
+        'material_observation_invalid',
+        'A material observation must reference an entry from the current inventory.',
+      );
+    }
+    if (
+      entry.status !== 'unsupported' ||
+      !HOST_OBSERVATION_KINDS.has(entry.kind)
+    ) {
+      throw new CreationCliError(
+        'material_observation_invalid',
+        'Host observations may only resolve a current unsupported media or extractor-capability entry.',
+      );
+    }
+    if (result.has(entryId)) {
+      throw new CreationCliError(
+        'material_observation_invalid',
+        'Only one Host observation may be supplied for an inventory entry.',
+      );
+    }
+    if (
+      typeof raw.observation_text !== 'string' ||
+      !raw.observation_text.trim()
+    ) {
+      throw new CreationCliError(
+        'material_observation_invalid',
+        'A Host observation requires non-empty observation_text.',
+      );
+    }
+    if (raw.media_type !== entry.kind) {
+      throw new CreationCliError(
+        'material_observation_invalid',
+        'The Host observation media_type must match the inventory entry.',
+      );
+    }
+    if (
+      !raw.observer ||
+      !['agent', 'human', 'organization-authority'].includes(
+        raw.observer.type,
+      ) ||
+      typeof raw.observer.id !== 'string' ||
+      !raw.observer.id.trim()
+    ) {
+      throw new CreationCliError(
+        'material_observation_invalid',
+        'A Host observation requires an explicit observer identity.',
+      );
+    }
+    if (
+      !raw.tool_coordinate ||
+      typeof raw.tool_coordinate.name !== 'string' ||
+      !raw.tool_coordinate.name.trim()
+    ) {
+      throw new CreationCliError(
+        'material_observation_invalid',
+        'A Host observation requires a provider-neutral tool coordinate.',
+      );
+    }
+    if (
+      typeof raw.coverage !== 'string' ||
+      !raw.coverage.trim() ||
+      typeof raw.uncertainty !== 'string' ||
+      !raw.uncertainty.trim()
+    ) {
+      throw new CreationCliError(
+        'material_observation_invalid',
+        'A Host observation must state its coverage and uncertainty.',
+      );
+    }
+    result.set(entryId, {
+      ...raw,
+      source_digest: digestValue(
+        raw.source_digest,
+        'material observation source_digest',
+      ),
+      ...(raw.observation_digest === undefined
+        ? {}
+        : {
+            observation_digest: digestValue(
+              raw.observation_digest,
+              'material observation observation_digest',
+            ),
+          }),
+    });
+  }
+  return result;
+}
+
+function importedCardMapping(card, sourceId, index, options = {}) {
+  const sourceCardId = String(card?.id || `card-${index + 1}`);
+  const sourceCardType =
+    typeof card?.type === 'string' && card.type.trim()
+      ? card.type
+      : null;
+  const sourceCardDigest = sha256Bytes(Buffer.from(canonical(card || {})));
+  const entryId = `import-entry-${sourceCardDigest
+    .slice('sha256:'.length, 'sha256:'.length + 16)}-${index + 1}`;
+  const baseEntry = {
+    id: entryId,
+    source_card_id: sourceCardId,
+    source_card_index: index,
+    source_card_type: sourceCardType,
+    source_card_digest: sourceCardDigest,
+    status: 'unsupported-with-reason',
+    potential_judgment: true,
+    reason:
+      'The card cannot be mapped without inventing required judgment semantics.',
+    candidate_id: null,
+    reviewed_by: null,
+    review_rationale: null,
+    reviewed_at: null,
+  };
+  const explicitDecision = asList(options.decisions).find(
+    (decision) =>
+      (
+        decision.entry_id === entryId ||
+        (
+          decision.source_card_id === sourceCardId &&
+          (
+            decision.source_card_index === undefined ||
+            decision.source_card_index === index
+          )
+        )
+      ),
+  );
+  if (explicitDecision) {
+    if (!['evidence-only', 'user-excluded'].includes(explicitDecision.decision)) {
+      throw new CreationCliError(
+        'import_mapping_decision_invalid',
+        'An import mapping decision must be evidence-only or user-excluded.',
+      );
+    }
+    if (
+      !explicitDecision.actor?.type ||
+      !explicitDecision.actor?.id ||
+      !String(explicitDecision.rationale || '').trim()
+    ) {
+      throw new CreationCliError(
+        'import_mapping_review_required',
+        'An import mapping decision requires an explicit actor and rationale.',
+      );
+    }
+    return {
+      candidate: null,
+      entry: {
+        ...baseEntry,
+        status: explicitDecision.decision,
+        reason:
+          explicitDecision.decision === 'evidence-only'
+            ? 'A named reviewer classified this card as source evidence rather than a derived judgment.'
+            : 'A named reviewer explicitly excluded this card from the derived asset.',
+        reviewed_by: explicitDecision.actor,
+        review_rationale: String(explicitDecision.rationale),
+        reviewed_at: new Date().toISOString(),
+      },
+    };
+  }
+  if (options.deriveCandidates === false) {
+    return {
+      candidate: null,
+      entry: {
+        ...baseEntry,
+        status: 'evidence-only',
+        potential_judgment: false,
+        reason:
+          'The caller explicitly imported this KDNA as source evidence without deriving candidates.',
+      },
+    };
+  }
+  if (!sourceCardType) {
+    return {
+      candidate: null,
+      entry: {
+        ...baseEntry,
+        reason:
+          'The source card has no explicit type and cannot be silently classified.',
+      },
+    };
+  }
+  if (
+    ['attachment', 'evidence', 'reference', 'source'].includes(
+      sourceCardType,
+    )
+  ) {
+    return {
+      candidate: null,
+      entry: {
+        ...baseEntry,
+        status: 'evidence-only',
+        potential_judgment: false,
+        reason:
+          'This source card type is retained as evidence and is not forced into a JudgmentUnit.',
+      },
+    };
+  }
   const fields = card?.fields || {};
   const statement =
     fields.one_sentence ||
@@ -637,11 +2064,11 @@ function candidateFromImportedCard(card, sourceId, index) {
     doesNotApplyWhen.length === 0 ||
     !String(misuseRisk).trim()
   ) {
-    return null;
+    return { candidate: null, entry: baseEntry };
   }
-  const stableCardId = String(card.id || `${card.type || 'judgment'}-${index + 1}`)
+  const stableCardId = String(card.id || `${card.type}-${index + 1}`)
     .replace(/[^a-zA-Z0-9_.-]+/g, '-');
-  return {
+  const candidate = {
     id: `candidate-from-${stableCardId}`,
     statement: String(statement),
     rationale: String(rationale),
@@ -649,14 +2076,51 @@ function candidateFromImportedCard(card, sourceId, index) {
     does_not_apply_when: doesNotApplyWhen,
     misuse_risk: String(misuseRisk),
     source_refs: [sourceId],
-    contrary_evidence: [
-      'The imported asset may be outdated, differently scoped, or governed by another authority; derivation review must resolve that possibility.',
-    ],
+    contrary_evidence: [],
+    counterexample_search: {
+      scope: 'The imported card and its declared scope metadata.',
+      method: 'Preserve the card as a review candidate; source authority, currentness, and counterexamples remain unverified.',
+      result: 'inconclusive',
+      uncertainty: 'The imported asset may be outdated, differently scoped, or governed by another authority.',
+    },
     confidence: fields.confidence || 'unknown',
     agent_inference: false,
-    card_type: card.type || 'axiom',
+    card_type: card.type,
     fields: JSON.parse(JSON.stringify(fields)),
   };
+  return {
+    candidate,
+    entry: {
+      ...baseEntry,
+      status: 'mapped',
+      reason:
+        'The source card supplied every required judgment field and was mapped without invention.',
+      candidate_id: candidate.id,
+    },
+  };
+}
+
+function importMappingSummary(entries) {
+  return {
+    mapped: entries.filter((entry) => entry.status === 'mapped').length,
+    evidence_only:
+      entries.filter((entry) => entry.status === 'evidence-only').length,
+    unsupported:
+      entries.filter(
+        (entry) => entry.status === 'unsupported-with-reason',
+      ).length,
+    user_excluded:
+      entries.filter((entry) => entry.status === 'user-excluded').length,
+    total: entries.length,
+  };
+}
+
+function importMappingDigest(report) {
+  return sha256Bytes(Buffer.from(canonical({
+    source_material_id: report.source_material_id,
+    source_asset_digest: report.source_asset_digest,
+    entries: report.entries,
+  })));
 }
 
 function currentKdnaMaterial(value, deps, password, budget = {
@@ -802,9 +2266,11 @@ function currentKdnaMaterial(value, deps, password, budget = {
     belongs_to_subject: descriptor.belongs_to_subject ?? 'unknown',
     represents_current_judgment:
       descriptor.represents_current_judgment ?? 'unknown',
-    authority: descriptor.authority || 'supporting',
+    authority: descriptor.authority || 'unknown',
     currentness: descriptor.currentness || 'unknown',
-    sensitivity: descriptor.sensitivity || 'private',
+    ...(descriptor.sensitivity
+      ? { sensitivity: descriptor.sensitivity }
+      : {}),
     external_constraints: externalConstraints,
     in_scope: descriptor.in_scope ?? 'unknown',
     source_created_at:
@@ -817,11 +2283,28 @@ function currentKdnaMaterial(value, deps, password, budget = {
         ? 'asset-manifest'
         : 'unknown'),
   };
-  const candidates = descriptor.derive_candidates === false
-    ? []
-    : (imported.cards || [])
-        .map((card, index) => candidateFromImportedCard(card, sourceId, index))
-        .filter(Boolean);
+  const mappings = (imported.cards || []).map((card, index) =>
+    importedCardMapping(card, sourceId, index, {
+      deriveCandidates: descriptor.derive_candidates !== false,
+      decisions: descriptor.import_mapping_decisions,
+    }));
+  const candidates = mappings
+    .map((mapping) => mapping.candidate)
+    .filter(Boolean);
+  const mappingEntries = mappings.map((mapping) => mapping.entry);
+  const mappingReportDraft = {
+    source_material_id: sourceId,
+    source_asset_digest: digest,
+    entries: mappingEntries,
+  };
+  const mappingDigest = importMappingDigest(mappingReportDraft);
+  const mappingReport = {
+    id: `import-mapping-${mappingDigest
+      .slice('sha256:'.length, 'sha256:'.length + 20)}`,
+    ...mappingReportDraft,
+    mapping_digest: mappingDigest,
+    summary: importMappingSummary(mappingEntries),
+  };
   const lineage = {
     type: 'fork',
     parent_asset_id: manifest.asset_id,
@@ -829,7 +2312,7 @@ function currentKdnaMaterial(value, deps, password, budget = {
     parent_version: manifest.version,
     parent_asset_digest: digest,
   };
-  return { material, candidates, lineage };
+  return { material, candidates, lineage, mappingReport };
 }
 
 function materialDescriptors(
@@ -838,95 +2321,847 @@ function materialDescriptors(
   deps,
   password,
   totalLimit = MATERIAL_TOTAL_LIMIT_BYTES,
+  options = {},
 ) {
-  const supplied = [];
+  const pathInputs = [];
+  const inlineInputs = [];
   for (const value of Array.isArray(input.materials) ? input.materials : []) {
     const materialPath =
-      typeof value === 'string' ? value : value?.path;
+      typeof value === 'string' ? value : (value?.path || value?.reference);
     if (materialPath) {
-      let directoryInput = false;
-      try {
-        directoryInput = fs.lstatSync(path.resolve(materialPath)).isDirectory();
-      } catch {
-        // collectMaterialFiles emits the stable unavailable-material error.
-      }
-      const files = collectMaterialFiles([materialPath]);
-      for (const file of files) {
-        const base =
-          typeof value === 'string'
-            ? {}
-            : { ...value };
-        supplied.push(
-          directoryInput
-            ? {
-                ...base,
-                path: file,
-                external_constraints: [
-                  ...(Array.isArray(base.external_constraints)
-                    ? base.external_constraints
-                    : []),
-                  'Directory ingestion preserves migration provenance and does not establish current authority.',
-                ],
-              }
-            : { ...base, path: file },
-        );
-      }
+      pathInputs.push(value);
     } else {
-      supplied.push(value);
+      inlineInputs.push(value);
     }
   }
   for (const materialPath of allValueOptions(args, '--material')) {
-    let directoryInput = false;
-    try {
-      directoryInput = fs.lstatSync(path.resolve(materialPath)).isDirectory();
-    } catch {
-      // collectMaterialFiles emits the stable unavailable-material error.
-    }
-    for (const file of collectMaterialFiles([materialPath])) {
-      supplied.push({
-        path: file,
-        ...(directoryInput
-          ? {
-              external_constraints: [
-                'Directory ingestion preserves migration provenance and does not establish current authority.',
-              ],
-            }
-          : {}),
-      });
-    }
+    pathInputs.push({ path: materialPath });
   }
   for (const value of asList(input.from_kdna)) {
-    supplied.push(
+    pathInputs.push(
       typeof value === 'string'
         ? { path: value, derive_candidates: true }
         : { ...value, derive_candidates: value.derive_candidates !== false },
     );
   }
-  if (supplied.length > MATERIAL_FILE_LIMIT) {
+
+  const inventory = inventoryMaterialInputs(pathInputs, {
+    workspacePath: options.workspacePath || null,
+    totalLimit,
+    existingMaterials: options.existingMaterials || [],
+    existingInventories: options.existingInventories || [],
+    processingPolicy:
+      input.material_inventory_approval?.processing_policy ||
+      input.material_processing_policy,
+  });
+  const publicInventory = publicMaterialInventory(inventory);
+  const overlap = inventory.entries.find(
+    (entry) => entry.reason_code === 'workspace-material-root-overlap',
+  );
+  if (overlap) {
     throw new CreationCliError(
-      'material_limit_exceeded',
-      `A creation operation accepts at most ${MATERIAL_FILE_LIMIT} material files.`,
+      'material_workspace_overlap',
+      'The Creation workspace and material directory must not contain one another.',
+      2,
+      { material_inventory: publicInventory },
     );
   }
+  if (pathInputs.length > 0 && inventory.processing_policy === null) {
+    throw new CreationCliError(
+      'material_processing_policy_required',
+      'Review the content-free inventory with an explicit local-only, named remote processor, or prohibited processing destination before any file content is read.',
+      4,
+      { material_inventory: publicInventory },
+    );
+  }
+  if (inventory.has_directory_input) {
+    const approval = input.material_inventory_approval;
+    const approvedDigest =
+      typeof approval === 'string'
+        ? approval
+        : (
+            approval?.inventory_digest ||
+            approval?.approved_inventory_digest ||
+            null
+          );
+    if (approvedDigest !== inventory.approved_inventory_digest) {
+      throw new CreationCliError(
+        'material_inventory_review_required',
+        'Review this content-free material inventory, then resubmit its exact approved_inventory_digest before any file content is read.',
+        4,
+        { material_inventory: publicInventory },
+      );
+    }
+  }
+  const observations = hostObservationMap(input, inventory);
+
   const materials = [];
   const candidates = [];
   const lineages = [];
+  const importMappings = [];
   const budget = { used: 0, maximum: totalLimit };
-  for (const descriptor of supplied) {
-    const materialPath = descriptor?.path || descriptor?.reference;
-    if (
-      materialPath &&
-      path.extname(String(materialPath)).toLowerCase() === '.kdna'
-    ) {
-      const current = currentKdnaMaterial(descriptor, deps, password, budget);
-      materials.push(current.material);
-      candidates.push(...current.candidates);
-      lineages.push(current.lineage);
-    } else {
-      materials.push(descriptorForMaterial(descriptor, budget));
+  const contentDigests = new Map();
+  const normalizedTextDigests = new Map();
+  for (const material of options.existingMaterials || []) {
+    contentDigests.set(
+      material.observation?.source_digest ||
+        material.content_hash,
+      {
+        id: material.id,
+        existing: true,
+      },
+    );
+    if (material.normalized_text_digest) {
+      normalizedTextDigests.set(
+        material.normalized_text_digest,
+        {
+          id: material.id,
+          existing: true,
+        },
+      );
     }
   }
-  return { materials, candidates, lineages };
+  for (const entry of inventory.entries) {
+    if (entry.status !== 'eligible') continue;
+    entry.status = 'accepted';
+    entry.approved_for_content_read = true;
+    const base = { ...(entry._descriptor || {}) };
+    delete base.reference;
+    const descriptor = {
+      ...base,
+      path: entry._absolute,
+      ...(entry._directory_member
+        ? {
+            external_constraints: [
+              ...(Array.isArray(base.external_constraints)
+                ? base.external_constraints
+                : []),
+              'Directory membership is only a batch-input coordinate; ownership, currentness, authority, and scope remain unknown until reviewed.',
+            ],
+          }
+        : {}),
+    };
+    const materialPath = descriptor?.path || descriptor?.reference;
+    try {
+      let material;
+      if (
+        materialPath &&
+        path.extname(String(materialPath)).toLowerCase() === '.kdna'
+      ) {
+        const current = currentKdnaMaterial(descriptor, deps, password, budget);
+        material = current.material;
+        candidates.push(...current.candidates);
+        lineages.push(current.lineage);
+        importMappings.push(current.mappingReport);
+      } else {
+        material = descriptorForMaterial(descriptor, budget);
+      }
+      if (!material.id) {
+        material.id =
+          `source-${entry.id}-${material.content_hash
+            .slice('sha256:'.length, 'sha256:'.length + 12)}`;
+      }
+      entry.content_hash = material.content_hash;
+      const duplicate = contentDigests.get(material.content_hash);
+      if (duplicate) {
+        entry.status = 'excluded';
+        entry.reason_code = duplicate.existing
+          ? 'duplicate-existing-content'
+          : 'duplicate-content';
+        entry.reason =
+          'The exact same bytes are already represented once and are not weighted as independent evidence.';
+        entry.ingested_material_id = null;
+        continue;
+      }
+      contentDigests.set(material.content_hash, {
+        id: material.id,
+        existing: false,
+      });
+      if (typeof material.content === 'string') {
+        const normalized = material.content
+          .normalize('NFKC')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .toLowerCase();
+        if (normalized) {
+          const normalizedDigest = sha256Bytes(Buffer.from(normalized));
+          if (normalizedTextDigests.has(normalizedDigest)) {
+            material.external_constraints = [
+              ...(material.external_constraints || []),
+              'Near-duplicate normalized text is present; review its evidentiary weight before treating it as independent support.',
+            ];
+            entry.reason_code = 'near-duplicate-review-required';
+            entry.reason =
+              'The text normalizes to the same content as another accepted file and requires evidentiary-weight review.';
+          } else {
+            normalizedTextDigests.set(normalizedDigest, {
+              id: material.id,
+              existing: false,
+            });
+          }
+        }
+      }
+      entry.ingested_material_id = material.id;
+      if (entry.reason_code === 'awaiting-approved-read') {
+        entry.reason_code = 'ingested';
+        entry.reason =
+          'The approved file was read completely and bound to its exact byte digest.';
+      }
+      materials.push(material);
+    } catch (error) {
+      entry.status = 'failed';
+      entry.reason_code =
+        error instanceof CreationCliError
+          ? error.code
+          : 'material_processing_failed';
+      entry.reason =
+        error instanceof CreationCliError
+          ? error.message
+          : 'The material could not be processed.';
+      entry.content_hash = null;
+      entry.ingested_material_id = null;
+    }
+  }
+  for (const [entryId, observation] of observations) {
+    const entry = inventory.entries.find(
+      (candidate) => candidate.id === entryId,
+    );
+    entry.status = 'accepted';
+    entry.approved_for_content_read = true;
+    try {
+      const {
+        source_digest: sourceDigest,
+        fileMetadata,
+      } = streamHashRegularFile(
+        entry._absolute,
+        HOST_OBSERVATION_SOURCE_LIMIT_BYTES,
+      );
+      entry.content_hash = sourceDigest;
+      if (sourceDigest !== observation.source_digest) {
+        throw new CreationCliError(
+          'material_observation_source_mismatch',
+          'The Host observation source_digest does not match the current exact source bytes.',
+        );
+      }
+      const observationBytes = Buffer.from(
+        observation.observation_text,
+        'utf8',
+      );
+      consumeMaterialBudget(budget, observationBytes.length);
+      const observationDigest = sha256Bytes(observationBytes);
+      if (
+        observation.observation_digest !== undefined &&
+        observation.observation_digest !== observationDigest
+      ) {
+        throw new CreationCliError(
+          'material_observation_output_mismatch',
+          'The Host observation observation_digest does not match the exact observation text.',
+        );
+      }
+      const duplicate = contentDigests.get(sourceDigest);
+      if (duplicate) {
+        entry.status = 'excluded';
+        entry.reason_code = duplicate.existing
+          ? 'duplicate-existing-content'
+          : 'duplicate-content';
+        entry.reason =
+          'The exact same source bytes were already represented once and are not weighted as independent evidence.';
+        entry.ingested_material_id = null;
+        continue;
+      }
+      const base = { ...(entry._descriptor || {}) };
+      const opaqueReference = base.opaque_reference;
+      delete base.path;
+      delete base.reference;
+      delete base.opaque_reference;
+      const material = {
+        ...base,
+        id:
+          base.id ||
+          `source-${entry.id}-${sourceDigest
+            .slice('sha256:'.length, 'sha256:'.length + 12)}`,
+        kind: 'host-observation',
+        title: base.title || path.basename(entry._absolute),
+        bytes: observationBytes,
+        content: observation.observation_text,
+        content_hash: observationDigest,
+        reference:
+          opaqueReference || path.basename(entry._absolute),
+        observation: {
+          source_digest: sourceDigest,
+          media_type: entry.kind,
+          observation_digest: observationDigest,
+          observer: observation.observer,
+          tool_coordinate: observation.tool_coordinate,
+          coverage: observation.coverage,
+          uncertainty: observation.uncertainty,
+        },
+        authority: base.authority || 'unknown',
+        currentness: base.currentness || 'unknown',
+        ...(base.sensitivity
+          ? { sensitivity: base.sensitivity }
+          : {}),
+        in_scope: base.in_scope ?? 'unknown',
+        source_created_at:
+          base.source_created_at ?? fileMetadata.source_created_at,
+        source_updated_at:
+          base.source_updated_at ?? fileMetadata.source_updated_at,
+        time_basis: base.time_basis || fileMetadata.time_basis,
+        external_constraints: [
+          ...(Array.isArray(base.external_constraints)
+            ? base.external_constraints
+            : []),
+          'This source record is a Host observation bound to exact source bytes; it does not represent the source author or make the binary Runtime content.',
+        ],
+      };
+      contentDigests.set(sourceDigest, {
+        id: material.id,
+        existing: false,
+      });
+      entry.ingested_material_id = material.id;
+      entry.reason_code = 'host-observation-verified';
+      entry.reason =
+        'The approved source bytes and Host observation were bound to their exact digests.';
+      materials.push(material);
+    } catch (error) {
+      entry.status = 'failed';
+      entry.reason_code =
+        error instanceof CreationCliError
+          ? error.code
+          : 'material_observation_failed';
+      entry.reason =
+        error instanceof CreationCliError
+          ? error.message
+          : 'The Host observation could not be verified.';
+      entry.content_hash = null;
+      entry.ingested_material_id = null;
+    }
+  }
+  for (const descriptor of inlineInputs) {
+    const material = descriptorForMaterial(descriptor, budget);
+    const duplicate = contentDigests.get(material.content_hash);
+    if (duplicate) continue;
+    if (!material.id) {
+      material.id =
+        `source-inline-${material.content_hash
+          .slice('sha256:'.length, 'sha256:'.length + 16)}`;
+    }
+    contentDigests.set(material.content_hash, {
+      id: material.id,
+      existing: false,
+    });
+    materials.push(material);
+  }
+  inventory.approved_at = new Date().toISOString();
+  inventory.summary = inventorySummary(inventory.entries);
+  inventory.final_inventory_digest = materialInventoryDigest(
+    inventory.capabilities,
+    inventory.entries,
+    inventory.processing_policy,
+  );
+  inventory.id =
+    `material-inventory-${inventory.final_inventory_digest
+      .slice('sha256:'.length, 'sha256:'.length + 20)}`;
+  for (const entry of inventory.entries) {
+    if (
+      entry.status !== 'accepted' ||
+      !entry.ingested_material_id
+    ) {
+      continue;
+    }
+    const material = materials.find(
+      (candidate) =>
+        candidate.id === entry.ingested_material_id,
+    );
+    if (material) {
+      material.source_inventory_id = inventory.id;
+      material.source_inventory_entry_id = entry.id;
+    }
+  }
+  return {
+    materials,
+    candidates,
+    lineages,
+    importMappings,
+    inventories:
+      pathInputs.length > 0
+        ? [publicMaterialInventory(inventory)]
+        : [],
+  };
+}
+
+function deliverMaterialToPrivateFd(
+  engine,
+  workspacePath,
+  workspace,
+  input,
+  args,
+) {
+  const requestedFd = valueOption(args, '--private-output-fd');
+  const requestedFile = valueOption(args, '--private-output-file');
+  if (
+    (requestedFd && requestedFile) ||
+    (!requestedFd && !requestedFile)
+  ) {
+    throw new CreationCliError(
+      'material_delivery_channel_required',
+      'deliver-material requires exactly one Host-owned channel: --private-output-fd 3 or an existing mode-0600 system-temporary file via --private-output-file.',
+      4,
+    );
+  }
+  if (requestedFd && requestedFd !== '3') {
+    throw new CreationCliError(
+      'material_delivery_channel_required',
+      'The descriptor channel is fixed at --private-output-fd 3.',
+      4,
+    );
+  }
+  let channelFd = 3;
+  let closeChannel = false;
+  let channelFile = null;
+  let initialChannelStat = null;
+  let channelStat;
+  if (requestedFile) {
+    const absoluteChannel = path.resolve(requestedFile);
+    const allowedTemporaryRoots = [
+      os.tmpdir(),
+      '/private/tmp',
+      '/tmp',
+    ].flatMap((root) => {
+      try {
+        return [fs.realpathSync(root)];
+      } catch {
+        return [];
+      }
+    });
+    const realParent = fs.realpathSync(path.dirname(absoluteChannel));
+    if (
+      !allowedTemporaryRoots.some((root) => {
+        const relative = path.relative(root, realParent);
+        return (
+          relative === '' ||
+          (
+            !relative.startsWith(`..${path.sep}`) &&
+            relative !== '..' &&
+            !path.isAbsolute(relative)
+          )
+        );
+      })
+    ) {
+      throw new CreationCliError(
+        'material_delivery_channel_invalid',
+        'The private output file must be inside the system temporary directory.',
+        4,
+      );
+    }
+    try {
+      initialChannelStat = fs.lstatSync(absoluteChannel);
+    } catch {
+      throw new CreationCliError(
+        'material_delivery_channel_required',
+        'The Host must pre-create the private output file with mode 0600.',
+        4,
+      );
+    }
+    if (
+      initialChannelStat.isSymbolicLink() ||
+      !initialChannelStat.isFile() ||
+      initialChannelStat.nlink !== 1 ||
+      (initialChannelStat.mode & 0o077) !== 0 ||
+      (
+        typeof process.getuid === 'function' &&
+        initialChannelStat.uid !== process.getuid()
+      )
+    ) {
+      throw new CreationCliError(
+        'material_delivery_channel_permissions',
+        'The private output file must be one Host-owned, non-symlink regular file with mode 0600 or stricter.',
+        4,
+      );
+    }
+    channelFile = absoluteChannel;
+    channelStat = initialChannelStat;
+  } else {
+    try {
+      channelStat = fs.fstatSync(channelFd);
+    } catch {
+      throw new CreationCliError(
+        'material_delivery_channel_required',
+        'deliver-material requires a Host-opened private descriptor 3; source content is never written to ordinary stdout or status JSON.',
+        4,
+      );
+    }
+  }
+  if (
+    !channelStat.isFile() &&
+    !channelStat.isFIFO() &&
+    !channelStat.isSocket()
+  ) {
+    throw new CreationCliError(
+      'material_delivery_channel_invalid',
+      'Private descriptor 3 must be a bounded file, pipe, or socket.',
+      4,
+    );
+  }
+  if (
+    channelStat.isFile() &&
+    (channelStat.mode & 0o077) !== 0
+  ) {
+    throw new CreationCliError(
+      'material_delivery_channel_permissions',
+      'A regular-file material delivery channel must deny all group and other permissions.',
+      4,
+    );
+  }
+  for (const ordinaryFd of [1, 2]) {
+    let ordinaryStat;
+    try {
+      ordinaryStat = fs.fstatSync(ordinaryFd);
+    } catch {
+      continue;
+    }
+    if (
+      ordinaryStat.dev === channelStat.dev &&
+      ordinaryStat.ino === channelStat.ino
+    ) {
+      throw new CreationCliError(
+        'material_delivery_channel_alias',
+        'The private material delivery descriptor must not alias ordinary stdout or stderr.',
+        4,
+      );
+    }
+  }
+  const inventoryId = String(input.inventory_id || '').trim();
+  const entryId = String(input.inventory_entry_id || '').trim();
+  const inventory = workspace.materialInventories.find(
+    (candidate) => candidate.id === inventoryId,
+  );
+  const acceptedEntry = inventory?.entries.find(
+    (candidate) => candidate.id === entryId,
+  );
+  if (
+    !acceptedEntry ||
+    acceptedEntry.status !== 'accepted' ||
+    acceptedEntry.approved_for_content_read !== true ||
+    !acceptedEntry.ingested_material_id
+  ) {
+    throw new CreationCliError(
+      'material_delivery_not_approved',
+      'The requested material is not an accepted entry in the named approved inventory.',
+      4,
+    );
+  }
+  const host = input.host;
+  if (
+    !host ||
+    !['agent', 'human', 'organization-authority'].includes(host.type) ||
+    typeof host.id !== 'string' ||
+    !host.id.trim()
+  ) {
+    throw new CreationCliError(
+      'material_delivery_host_required',
+      'deliver-material requires an explicit Host identity.',
+    );
+  }
+  if (
+    !input.processing_destination ||
+    typeof input.processing_destination !== 'object'
+  ) {
+    throw new CreationCliError(
+      'material_processing_destination_required',
+      'deliver-material requires the Host to declare whether processing is local-only or uses the exact approved named remote processor.',
+      4,
+    );
+  }
+  const processingDestination = normalizeMaterialProcessingPolicy(
+    input.processing_destination,
+  );
+  const hostExecution = input.host_execution;
+  if (
+    !hostExecution ||
+    typeof hostExecution !== 'object' ||
+    !['local', 'remote'].includes(hostExecution.location) ||
+    hostExecution.assurance !== 'host-declared' ||
+    !/^sha256:[0-9a-f]{64}$/.test(
+      String(hostExecution.capability_digest || ''),
+    )
+  ) {
+    throw new CreationCliError(
+      'material_host_capability_required',
+      'deliver-material requires a host-declared execution coordinate. A caller-supplied digest is not verified-local evidence.',
+      4,
+    );
+  }
+  if (processingDestination.assurance === 'verified-host-required') {
+    throw new CreationCliError(
+      'material_verified_host_adapter_required',
+      'The approved policy requires a separately trusted Host adapter. Generic CLI fields and a caller-supplied capability digest cannot verify local-only processing.',
+      4,
+    );
+  }
+  const hostProcessor =
+    typeof hostExecution.processor === 'string' &&
+    hostExecution.processor.trim()
+      ? hostExecution.processor.trim()
+      : null;
+  const normalizedHostExecution = {
+    location: hostExecution.location,
+    processor: hostProcessor,
+    assurance: 'host-declared',
+    capability_digest: hostExecution.capability_digest,
+  };
+  if (
+    inventory.processing_policy.destination === 'prohibited' ||
+    canonical(processingDestination) !==
+      canonical(inventory.processing_policy) ||
+    (
+      processingDestination.destination === 'local-only' &&
+      (
+        normalizedHostExecution.location !== 'local' ||
+        normalizedHostExecution.processor !== null
+      )
+    ) ||
+    (
+      processingDestination.destination === 'named-remote-processor' &&
+      (
+        normalizedHostExecution.location !== 'remote' ||
+        normalizedHostExecution.processor !==
+          processingDestination.processor
+      )
+    )
+  ) {
+    throw new CreationCliError(
+      'material_processing_destination_not_approved',
+      'The Host processing destination does not match the exact inventory approval; review a new content-free inventory before delivery.',
+      4,
+    );
+  }
+  const pathInputs = [
+    ...asList(input.materials),
+    ...allValueOptions(args, '--material').map(
+      (materialPath) => ({ path: materialPath }),
+    ),
+  ];
+  if (pathInputs.length === 0) {
+    throw new CreationCliError(
+      'source_reauthorization_required',
+      'Reauthorize the original file or directory so the Host can reproduce the approved inventory without retaining its private path.',
+      4,
+    );
+  }
+  const fresh = inventoryMaterialInputs(pathInputs, {
+    workspacePath,
+    processingPolicy: inventory.processing_policy,
+  });
+  if (
+    fresh.approved_inventory_digest !==
+      inventory.approved_inventory_digest
+  ) {
+    throw new CreationCliError(
+      'material_inventory_drift',
+      'The reauthorized source inventory differs from the approved content-free inventory; review the new inventory before any content is delivered.',
+      4,
+      {
+        material_inventory: publicMaterialInventory(fresh),
+      },
+    );
+  }
+  const freshEntry = fresh.entries.find(
+    (candidate) => candidate.id === entryId,
+  );
+  if (!freshEntry || !freshEntry._absolute) {
+    throw new CreationCliError(
+      'material_delivery_not_listed',
+      'The requested entry is not present in the exact reauthorized inventory.',
+      4,
+    );
+  }
+  const material = workspace.materials.find(
+    (candidate) =>
+      candidate.id === acceptedEntry.ingested_material_id,
+  );
+  if (
+    !material ||
+    material.source_inventory_id !== inventory.id ||
+    material.source_inventory_entry_id !== acceptedEntry.id
+  ) {
+    throw new CreationCliError(
+      'material_delivery_binding_invalid',
+      'The accepted inventory does not bind one current material record.',
+      5,
+    );
+  }
+  const transientBuffers = [];
+  try {
+    let sourceDigest;
+    let deliveredBytes;
+    let deliveredDigest;
+    if (material.kind === 'host-observation') {
+      const observation = input.material_observation;
+      if (!observation || typeof observation !== 'object') {
+        throw new CreationCliError(
+          'source_reauthorization_required',
+          'Reprovide the digest-bound Host observation for this media entry.',
+          4,
+        );
+      }
+      const {
+        source_digest: streamedSourceDigest,
+      } = streamHashRegularFile(
+        freshEntry._absolute,
+        HOST_OBSERVATION_SOURCE_LIMIT_BYTES,
+      );
+      sourceDigest = streamedSourceDigest;
+      deliveredBytes = Buffer.from(
+        String(observation.observation_text || ''),
+        'utf8',
+      );
+      transientBuffers.push(deliveredBytes);
+      deliveredDigest = sha256Bytes(deliveredBytes);
+      if (
+        observation.source_digest !== sourceDigest ||
+        observation.media_type !== material.observation.media_type ||
+        deliveredDigest !== material.observation.observation_digest ||
+        sourceDigest !== material.observation.source_digest
+      ) {
+        throw new CreationCliError(
+          'material_delivery_digest_mismatch',
+          'The reauthorized source or Host observation differs from the accepted exact digests.',
+          4,
+        );
+      }
+    } else {
+      const descriptor = descriptorForMaterial(
+        {
+          ...(freshEntry._descriptor || {}),
+          path: freshEntry._absolute,
+        },
+        {
+          used: 0,
+          maximum: MATERIAL_TOTAL_LIMIT_BYTES,
+        },
+      );
+      transientBuffers.push(descriptor.bytes);
+      sourceDigest = descriptor.content_hash;
+      deliveredBytes = Buffer.from(descriptor.content, 'utf8');
+      transientBuffers.push(deliveredBytes);
+      deliveredDigest = sha256Bytes(deliveredBytes);
+      if (
+        sourceDigest !== material.content_hash ||
+        sourceDigest !== acceptedEntry.content_hash ||
+        deliveredDigest !==
+          (
+            material.extraction?.output_digest ||
+            material.content_hash
+          )
+      ) {
+        throw new CreationCliError(
+          'material_delivery_digest_mismatch',
+          'The reauthorized source or extraction differs from the accepted exact digests.',
+          4,
+        );
+      }
+    }
+    if (channelFile) {
+      try {
+        channelFd = fs.openSync(
+          channelFile,
+          fs.constants.O_WRONLY |
+            fs.constants.O_TRUNC |
+            (fs.constants.O_NOFOLLOW || 0),
+        );
+        closeChannel = true;
+        channelStat = fs.fstatSync(channelFd);
+      } catch {
+        throw new CreationCliError(
+          'material_delivery_channel_invalid',
+          'The private output file could not be opened without following links.',
+          4,
+        );
+      }
+      if (
+        channelStat.dev !== initialChannelStat.dev ||
+        channelStat.ino !== initialChannelStat.ino
+      ) {
+        fs.closeSync(channelFd);
+        closeChannel = false;
+        throw new CreationCliError(
+          'material_delivery_channel_invalid',
+          'The private output file changed while it was being opened.',
+          4,
+        );
+      }
+    }
+    let offset = 0;
+    while (offset < deliveredBytes.length) {
+      offset += fs.writeSync(
+        channelFd,
+        deliveredBytes,
+        offset,
+        deliveredBytes.length - offset,
+      );
+    }
+    const receiptId =
+      `source-delivery-${crypto
+        .createHash('sha256')
+        .update(canonical({
+          workspace_id: workspace.state.workspace_id,
+          material_id: material.id,
+          inventory_id: inventory.id,
+          inventory_entry_id: acceptedEntry.id,
+          source_digest: sourceDigest,
+          delivered_digest: deliveredDigest,
+          host,
+          processing_destination: processingDestination,
+          host_execution: normalizedHostExecution,
+          processing_policy_digest:
+            inventory.processing_policy_digest,
+          channel:
+            channelFile ? 'private-temp-file' : 'private-fd',
+        }))
+        .digest('hex')
+        .slice(0, 24)}`;
+    const prior = workspace.sourceDeliveries.find(
+      (candidate) => candidate.id === receiptId,
+    );
+    const next = prior
+      ? workspace
+      : engine.recordSourceDelivery(workspace, {
+          id: receiptId,
+          material_id: material.id,
+          source_digest: sourceDigest,
+          delivered_digest: deliveredDigest,
+          host,
+          processing_destination: processingDestination,
+          host_execution: normalizedHostExecution,
+          processing_policy_digest:
+            inventory.processing_policy_digest,
+          channel:
+            channelFile ? 'private-temp-file' : 'private-fd',
+        });
+    const saved = prior
+      ? workspace
+      : engine.saveWorkspace(workspacePath, next);
+    return {
+      workspace: saved,
+      delivery: prior || saved.sourceDeliveries.find(
+        (candidate) => candidate.id === receiptId,
+      ),
+      byte_length: deliveredBytes.length,
+    };
+  } finally {
+    for (const buffer of new Set(transientBuffers)) {
+      if (Buffer.isBuffer(buffer)) buffer.fill(0);
+    }
+    if (closeChannel) {
+      try {
+        fs.closeSync(channelFd);
+      } catch {
+        // The exact channel is best-effort closed after transient buffers
+        // have been cleared; cleanup ownership remains with the Host.
+      }
+    }
+  }
 }
 
 function matchingSourceLineage(explicit, derived) {
@@ -996,11 +3231,13 @@ function assertExportPlanUpdateIsIsolated(input) {
     input.export_plan === null ||
     Array.isArray(input.export_plan) ||
     Object.keys(input.export_plan).length !== 1 ||
-    !Object.hasOwn(input.export_plan, 'version')
+    !['version', 'publication_intent'].includes(
+      Object.keys(input.export_plan)[0],
+    )
   ) {
     throw new CreationCliError(
       'export_plan_update_invalid',
-      'A resume export-plan update accepts only one distributed version.',
+      'A resume export-plan update accepts one distributed version or one private publication intent; access protection is chosen explicitly at workspace creation.',
     );
   }
 }
@@ -1057,6 +3294,7 @@ function applyWorkspaceInput(
   deps,
   materialPassword,
   preparedMaterials = null,
+  operationRequest = null,
 ) {
   let workspace = initialWorkspace;
   assertExportPlanUpdateIsIsolated(input);
@@ -1069,8 +3307,23 @@ function applyWorkspaceInput(
   const described =
     preparedMaterials ||
     materialDescriptors(input, args, deps, materialPassword);
+  for (const inventory of described.inventories || []) {
+    const {
+      document_type: _documentType,
+      contract_version: _contractVersion,
+      processing_policy_required: _processingPolicyRequired,
+      ...record
+    } = inventory;
+    workspace = engine.recordMaterialInventory(workspace, record);
+  }
   for (const material of described.materials) {
     workspace = engine.ingestMaterial(workspace, material);
+  }
+  for (const mapping of described.importMappings || []) {
+    workspace = engine.recordImportMappingReport(workspace, mapping);
+  }
+  for (const decision of asList(input.import_mapping_decisions)) {
+    workspace = engine.reviewImportMapping(workspace, decision);
   }
   for (const candidate of [
     ...asList(input.candidates),
@@ -1079,7 +3332,20 @@ function applyWorkspaceInput(
     workspace = engine.addCandidate(workspace, candidate);
   }
   for (const answer of asList(input.interview_answers || input.interview_answer)) {
-    workspace = engine.recordInterviewAnswer(workspace, answer);
+    if (!operationRequest) {
+      throw new CreationCliError(
+        'operation_id_required',
+        'interview answers require an operation binding.',
+      );
+    }
+    workspace = engine.recordInterviewAnswer(workspace, {
+      ...answer,
+      operation_id: operationRequest.operation_id,
+      recorded_against_semantic_revision:
+        workspace.state.semantic_revision,
+      recorded_against_semantic_digest:
+        workspace.state.semantic_digest,
+    });
   }
   if (
     input.relations ||
@@ -1147,7 +3413,7 @@ function workspaceSummary(engine, workspace) {
   const action = engine.nextAction(workspace);
   const completionGates = readiness.completion_gates || {
     format_valid: false,
-    judgment_accepted: readiness.creation_accepted === true,
+    judgment_accepted: readiness.judgment_accepted === true,
     application_verified: false,
     creation_complete: false,
     semantic_digest: workspace.state?.semantic_digest || null,
@@ -1165,7 +3431,12 @@ function workspaceSummary(engine, workspace) {
         scope: workspace.purposeBrief.scope,
         non_goals: workspace.purposeBrief.non_goals,
         loading_condition: workspace.purposeBrief.loading_condition,
-        highest_question: workspace.purposeBrief.highest_question,
+        ...(workspace.purposeBrief.highest_question
+          ? {
+              highest_question:
+                workspace.purposeBrief.highest_question,
+            }
+          : {}),
         represented_subject: workspace.purposeBrief.represented_subject || null,
       }
     : null;
@@ -1189,14 +3460,64 @@ function workspaceSummary(engine, workspace) {
       sensitivity: material.sensitivity,
       in_scope: material.in_scope,
       content_hash: material.content_hash,
+      ...(material.observation
+        ? { observation: material.observation }
+        : {}),
       source_subject_id: material.source_subject_id,
       belongs_to_subject: material.belongs_to_subject,
       represents_current_judgment: material.represents_current_judgment,
       external_constraints: material.external_constraints,
       split_domain: material.split_domain,
       expired: material.expired,
+      trust: {
+        treat_as_untrusted_data:
+          material.trust?.treat_as_untrusted_data === true,
+        instructions_are_agent_commands:
+          material.trust?.instructions_are_agent_commands === true,
+        prompt_injection_detected:
+          material.trust?.prompt_injection_detected === true,
+        indicators: material.trust?.indicators || [],
+      },
+      include_in_runtime: material.include_in_runtime === true,
       review_receipts: material.review_receipts || [],
+      source_delivery_state:
+        material.source_inventory_id
+          ? (
+              (workspace.sourceDeliveries || []).some(
+                (delivery) => delivery.material_id === material.id,
+              )
+                ? 'delivered'
+                : 'source-reauthorization-required'
+            )
+          : 'not-required',
     })),
+    material_inventories: (workspace.materialInventories || []).map(
+      (inventory) => ({
+        id: inventory.id,
+        approved_inventory_digest:
+          inventory.approved_inventory_digest,
+        final_inventory_digest: inventory.final_inventory_digest,
+        approved_at: inventory.approved_at,
+        processing_policy: inventory.processing_policy,
+        processing_policy_digest: inventory.processing_policy_digest,
+        capabilities: inventory.capabilities,
+        summary: inventory.summary,
+        entries: inventory.entries,
+      }),
+    ),
+    source_deliveries: (workspace.sourceDeliveries || []).map(
+      (delivery) => delivery,
+    ),
+    import_mappings: (workspace.importMappings || []).map(
+      (mapping) => ({
+        id: mapping.id,
+        source_material_id: mapping.source_material_id,
+        source_asset_digest: mapping.source_asset_digest,
+        mapping_digest: mapping.mapping_digest,
+        summary: mapping.summary,
+        entries: mapping.entries,
+      }),
+    ),
     judgments: [
       ...(workspace.candidates || [])
         .filter((candidate) => candidate.status !== 'promoted')
@@ -1208,6 +3529,7 @@ function workspaceSummary(engine, workspace) {
           does_not_apply_when: candidate.does_not_apply_when,
           misuse_risk: candidate.misuse_risk,
           contrary_evidence: candidate.contrary_evidence,
+          counterexample_search: candidate.counterexample_search,
           source_refs: candidate.source_refs,
           agent_inference: candidate.agent_inference,
           confidence: plainConfidence(candidate.confidence),
@@ -1223,6 +3545,7 @@ function workspaceSummary(engine, workspace) {
         does_not_apply_when: unit.does_not_apply_when,
         misuse_risk: unit.misuse_risk,
         contrary_evidence: unit.contrary_evidence,
+        counterexample_search: unit.counterexample_search,
         source_refs: unit.source_refs,
         agent_inference: unit.agent_inference,
         confidence: plainConfidence(unit.confidence),
@@ -1264,6 +3587,7 @@ function workspaceSummary(engine, workspace) {
       semantic_digest: plan.semantic_digest,
       definition_digest: plan.definition_digest,
       test_ids: plan.test_ids,
+      coverage_policy: plan.coverage_policy,
       frozen_at: plan.frozen_at,
     })),
     application_plans: (workspace.applicationVerification?.plans || []).map(
@@ -1401,7 +3725,9 @@ function workspaceSummary(engine, workspace) {
       question_id: answer.question_id,
       question: answer.question,
       answer: answer.answer,
-      by: answer.by,
+      actor: answer.actor,
+      subject: answer.subject,
+      answer_digest: answer.answer_digest,
       source_refs: answer.source_refs,
       recorded_at: answer.recorded_at,
     })),
@@ -1425,6 +3751,18 @@ function workspaceSummary(engine, workspace) {
         asset_digest: operation.asset_digest,
         updated_at: operation.updated_at,
       })),
+    operations: (workspace.operations || []).map((operation) => ({
+      operation_id: operation.operation_id,
+      command: operation.command,
+      status: operation.status,
+      request_digest: operation.request_digest,
+      before: operation.before,
+      after: operation.after,
+      asset_digest: operation.asset_digest,
+      started_at: operation.started_at,
+      updated_at: operation.updated_at,
+      completed_at: operation.completed_at,
+    })),
     confirmations: (workspace.confirmationReceipts || []).map((receipt) => ({
       id: receipt.id,
       actor: receipt.actor,
@@ -1434,8 +3772,7 @@ function workspaceSummary(engine, workspace) {
     })),
     readiness: {
       compile_ready: readiness.compile_ready,
-      format_ready: readiness.format_ready,
-      creation_accepted: readiness.creation_accepted,
+      judgment_accepted: readiness.judgment_accepted,
       completion_gates: completionGates,
       blocking: publicReadinessItems(readiness.blocking),
       warnings: (readiness.warnings || []).map(creationLanguage),
@@ -1446,6 +3783,559 @@ function workspaceSummary(engine, workspace) {
       reason: creationLanguage(action.reason),
       requires_user: action.requires_user,
       unresolved_ids: action.unresolved_ids || [],
+    },
+  };
+}
+
+function creationAgentGuide(
+  engine,
+  workspace = null,
+  requestedAction = 'create',
+) {
+  if (!workspace) {
+    if (requestedAction === 'inventory') {
+      return {
+        document_type: 'kdna.creation-agent-guide',
+        contract_version: '0.1.0',
+        action: 'inventory',
+        command:
+          'kdna-studio inventory-agent <explicit-path> --input-stdin --json',
+        input_contract: {
+          required: ['processing_policy'],
+          template: {
+            processing_policy: {
+              destination:
+                '<local-only|named-remote-processor|prohibited>',
+              processor:
+                '<exact named processor, or null outside named-remote-processor>',
+              assurance:
+                '<host-declared|verified-host-required>',
+            },
+          },
+        },
+        notes: [
+          'Inventory is content-free. The returned machine_input_attachment binds its exact digest and normalized processing policy for create-agent or resume.',
+          'If the user already authorized the exact displayed scope and destination, the Host binds the digest without asking the user to understand it.',
+        ],
+      };
+    }
+    return {
+      document_type: 'kdna.creation-agent-guide',
+      contract_version: '0.1.0',
+      action: 'create',
+      command:
+        'kdna-studio create-agent <workspace> [--material <same-explicit-authorized-path>] --input-stdin --json',
+      user_decisions: [
+        'What bounded judgment should the asset help with?',
+        'Should it represent the user or an organization, interpret supplied material, combine substantive human and Agent authorship, or remain Agent-authored?',
+        'Should the final file be unprotected, licensed/password-protected, or remotely loaded? This does not publish it.',
+      ],
+      authority_decision_rules: [
+        'Use human-confirmed or organization-confirmed only when the user explicitly asks the asset to represent that named subject and the corresponding authority can confirm the current semantics.',
+        'Use interpretive for a bounded reading of supplied material when no representation claim was requested; name the interpreted work as a Host-owned source subject.',
+        'Use agent-authored only for the creating Agent’s own bounded judgment, even when foreign material informed it.',
+        'Use mixed-authorship only when a human and an Agent both substantively authored identified judgment content; participation alone is not co-authorship.',
+      ],
+      host_owned_fields: [
+        'created_by.id',
+        'operation_id',
+        'workspace path',
+      ],
+      input_contract: {
+        required: [
+          'name',
+          'mode',
+          'workflow_mode',
+          'access',
+          'created_by',
+          'purpose.objective',
+          'purpose.scope',
+          'purpose.loading_condition',
+        ],
+        template: {
+          name: '<asset-name>',
+          mode:
+            '<agent-authored|human-confirmed|organization-confirmed|interpretive|mixed-authorship>',
+          workflow_mode: '<collaborative|autonomous>',
+          access: '<public|licensed|remote>',
+          created_by: {
+            type: 'agent',
+            id: '<host-stable-agent-id>',
+          },
+          purpose: {
+            objective: '<one bounded judgment objective>',
+            scope: '<where the judgment applies>',
+            non_goals: ['<one real boundary when applicable>'],
+            loading_condition: '<when a Consumer should load it>',
+            represented_subject: {
+              type: '<agent|human|organization|work>',
+              id: '<host-stable-subject-id>',
+            },
+          },
+        },
+      },
+      mode_specific_subject_rules: {
+        'agent-authored':
+          'Use the exact creating Agent identity.',
+        interpretive:
+          'Use type work and a Host-stable ID for the interpreted file, work, or bounded collection; this does not identify the evaluator as the author.',
+        'human-confirmed':
+          'Use the explicitly represented human identity and require that person’s current confirmation.',
+        'organization-confirmed':
+          'Use the explicitly represented organization identity and require an authorized organization confirmer.',
+        'mixed-authorship':
+          'Do not infer representation; contribution receipts identify the exact human- and Agent-authored units.',
+      },
+      notes: [
+        'The Host selects the narrowest honest machine mode from the user facts; do not ask the user to choose an enum or technical identifier.',
+        'A supplied file does not by itself authorize a human-confirmed claim. Without an explicit representation request, prefer a bounded interpretive or Agent-authored claim.',
+        'Omit macro judgment-core fields when the asset does not genuinely use them.',
+        'For material-first creation, run inventory-agent before create-agent and attach the exact inventory approval as machine input after the user authorization covers the displayed scope and processing destination.',
+        'When material was inventoried, create-agent must receive the same explicit authorized path again through --material (or the equivalent materials input); the approval attachment alone does not ingest it.',
+      ],
+    };
+  }
+
+  const nextAction = engine.nextAction(workspace);
+  const expectedRevision = workspace.state.semantic_revision;
+  const base = {
+    document_type: 'kdna.creation-agent-guide',
+    contract_version: '0.1.0',
+    workspace_id: workspace.state.workspace_id,
+    expected_revision: expectedRevision,
+    next_action: nextAction,
+  };
+  if (nextAction.action === 'deliver_material') {
+    const pendingMaterial = workspace.materials.find(
+      (material) =>
+        material.source_inventory_id &&
+        !(workspace.sourceDeliveries || []).some(
+          (delivery) => delivery.material_id === material.id,
+        ),
+    );
+    const inventory = pendingMaterial
+      ? workspace.materialInventories.find(
+          (candidate) =>
+            candidate.id === pendingMaterial.source_inventory_id,
+        )
+      : null;
+    return {
+      ...base,
+      command:
+        inventory?.processing_policy?.destination ===
+        'named-remote-processor'
+          ? 'kdna-studio deliver-material <workspace> --material <reauthorized-path> --private-output-file <precreated-mode-0600-system-temp-file> --input-stdin --json'
+          : 'kdna-studio deliver-material <workspace> --material <reauthorized-path> --private-output-fd 3 --input-stdin --json',
+      channel_contract: {
+        named_remote:
+          'A standard remote terminal Host may pre-create a mode-0600 system-temporary file, let the CLI write only the accepted bytes there, place the content in that named Host model context under its approved retention policy, and delete the file in finally. This is Host-declared remote processing, not verified-local processing.',
+        verified_local:
+          'A generic caller-supplied digest cannot prove verified-local execution; a separately trusted Host adapter is required.',
+        ordinary_output:
+          'Source text must not be written to stdout, stderr, status JSON, or the Creation workspace.',
+      },
+      input_contract: {
+        required: [
+          'inventory_id',
+          'inventory_entry_id',
+          'host',
+          'processing_destination',
+          'host_execution',
+        ],
+        template: {
+          inventory_id: inventory?.id || '<inventory-id>',
+          inventory_entry_id:
+            pendingMaterial?.source_inventory_entry_id ||
+            '<inventory-entry-id>',
+          host: {
+            type: 'agent',
+            id: '<host-stable-agent-id>',
+          },
+          processing_destination:
+            inventory?.processing_policy ||
+            '<exact-approved-processing-policy>',
+          host_execution: {
+            location:
+              inventory?.processing_policy?.destination ===
+              'named-remote-processor'
+                ? 'remote'
+                : 'local',
+            processor:
+              inventory?.processing_policy?.processor || null,
+            assurance: 'host-declared',
+            capability_digest:
+              '<sha256-of-nonsecret-host-declared-execution-coordinate>',
+          },
+        },
+      },
+    };
+  }
+  if (nextAction.action === 'review_material') {
+    const subject = workspace.purposeBrief?.represented_subject || null;
+    return {
+      ...base,
+      command:
+        'kdna-studio review <workspace> --input-stdin --json',
+      input_contract: {
+        required: ['expected_revision', 'material_decisions'],
+        template: {
+          expected_revision: expectedRevision,
+          material_decisions: workspace.materials
+            .filter((material) =>
+              nextAction.unresolved_ids.includes(material.id))
+            .map((material) => ({
+              id: material.id,
+              reviewed_by: {
+                type: 'agent',
+                id: '<review-actor-id>',
+              },
+              review_reason:
+                '<source-bound classification reason; reviewed-no-change is valid>',
+              changes: {
+                source_subject_id:
+                  subject?.id || '<host-stable-source-subject-id>',
+                authority:
+                  '<supporting|historical|negative|rejected>',
+                currentness: '<current|historical|unknown>',
+                in_scope: '<true|false|unknown>',
+                expired: '<true|false>',
+              },
+            })),
+        },
+      },
+      notes: [
+        'Classify from the delivered source, not from filenames or a hidden answer key.',
+        'For human or organization representation, belongs_to_subject and represents_current_judgment require the corresponding authority; an Agent must not invent them.',
+        'For interpretation, the source subject identifies the work being interpreted and does not make the evaluator its author.',
+      ],
+    };
+  }
+  if (nextAction.action === 'add_candidate') {
+    const sourceRefs = workspace.materials
+      .filter(
+        (material) =>
+          !material.source_inventory_id ||
+          (workspace.sourceDeliveries || []).some(
+            (delivery) => delivery.material_id === material.id,
+          ),
+      )
+      .map((material) => material.id);
+    return {
+      ...base,
+      command:
+        'kdna-studio resume <workspace> --input-stdin --json',
+      input_contract: {
+        required: ['expected_revision', 'candidates'],
+        template: {
+          expected_revision: expectedRevision,
+          candidates: [
+            {
+              id: '<host-stable-candidate-id>',
+              statement: '<bounded judgment>',
+              rationale: '<source-bound or Agent-inference rationale>',
+              applies_when: ['<applicable condition>'],
+              does_not_apply_when: ['<boundary or exit condition>'],
+              misuse_risk: '<how over-application would fail>',
+              source_refs:
+                sourceRefs.length > 0
+                  ? sourceRefs
+                  : [
+                      `agent-inference:${workspace.state.created_by.id}`,
+                    ],
+              agent_inference:
+                workspace.state.mode === 'agent-authored',
+              contrary_evidence: [],
+              counterexample_search: {
+                scope: '<bounded search scope>',
+                method: '<how counterexamples were checked>',
+                result: 'none-found',
+                uncertainty:
+                  '<what remains unknown; none-found is not proof>',
+              },
+              confidence: {
+                status: 'high',
+                reason: '<evidence-based confidence reason>',
+              },
+              card_type: '<explicit supported card type>',
+            },
+          ],
+        },
+      },
+    };
+  }
+  if (nextAction.action === 'promote_candidate') {
+    return {
+      ...base,
+      command:
+        'kdna-studio review <workspace> --input-stdin --json',
+      input_contract: {
+        required: ['expected_revision', 'candidate_decisions'],
+        template: {
+          expected_revision: expectedRevision,
+          candidate_decisions: workspace.candidates
+            .filter((candidate) => candidate.status === 'proposed')
+            .map((candidate) => ({
+              id: candidate.id,
+              decision: '<promote|reject>',
+              reviewed_by: {
+                type: 'agent',
+                id: '<review-actor-id>',
+              },
+              review_reason:
+                '<digest-bound reason; no semantic change is valid>',
+              changes: {
+                unit_id: `<unit-id-for-${candidate.id}>`,
+              },
+            })),
+        },
+      },
+    };
+  }
+  if (nextAction.action === 'add_semantic_test') {
+    const units = workspace.judgmentModel.units;
+    const boundaries = workspace.judgmentModel.global_boundaries;
+    return {
+      ...base,
+      command:
+        'kdna-studio try <workspace> --input-stdin --json',
+      input_contract: {
+        required: ['expected_revision', 'tests'],
+        template: {
+          expected_revision: expectedRevision,
+          tests: [
+            {
+              id: '<host-stable-applicable-test-id>',
+              kind: 'applicable',
+              input:
+                '<an unseen ordinary task where the bounded judgment applies>',
+              expected:
+                '<observable faithful decision, reason, and scope behavior>',
+              unit_ids: units.map((unit) => unit.id),
+              boundary_ids: [],
+              relation_ids: [],
+              held_out: true,
+            },
+            {
+              id: '<host-stable-exit-test-id>',
+              kind: 'counterexample',
+              input:
+                '<an unseen task outside scope or at the declared exit boundary>',
+              expected:
+                '<observable non-application or explicit exit behavior>',
+              unit_ids: units.map((unit) => unit.id),
+              boundary_ids: boundaries.map(
+                (boundary) => boundary.id,
+              ),
+              relation_ids: [],
+              held_out: true,
+            },
+          ],
+        },
+      },
+      notes: [
+        'This minimal two-task shape is sufficient only for a low-risk single-judgment asset whose unit and boundary semantics are represented by these tasks.',
+        'Add separate tasks for every declared high-risk or unique judgment and every actual priority, exception, or conflict relation. Do not invent a relation or conflict to fill a category.',
+      ],
+    };
+  }
+  if (nextAction.action === 'freeze_semantic_test_plan') {
+    const currentTests = workspace.semanticTestReport.cases.filter(
+      (testCase) =>
+        testCase.semantic_digest === workspace.state.semantic_digest,
+    );
+    const unitGroups = workspace.judgmentModel.units.map(
+      (unit, index) => ({
+        id: `unit-coverage-${index + 1}`,
+        unit_ids: [unit.id],
+        risk_level: 'normal',
+        unique_semantics: true,
+        test_ids: currentTests
+          .filter((testCase) => testCase.unit_ids.includes(unit.id))
+          .map((testCase) => testCase.id),
+        rationale:
+          '<why these frozen tasks cover this judgment at its declared risk>',
+      }),
+    );
+    const boundaryGroups =
+      workspace.judgmentModel.global_boundaries.map(
+        (boundary, index) => ({
+          id: `boundary-coverage-${index + 1}`,
+          boundary_ids: [boundary.id],
+          test_ids: currentTests
+            .filter((testCase) =>
+              testCase.boundary_ids.includes(boundary.id))
+            .map((testCase) => testCase.id),
+          rationale:
+            '<why these frozen tasks cover this declared boundary>',
+        }),
+      );
+    const requiredRelations =
+      workspace.judgmentModel.relations.filter(
+        (relation) =>
+          ['exception', 'priority', 'conflict'].includes(
+            relation.type,
+          ) &&
+          ['accepted', 'resolved'].includes(relation.status),
+      );
+    const relationGroups = requiredRelations.map(
+      (relation, index) => ({
+        id: `relation-coverage-${index + 1}`,
+        relation_ids: [relation.id],
+        test_ids: currentTests
+          .filter((testCase) =>
+            testCase.relation_ids.includes(relation.id))
+          .map((testCase) => testCase.id),
+        rationale:
+          '<why these frozen tasks cover this actual relation>',
+      }),
+    );
+    return {
+      ...base,
+      command:
+        'kdna-studio try <workspace> --input-stdin --json',
+      input_contract: {
+        required: ['expected_revision', 'test_plan'],
+        template: {
+          expected_revision: expectedRevision,
+          test_plan: {
+            actor: {
+              type: 'agent',
+              id: '<host-stable-coordinator-id>',
+            },
+            statement:
+              '<pre-result freeze statement for tasks, applicable risks, and coverage>',
+            coverage_policy: {
+              strategy: 'risk-stratified',
+              max_test_count: currentTests.length,
+              rationale:
+                '<why this task budget is sufficient for the actual asset structure and risk>',
+              unit_groups: unitGroups,
+              boundary_groups: boundaryGroups,
+              relation_groups: relationGroups,
+            },
+          },
+        },
+      },
+    };
+  }
+  if (nextAction.action === 'record_semantic_test_result') {
+    const currentTests = workspace.semanticTestReport.cases.filter(
+      (testCase) =>
+        testCase.semantic_digest === workspace.state.semantic_digest,
+    );
+    let testsToEvaluate = currentTests.filter((testCase) =>
+      ['pending', 'inconclusive'].includes(testCase.status));
+    if (testsToEvaluate.length === 0 && currentTests.length > 0) {
+      testsToEvaluate = [currentTests.at(-1)];
+    }
+    const evaluatorAuthority =
+      workspace.state.mode === 'interpretive'
+        ? 'independent-interpretive-evaluator'
+        : 'independent-agent-evaluator';
+    return {
+      ...base,
+      command:
+        'kdna-studio try <workspace> --input-stdin --json',
+      evaluation_tasks: testsToEvaluate.map((testCase) => ({
+        id: testCase.id,
+        kind: testCase.kind,
+        input: testCase.input,
+        expected: testCase.expected,
+        unit_ids: testCase.unit_ids,
+        boundary_ids: testCase.boundary_ids,
+        relation_ids: testCase.relation_ids,
+        held_out: testCase.held_out,
+      })),
+      input_contract: {
+        required: ['expected_revision', 'test_results'],
+        template: {
+          expected_revision: expectedRevision,
+          test_results: testsToEvaluate.map((testCase, index) => ({
+            test_id: testCase.id,
+            result: '<pass|fail|inconclusive>',
+            evaluated_by: {
+              type: 'agent',
+              id: '<independent-evaluator-agent-id>',
+              authority: evaluatorAuthority,
+            },
+            notes:
+              '<per-task observed behavior and dimension-specific reason>',
+            ...(index === testsToEvaluate.length - 1
+              ? {
+                  acceptance: {
+                    accepted: '<true|false>',
+                    actor: {
+                      type: 'agent',
+                      id: '<same-independent-evaluator-agent-id>',
+                      authority: evaluatorAuthority,
+                    },
+                    statement:
+                      '<digest-bound acceptance of the complete current semantic report>',
+                  },
+                }
+              : {}),
+          })),
+        },
+      },
+      notes: [
+        'The creating Agent may not evaluate or accept its own semantic report.',
+        'Evaluate each applicable dimension independently; do not copy one faithful boolean across unrelated dimensions.',
+      ],
+    };
+  }
+  if (
+    [
+      'freeze_application_test_plan',
+      'issue_application_attempt',
+      'record_application_asset_observation',
+      'record_application_verification',
+    ].includes(nextAction.action)
+  ) {
+    return {
+      ...base,
+      command:
+        'kdna-studio verify-application-agent <workspace> --json',
+      input_contract: {
+        required: [],
+        protected_asset_transport:
+          'Add --password-stdin only when the managed candidate requires authorization.',
+        user_inputs:
+          'none; the official adapter manages fresh holdout tasks, isolated Consumer/Evaluator runs, role keys, and signed receipts',
+      },
+      notes: [
+        'The Creator Agent and user must not hand-compose role keys, oracle data, task digests, or receipts.',
+        'The command uses with-only tasks by default; output difference from a no-KDNA baseline is not a universal pass condition.',
+      ],
+    };
+  }
+  return {
+    ...base,
+    command: {
+      set_purpose:
+        'kdna-studio resume <workspace> --input-stdin --json',
+      resolve_uncertainty:
+        'kdna-studio resume <workspace> --input-stdin --json',
+      analyze_relations:
+        'kdna-studio review <workspace> --input-stdin --json',
+      record_confirmation:
+        'kdna-studio review <workspace> --input-stdin --json',
+      add_semantic_test:
+        'kdna-studio try <workspace> --input-stdin --json',
+      record_semantic_test_result:
+        'kdna-studio try <workspace> --input-stdin --json',
+      build_repair_plan:
+        'kdna-studio repair <workspace> --input-stdin --json',
+      apply_repair:
+        'kdna-studio repair <workspace> --input-stdin --json',
+      compile_project:
+        'kdna-studio export-agent <workspace> --json',
+      complete:
+        'kdna-studio finalize-agent <workspace> --out <file.kdna> --json',
+    }[nextAction.action] || null,
+    input_contract: {
+      status: 'action-specific-template-not-yet-exposed',
+      instruction:
+        'Do not inspect package source or private workspace JSON. If the official guide does not expose the required template, stop and report this public Host adapter gap.',
     },
   };
 }
@@ -1510,10 +4400,13 @@ function writeFailure(error, useJson) {
           : (
               operationConflict
                 ? 'The operation_id was already used for a different request.'
-                : 'The Creation Engine could not complete the request.'
+                : String(error?.stack || error?.message || error)
             ),
     },
   };
+  if (error instanceof CreationCliError && error.details) {
+    safe.details = error.details;
+  }
   if (useJson) {
     process.stdout.write(`${JSON.stringify(safe, null, 2)}\n`);
   } else {
@@ -1533,234 +4426,6 @@ function canonical(value) {
     .sort()
     .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
     .join(',')}}`;
-}
-
-function candidateRuntimeTreeDigest(runtimeRoot) {
-  const entries = [];
-  const visit = (relative = '') => {
-    const target = relative ? path.join(runtimeRoot, relative) : runtimeRoot;
-    const before = fs.lstatSync(target, { bigint: true });
-    if (before.isSymbolicLink()) {
-      throw new CreationCliError(
-        'candidate_runtime_invalid',
-        'The WP0 candidate runtime contains a symbolic link.',
-        5,
-      );
-    }
-    if ((before.mode & 0o222n) !== 0n) {
-      throw new CreationCliError(
-        'candidate_runtime_invalid',
-        'The WP0 candidate runtime contains a writable entry.',
-        5,
-      );
-    }
-    if (before.isDirectory()) {
-      entries.push({
-        path: relative || '.',
-        type: 'directory',
-        mode: Number(before.mode & 0o777n),
-      });
-      for (const name of fs.readdirSync(target).sort()) {
-        visit(path.join(relative, name));
-      }
-      const after = fs.lstatSync(target, { bigint: true });
-      if (
-        !after.isDirectory() ||
-        after.dev !== before.dev ||
-        after.ino !== before.ino ||
-        after.mtimeNs !== before.mtimeNs ||
-        after.ctimeNs !== before.ctimeNs
-      ) {
-        throw new CreationCliError(
-          'candidate_runtime_invalid',
-          'The WP0 candidate runtime changed during tree verification.',
-          5,
-        );
-      }
-      return;
-    }
-    if (!before.isFile()) {
-      throw new CreationCliError(
-        'candidate_runtime_invalid',
-        'The WP0 candidate runtime contains a special file.',
-        5,
-      );
-    }
-    const bytes = fs.readFileSync(target);
-    const after = fs.lstatSync(target, { bigint: true });
-    if (
-      !after.isFile() ||
-      after.dev !== before.dev ||
-      after.ino !== before.ino ||
-      after.size !== before.size ||
-      after.mtimeNs !== before.mtimeNs ||
-      after.ctimeNs !== before.ctimeNs
-    ) {
-      throw new CreationCliError(
-        'candidate_runtime_invalid',
-        'The WP0 candidate runtime changed during tree verification.',
-        5,
-      );
-    }
-    entries.push({
-      path: relative,
-      type: 'file',
-      mode: Number(before.mode & 0o777n),
-      size: bytes.length,
-      sha256: sha256Bytes(bytes),
-    });
-  };
-  visit();
-  return sha256Bytes(
-    Buffer.from(
-      canonical(
-        entries.filter(
-          (entry) => entry.path !== 'wp0-runtime-receipt.json',
-        ),
-      ),
-      'utf8',
-    ),
-  );
-}
-
-function candidateRuntimeAuthority(packageRoot) {
-  const absolutePackageRoot = path.resolve(packageRoot);
-  if (path.basename(absolutePackageRoot) !== 'package') return null;
-  const receiptPath = path.join(
-    path.dirname(absolutePackageRoot),
-    'wp0-runtime-receipt.json',
-  );
-  let receiptBytes;
-  try {
-    const stat = fs.lstatSync(receiptPath);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > INPUT_LIMIT_BYTES) {
-      throw new Error('not a bounded regular receipt');
-    }
-    receiptBytes = fs.readFileSync(receiptPath);
-  } catch (error) {
-    if (error?.code === 'ENOENT') return null;
-    throw new CreationCliError(
-      'candidate_runtime_invalid',
-      'The adjacent WP0 candidate runtime receipt is invalid.',
-      5,
-    );
-  }
-  let receipt;
-  try {
-    receipt = JSON.parse(receiptBytes.toString('utf8'));
-  } catch {
-    throw new CreationCliError(
-      'candidate_runtime_invalid',
-      'The adjacent WP0 candidate runtime receipt is invalid JSON.',
-      5,
-    );
-  }
-  const unsigned = { ...receipt };
-  delete unsigned.receipt_sha256;
-  const expectedReceiptDigest = sha256Bytes(
-    Buffer.from(canonical(unsigned), 'utf8'),
-  );
-  const baseline = receipt.development_baseline;
-  if (
-    receipt.schema !== 'aikdna.creation-engine.wp0-candidate-runtime/1.0' ||
-    receipt.evidence_class !==
-      'IMMUTABLE_WP0_CANDIDATE_ARTIFACT_RUNTIME' ||
-    receipt.release_authorized !== false ||
-    receipt.receipt_sha256 !== expectedReceiptDigest ||
-    !/^sha256:[0-9a-f]{64}$/.test(
-      String(receipt.runtime_tree_sha256 || ''),
-    ) ||
-    !/^sha256:[0-9a-f]{64}$/.test(
-      String(baseline?.bom_semantic_digest || ''),
-    ) ||
-    !/^sha256:[0-9a-f]{64}$/.test(
-      String(baseline?.bom_file_digest || ''),
-    )
-  ) {
-    throw new CreationCliError(
-      'candidate_runtime_invalid',
-      'The adjacent WP0 candidate runtime receipt failed self-validation.',
-      5,
-    );
-  }
-  if (
-    candidateRuntimeTreeDigest(path.dirname(absolutePackageRoot)) !==
-    receipt.runtime_tree_sha256
-  ) {
-    throw new CreationCliError(
-      'candidate_runtime_invalid',
-      'The adjacent WP0 candidate runtime tree failed exact verification.',
-      5,
-    );
-  }
-  const entrypointPath = path.join(
-    absolutePackageRoot,
-    'bin',
-    'kdna-studio.js',
-  );
-  let entrypointBytes;
-  try {
-    const stat = fs.lstatSync(entrypointPath);
-    if (!stat.isFile() || stat.isSymbolicLink()) {
-      throw new Error('not a regular entrypoint');
-    }
-    entrypointBytes = fs.readFileSync(entrypointPath);
-  } catch {
-    throw new CreationCliError(
-      'candidate_runtime_invalid',
-      'The WP0 candidate runtime CLI entrypoint is unavailable.',
-      5,
-    );
-  }
-  return {
-    development_runtime: {
-      schema: 'aikdna.creation-build-runtime/0.1.0',
-      evidence_class: receipt.evidence_class,
-      candidate_runtime_receipt_sha256: receipt.receipt_sha256,
-      candidate_runtime_tree_sha256: receipt.runtime_tree_sha256,
-      cli_entrypoint_sha256: sha256Bytes(entrypointBytes),
-      bom_semantic_digest: baseline.bom_semantic_digest,
-      bom_file_digest: baseline.bom_file_digest,
-    },
-    development_baseline: JSON.parse(JSON.stringify(baseline)),
-  };
-}
-
-function candidateRuntimeCoordinate(packageRoot) {
-  return candidateRuntimeAuthority(packageRoot)?.development_runtime || null;
-}
-
-function resolveDevelopmentBaseline(deps, requestedBaseline = null) {
-  const runtime = deps.developmentRuntime || null;
-  const boundBaseline = deps.developmentBaseline || null;
-  if (runtime && !boundBaseline) {
-    throw new CreationCliError(
-      'candidate_runtime_invalid',
-      'The WP0 candidate runtime does not provide its exact development baseline.',
-      5,
-    );
-  }
-  if (boundBaseline) {
-    if (
-      requestedBaseline &&
-      canonical(requestedBaseline) !== canonical(boundBaseline)
-    ) {
-      throw new CreationCliError(
-        'candidate_runtime_invalid',
-        'The requested development baseline does not match the adjacent WP0 candidate runtime receipt.',
-        5,
-      );
-    }
-    return JSON.parse(JSON.stringify(boundBaseline));
-  }
-  if (requestedBaseline) {
-    throw new CreationCliError(
-      'candidate_runtime_invalid',
-      'A caller-supplied development baseline cannot establish candidate evidence without an adjacent immutable WP0 runtime receipt.',
-      5,
-    );
-  }
-  return null;
 }
 
 function operationIdOption(input, args) {
@@ -1796,7 +4461,15 @@ function operationPayload(input) {
 }
 
 function operationMaterialSnapshot(prepared) {
-  if (!prepared) return { materials: [], candidates: [], lineages: [] };
+  if (!prepared) {
+    return {
+      materials: [],
+      inventories: [],
+      import_mappings: [],
+      candidates: [],
+      lineages: [],
+    };
+  }
   return {
     materials: prepared.materials.map((material) => {
       const snapshot = { ...material };
@@ -1805,9 +4478,60 @@ function operationMaterialSnapshot(prepared) {
       delete snapshot.reference;
       return snapshot;
     }),
+    inventories: (prepared.inventories || []).map((inventory) => {
+      const snapshot = { ...inventory };
+      delete snapshot.approved_at;
+      return snapshot;
+    }),
+    import_mappings: prepared.importMappings || [],
     candidates: prepared.candidates,
     lineages: prepared.lineages,
   };
+}
+
+function createReplaySemanticsMatch(engine, existing, input) {
+  try {
+    if (!input.purpose) {
+      return (
+        !existing.purposeBrief?.objective &&
+        !existing.purposeBrief?.scope &&
+        !existing.purposeBrief?.loading_condition
+      );
+    }
+    let probe = engine.createWorkspace(null, {
+      mode: input.mode,
+      workflowMode: input.workflow_mode,
+      createdBy: input.created_by,
+      version: existing.exportPlan.version,
+      judgmentVersion: existing.exportPlan.judgment_version,
+      access: input.access,
+    });
+    probe = engine.setPurpose(probe, input.purpose);
+    return canonical(probe.purposeBrief) === canonical(existing.purposeBrief);
+  } catch {
+    return false;
+  }
+}
+
+function creationOperationInvocationDigest(
+  engine,
+  command,
+  workspaceIdentity,
+  input,
+  args,
+  extra = {},
+) {
+  return engine.canonicalOperationRequestDigest({
+    command,
+    workspace: workspaceIdentity,
+    payload: operationPayload(input),
+    material_coordinates: allValueOptions(args, '--material').map(
+      (materialPath) => canonicalFuturePath(materialPath),
+    ),
+    password_transport_requested:
+      args.includes('--password-stdin'),
+    io_effects: extra,
+  });
 }
 
 function creationOperationRequest(
@@ -1819,16 +4543,20 @@ function creationOperationRequest(
   prepared,
   extra = {},
 ) {
-  const developmentRuntime = extra.development_runtime || null;
-  const ioEffects = { ...extra };
-  delete ioEffects.development_runtime;
+  const invocationDigest = creationOperationInvocationDigest(
+    engine,
+    command,
+    workspaceIdentity,
+    input,
+    args,
+    extra,
+  );
   const requestDigest = engine.canonicalOperationRequestDigest({
     command,
     workspace: workspaceIdentity,
     payload: operationPayload(input),
     material_snapshots: operationMaterialSnapshot(prepared),
-    io_effects: ioEffects,
-    development_runtime: developmentRuntime,
+    io_effects: extra,
   });
   return {
     operation_id:
@@ -1836,7 +4564,7 @@ function creationOperationRequest(
       `auto:${requestDigest.slice('sha256:'.length, 'sha256:'.length + 32)}`,
     command,
     request_digest: requestDigest,
-    development_runtime: developmentRuntime,
+    invocation_digest: invocationDigest,
   };
 }
 
@@ -1844,7 +4572,7 @@ function replayedExport(engine, workspace, output, receipt) {
   const readiness = engine.assessReadiness(workspace);
   const gates = readiness.completion_gates || {};
   if (
-    readiness.creation_accepted !== true ||
+    readiness.judgment_accepted !== true ||
     gates.format_valid !== true ||
     workspace.buildReceipt?.asset_digest !== receipt.asset_digest ||
     workspace.buildReceipt?.semantic_revision !==
@@ -1890,8 +4618,7 @@ function replayedExport(engine, workspace, output, receipt) {
     export: {
       path: output,
       format_valid: gates.format_valid === true,
-      judgment_accepted: readiness.creation_accepted === true,
-      creation_accepted: true,
+      judgment_accepted: readiness.judgment_accepted === true,
       application_verified: gates.application_verified === true,
       creation_complete: gates.creation_complete === true,
       verification: workspace.buildReceipt?.results || {},
@@ -2193,7 +4920,7 @@ function maybeInjectExportCrash(phase) {
 
 function generatePackedRuntimeSnapshot(compiled, password, output, deps) {
   const temporary = fs.mkdtempSync(
-    path.join(path.dirname(output), '.kdna-export-build-'),
+    path.join(os.tmpdir(), 'kdna-export-build-'),
   );
   fs.chmodSync(temporary, 0o700);
   try {
@@ -2339,7 +5066,6 @@ function creationBuildReceipt(
   output,
   verification,
   deps,
-  developmentBaseline = null,
 ) {
   return {
     document_type: 'kdna.creation-build-receipt',
@@ -2359,12 +5085,6 @@ function creationBuildReceipt(
       studio_core: deps.studioCoreVersion,
       core: deps.runtimeCoreVersion,
     },
-    ...(developmentBaseline
-      ? { development_baseline: developmentBaseline }
-      : {}),
-    ...(deps.developmentRuntime
-      ? { development_runtime: deps.developmentRuntime }
-      : {}),
     results: verification.results,
   };
 }
@@ -2499,7 +5219,39 @@ function cleanupCompletedExport(candidate, backup, receipt) {
   fsyncParentDirectory(backup);
 }
 
-function exportAgentWorkspace(
+function canonicalPathThroughExistingAncestor(candidate) {
+  let cursor = path.resolve(candidate);
+  const suffix = [];
+  while (!fs.existsSync(cursor)) {
+    const parent = path.dirname(cursor);
+    if (parent === cursor) break;
+    suffix.unshift(path.basename(cursor));
+    cursor = parent;
+  }
+  const canonicalAncestor = fs.realpathSync(cursor);
+  return path.resolve(canonicalAncestor, ...suffix);
+}
+
+function assertExportOutsideWorkspace(workspacePath, outputPath) {
+  const workspaceRoot = fs.realpathSync(path.resolve(workspacePath));
+  const canonicalOutput =
+    canonicalPathThroughExistingAncestor(outputPath);
+  const relative = path.relative(workspaceRoot, canonicalOutput);
+  if (
+    relative === '' ||
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== '..' &&
+      !path.isAbsolute(relative))
+  ) {
+    throw new CreationCliError(
+      'output_inside_workspace',
+      'The export target must be outside the managed Creation workspace.',
+    );
+  }
+  return canonicalOutput;
+}
+
+function prepareAgentCandidate(
   engine,
   workspacePath,
   workspace,
@@ -2507,7 +5259,6 @@ function exportAgentWorkspace(
   deps,
   operationRequest = null,
   operationBefore = null,
-  developmentBaseline = null,
 ) {
   if (!operationRequest) {
     throw new CreationCliError(
@@ -2516,30 +5267,46 @@ function exportAgentWorkspace(
       5,
     );
   }
-  const out = valueOption(args, '--out');
-  if (!out) {
+  if (valueOption(args, '--out')) {
     throw new CreationCliError(
-      'input_invalid',
-      'Usage: kdna-studio export-agent <workspace> --out <file.kdna>',
+      'candidate_output_forbidden',
+      'export-agent creates only the managed test candidate; use finalize-agent --out after all three gates pass.',
     );
   }
-  const password = readPassword(args);
-  const resolvedDevelopmentBaseline = resolveDevelopmentBaseline(
-    deps,
-    developmentBaseline,
-  );
+  const replay = engine.resolveOperation(workspace, operationRequest);
+  if (replay?.status === 'completed') {
+    const managed = engine.readManagedCandidate(
+      workspacePath,
+      workspace,
+    );
+    return {
+      workspace,
+      candidate: {
+        path: managed.path,
+        asset_digest: managed.asset_digest,
+        format_valid: true,
+        application_verified:
+          engine.assessReadiness(workspace)
+            .completion_gates?.application_verified === true,
+        creation_complete:
+          engine.assessReadiness(workspace)
+            .completion_gates?.creation_complete === true,
+      },
+    };
+  }
   const readiness = engine.assessReadiness(workspace);
-  if (readiness.creation_accepted !== true) {
+  if (readiness.judgment_accepted !== true) {
     throw new CreationCliError(
       'creation_not_accepted',
-      'Creation acceptance is incomplete. Run status or resume and resolve the remaining decisions.',
+      'Creation acceptance is incomplete. Resolve the remaining decisions before generating a managed candidate.',
       4,
     );
   }
+  const password = readPassword(args);
   if (workspace.exportPlan?.access === 'licensed' && !password) {
     throw new CreationCliError(
       'authorization_required',
-      'Licensed export requires authorization through --password-stdin before an export transaction can be prepared.',
+      'Licensed candidate generation requires authorization through --password-stdin.',
       4,
     );
   }
@@ -2551,9 +5318,120 @@ function exportAgentWorkspace(
       5,
     );
   }
-  const output = path.resolve(out);
-  if (path.extname(output).toLowerCase() !== '.kdna') {
+  const managedPath = path.join(
+    workspacePath,
+    'managed-candidate',
+    'managed-candidate.kdna',
+  );
+  const candidateBytes = generatePackedRuntimeSnapshot(
+    compiled,
+    password,
+    managedPath,
+    deps,
+  );
+  const verification = verifyRuntimeSnapshot(
+    candidateBytes,
+    compiled,
+    password,
+    deps,
+  );
+  const receipt = creationBuildReceipt(
+    workspace,
+    managedPath,
+    verification,
+    deps,
+  );
+  workspace = engine.recordBuildReceipt(workspace, receipt, {
+    asset_bytes: candidateBytes,
+    ...(password ? { password } : {}),
+  });
+  workspace = engine.completeOperation(workspace, {
+    ...operationRequest,
+    before: operationBefore,
+  });
+  workspace = engine.saveWorkspace(
+    workspacePath,
+    workspace,
+    { managedCandidateBytes: candidateBytes },
+  );
+  return {
+    workspace,
+    candidate: {
+      path: engine.readManagedCandidate(workspacePath, workspace).path,
+      asset_digest: verification.artifactSha256,
+      format_valid: true,
+      application_verified: false,
+      creation_complete: false,
+    },
+  };
+}
+
+function finalizeAgentWorkspace(
+  engine,
+  workspacePath,
+  workspace,
+  args,
+  deps,
+  operationRequest = null,
+  operationBefore = null,
+) {
+  if (!operationRequest) {
+    throw new CreationCliError(
+      'operation_id_required',
+      'finalize-agent requires a private operation receipt.',
+      5,
+    );
+  }
+  const out = valueOption(args, '--out');
+  if (!out) {
+    throw new CreationCliError(
+      'input_invalid',
+      'Usage: kdna-studio finalize-agent <workspace> --out <file.kdna>',
+    );
+  }
+  const requestedOutput = path.resolve(out);
+  if (path.extname(requestedOutput).toLowerCase() !== '.kdna') {
     throw new CreationCliError('output_invalid', 'The export target must end in .kdna.');
+  }
+  const output =
+    assertExportOutsideWorkspace(workspacePath, requestedOutput);
+  if (args.includes('--password-stdin')) {
+    throw new CreationCliError(
+      'finalize_secret_not_used',
+      'finalize-agent copies already verified exact bytes and does not accept or read a password.',
+    );
+  }
+  const readiness = engine.assessReadiness(workspace);
+  if (
+    readiness.completion_gates?.creation_complete !== true ||
+    readiness.completion_gates?.application_verified !== true
+  ) {
+    throw new CreationCliError(
+      'creation_not_complete',
+      'Final delivery is blocked until FORMAT_VALID, JUDGMENT_ACCEPTED, and APPLICATION_VERIFIED bind the managed candidate.',
+      4,
+    );
+  }
+  const managed = engine.readManagedCandidate(workspacePath, workspace);
+  const currentApplicationReceipt =
+    [...workspace.applicationVerification.receipts]
+      .reverse()
+      .find((receipt) => (
+        receipt.status === 'verified' &&
+        receipt.semantic_revision === workspace.state.semantic_revision &&
+        receipt.semantic_digest === workspace.state.semantic_digest &&
+        receipt.asset_digest === workspace.buildReceipt?.asset_digest
+      ));
+  if (
+    !currentApplicationReceipt ||
+    managed.asset_digest !== currentApplicationReceipt.asset_digest ||
+    managed.asset_digest !== workspace.buildReceipt?.asset_digest
+  ) {
+    throw new CreationCliError(
+      'managed_candidate_not_verified',
+      'The managed candidate does not bind the current verified application receipt.',
+      5,
+    );
   }
   fs.mkdirSync(path.dirname(output), { recursive: true });
   const workspaceParent = path.dirname(path.resolve(workspacePath));
@@ -2633,23 +5511,20 @@ function exportAgentWorkspace(
       operation,
     );
     if (candidateBytes === null) {
-      candidateBytes = generatePackedRuntimeSnapshot(
-        compiled,
-        password,
-        output,
-        deps,
-      );
+      candidateBytes = Buffer.from(managed.bytes);
       writeDurableSnapshot(candidate, candidateBytes);
     }
-    const verification = verifyRuntimeSnapshot(
-      candidateBytes,
-      compiled,
-      password,
-      deps,
-    );
+    const candidateDigest = sha256Bytes(candidateBytes);
+    if (candidateDigest !== managed.asset_digest) {
+      throw new CreationCliError(
+        'managed_candidate_not_verified',
+        'The final-delivery candidate differs from the verified managed bytes.',
+        5,
+      );
+    }
     workspace = engine.verifyExportOperation(workspace, {
       ...operationRequest,
-      asset_digest: verification.artifactSha256,
+      asset_digest: candidateDigest,
     });
     workspace = engine.saveWorkspace(workspacePath, workspace);
     operation = engine.resolveOperation(workspace, operationRequest);
@@ -2670,33 +5545,20 @@ function exportAgentWorkspace(
     backup,
     operation,
   );
-  const verification = verifyRuntimeSnapshot(
-    publishedBytes,
-    compiled,
-    password,
-    deps,
-  );
-  if (verification.artifactSha256 !== operation.asset_digest) {
+  const publishedDigest = sha256Bytes(publishedBytes);
+  if (
+    publishedDigest !== operation.asset_digest ||
+    publishedDigest !== managed.asset_digest
+  ) {
     throw new CreationCliError(
       'export_recovery_invalid',
       'The published export differs from the exact verified asset.',
       5,
     );
   }
-  const receipt = creationBuildReceipt(
-    workspace,
-    output,
-    verification,
-    deps,
-    resolvedDevelopmentBaseline,
-  );
-  workspace = engine.recordBuildReceipt(workspace, receipt, {
-    asset_bytes: publishedBytes,
-    ...(password ? { password } : {}),
-  });
   workspace = engine.completeExportOperation(workspace, {
     ...operationRequest,
-    asset_digest: verification.artifactSha256,
+    asset_digest: publishedDigest,
   });
   workspace = engine.saveWorkspace(workspacePath, workspace);
   operation = engine.resolveOperation(workspace, operationRequest);
@@ -2708,10 +5570,9 @@ function exportAgentWorkspace(
       path: output,
       format_valid: true,
       judgment_accepted: true,
-      creation_accepted: true,
-      application_verified: false,
-      creation_complete: false,
-      verification: receipt.results,
+      application_verified: true,
+      creation_complete: true,
+      verification: workspace.buildReceipt.results,
     },
   };
 }
@@ -2735,11 +5596,1480 @@ function outputExportResult(engine, exported, useJson) {
   );
 }
 
+function outputCandidateResult(engine, prepared, useJson) {
+  const result = {
+    ...workspaceSummary(engine, prepared.workspace),
+    candidate: prepared.candidate,
+  };
+  if (useJson) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(
+    [
+      `Managed candidate: ${prepared.candidate.path}`,
+      'Format valid: yes',
+      `Application verified: ${prepared.candidate.application_verified ? 'yes' : 'not yet'}`,
+      `Creation complete: ${prepared.candidate.creation_complete ? 'yes' : 'not yet'}`,
+      'This is a private test candidate, not a final delivery asset.',
+    ].join('\n') + '\n',
+  );
+}
+
+function stableApplicationJson(value) {
+  if (value === undefined || value === null) return 'null';
+  if (typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map(stableApplicationJson).join(',')}]`;
+  }
+  return `{${Object.keys(value)
+    .filter((key) => value[key] !== undefined)
+    .sort()
+    .map((key) => (
+      `${JSON.stringify(key)}:${stableApplicationJson(value[key])}`
+    ))
+    .join(',')}}`;
+}
+
+function applicationIdentity(id) {
+  const { publicKey, privateKey } =
+    crypto.generateKeyPairSync('ed25519');
+  return {
+    identity: {
+      id,
+      public_key: publicKey.export({
+        type: 'spki',
+        format: 'pem',
+      }),
+    },
+    privateKey,
+  };
+}
+
+function signedApplicationPlan(
+  engine,
+  workspace,
+  input,
+  creationKeys,
+  coordinatorKeys,
+) {
+  const draft = {
+    ...input,
+    frozen_at: new Date(Date.now() - 1000).toISOString(),
+    key_registry_id: `${input.id}-key-registry`,
+  };
+  const registryPayload =
+    engine.applicationKeyRegistrySigningPayload(workspace, draft);
+  const registry = {
+    ...draft,
+    creation_key_signature: crypto.sign(
+      null,
+      registryPayload,
+      creationKeys.privateKey,
+    ).toString('base64'),
+    coordinator_key_signature: crypto.sign(
+      null,
+      registryPayload,
+      coordinatorKeys.privateKey,
+    ).toString('base64'),
+  };
+  return {
+    ...registry,
+    coordinator_plan_signature: crypto.sign(
+      null,
+      engine.applicationPlanSigningPayload(workspace, registry),
+      coordinatorKeys.privateKey,
+    ).toString('base64'),
+  };
+}
+
+const APPLICATION_ORACLE_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: ['risk_profile', 'tasks'],
+  properties: {
+    risk_profile: {
+      type: 'object',
+      additionalProperties: false,
+      required: [
+        'classification',
+        'external_actions',
+        'permission_sensitive',
+        'rationale',
+      ],
+      properties: {
+        classification: {
+          type: 'string',
+          enum: ['low', 'elevated', 'critical'],
+        },
+        external_actions: { type: 'boolean' },
+        permission_sensitive: { type: 'boolean' },
+        rationale: { type: 'string', minLength: 1 },
+      },
+    },
+    tasks: {
+      type: 'array',
+      minItems: 2,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'kind',
+          'input',
+          'expected',
+          'unit_ids',
+          'boundary_ids',
+          'relation_ids',
+        ],
+        properties: {
+          kind: {
+            type: 'string',
+            enum: [
+              'applicable',
+              'boundary-exit',
+              'exception',
+              'priority',
+              'authority-precedence',
+            ],
+          },
+          input: { type: 'string', minLength: 1 },
+          expected: { type: 'string', minLength: 1 },
+          unit_ids: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+          },
+          boundary_ids: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+          },
+          relation_ids: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+    },
+  },
+});
+
+function applicationOracleSchema(workspace) {
+  const schema = JSON.parse(JSON.stringify(APPLICATION_ORACLE_SCHEMA));
+  const taskProperties =
+    schema.properties.tasks.items.properties;
+  const unitIds = workspace.judgmentModel.units.map(
+    (unit) => unit.id,
+  );
+  const boundaryIds =
+    workspace.judgmentModel.global_boundaries.map(
+      (boundary) => boundary.id,
+    );
+  const relations = workspace.judgmentModel.relations
+    .filter((relation) =>
+      ['accepted', 'resolved'].includes(relation.status))
+    .filter((relation) =>
+      ['exception', 'priority'].includes(relation.type));
+  const relationKinds = relations.map((relation) => relation.type);
+  const relationIds = relations.map((relation) => relation.id);
+  taskProperties.kind.enum = [
+    'applicable',
+    'boundary-exit',
+    ...new Set(relationKinds),
+  ];
+  taskProperties.unit_ids.items.enum = unitIds;
+  if (boundaryIds.length > 0) {
+    taskProperties.boundary_ids.items.enum = boundaryIds;
+  } else {
+    taskProperties.boundary_ids.maxItems = 0;
+  }
+  if (relationIds.length > 0) {
+    taskProperties.relation_ids.items.enum = relationIds;
+  } else {
+    taskProperties.relation_ids.maxItems = 0;
+  }
+  return schema;
+}
+
+const APPLICATION_CONSUMER_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: ['task_results'],
+  properties: {
+    task_results: {
+      type: 'array',
+      minItems: 1,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'task_id',
+          'response',
+          'direction',
+          'reason_codes',
+          'trace_ids',
+          'boundary_ids',
+          'relation_ids',
+          'exception_ids',
+          'exit',
+        ],
+        properties: {
+          task_id: { type: 'string', minLength: 1 },
+          response: { type: 'string', minLength: 1 },
+          direction: {
+            type: 'string',
+            enum: ['apply', 'refuse', 'out-of-scope', 'defer'],
+          },
+          reason_codes: {
+            type: 'array',
+            minItems: 1,
+            items: {
+              type: 'string',
+              pattern: '^[A-Z][A-Z0-9_]{0,127}$',
+            },
+          },
+          trace_ids: {
+            type: 'array',
+            minItems: 1,
+            items: { type: 'string', minLength: 1 },
+          },
+          boundary_ids: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+          },
+          relation_ids: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+          },
+          exception_ids: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+          },
+          exit: {
+            type: 'string',
+            enum: ['completed', 'refused', 'out-of-scope'],
+          },
+        },
+      },
+    },
+  },
+});
+
+function applicationConsumerSchema(workspace, tasks) {
+  const schema = JSON.parse(
+    JSON.stringify(APPLICATION_CONSUMER_SCHEMA),
+  );
+  const results = schema.properties.task_results;
+  results.minItems = tasks.length;
+  results.maxItems = tasks.length;
+  const properties = results.items.properties;
+  properties.task_id.enum = tasks.map((task) => task.id);
+  const traceIds = [
+    ...workspace.judgmentModel.units.map((unit) => unit.id),
+    ...workspace.judgmentModel.global_boundaries.map(
+      (boundary) => boundary.id,
+    ),
+    ...workspace.judgmentModel.relations
+      .filter((relation) =>
+        ['accepted', 'resolved'].includes(relation.status))
+      .map((relation) => relation.id),
+  ];
+  properties.trace_ids.items.enum = traceIds;
+  const boundaryIds =
+    workspace.judgmentModel.global_boundaries.map(
+      (boundary) => boundary.id,
+    );
+  if (boundaryIds.length > 0) {
+    properties.boundary_ids.items.enum = boundaryIds;
+  } else {
+    properties.boundary_ids.maxItems = 0;
+  }
+  const relationIds = workspace.judgmentModel.relations
+    .filter((relation) =>
+      ['accepted', 'resolved'].includes(relation.status))
+    .map((relation) => relation.id);
+  if (relationIds.length > 0) {
+    properties.relation_ids.items.enum = relationIds;
+    properties.exception_ids.items.enum = relationIds;
+  } else {
+    properties.relation_ids.maxItems = 0;
+    properties.exception_ids.maxItems = 0;
+  }
+  return schema;
+}
+
+const APPLICATION_EVALUATOR_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: ['task_evaluations'],
+  properties: {
+    task_evaluations: {
+      type: 'array',
+      minItems: 1,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'task_id',
+          'faithful',
+          'faithful_reason',
+          'adoption_evidenced',
+          'adoption_reason',
+          'over_application_error',
+          'dimension_results',
+          'reason_codes',
+        ],
+        properties: {
+          task_id: { type: 'string', minLength: 1 },
+          faithful: { type: 'boolean' },
+          faithful_reason: { type: 'string', minLength: 1 },
+          adoption_evidenced: { type: 'boolean' },
+          adoption_reason: { type: 'string', minLength: 1 },
+          over_application_error: { type: 'boolean' },
+          dimension_results: {
+            type: 'object',
+            additionalProperties: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['passed', 'reason'],
+              properties: {
+                passed: { type: 'boolean' },
+                reason: { type: 'string', minLength: 1 },
+              },
+            },
+          },
+          reason_codes: {
+            type: 'array',
+            minItems: 1,
+            items: {
+              type: 'string',
+              pattern: '^[A-Z][A-Z0-9_]{0,127}$',
+            },
+          },
+        },
+      },
+    },
+  },
+});
+
+function applicationEvaluatorSchema(tasks, riskProfile) {
+  const schema = JSON.parse(
+    JSON.stringify(APPLICATION_EVALUATOR_SCHEMA),
+  );
+  const results = schema.properties.task_evaluations;
+  results.minItems = tasks.length;
+  results.maxItems = tasks.length;
+  const properties = results.items.properties;
+  properties.task_id.enum = tasks.map((task) => task.id);
+  const dimensions = [...new Set(
+    tasks.flatMap((task) =>
+      applicationTaskDimensions(task.kind, riskProfile)
+        .filter((dimension) => dimension !== 'stability')),
+  )];
+  const dimensionResult = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['passed', 'reason'],
+    properties: {
+      passed: { type: 'boolean' },
+      reason: { type: 'string', minLength: 1 },
+    },
+  };
+  properties.dimension_results = {
+    type: 'object',
+    additionalProperties: false,
+    required: dimensions,
+    properties: Object.fromEntries(
+      dimensions.map((dimension) => [
+        dimension,
+        {
+          anyOf: [
+            dimensionResult,
+            { type: 'null' },
+          ],
+        },
+      ]),
+    ),
+  };
+  return schema;
+}
+
+function currentRuntimeCapsule(runtimeCore, bytes, password) {
+  const loader =
+    runtimeCore.loadAuthorized || runtimeCore.load;
+  if (typeof loader !== 'function') {
+    throw new CreationCliError(
+      'application_runtime_unavailable',
+      'The installed KDNA Core does not provide the official Runtime Capsule loader.',
+      5,
+    );
+  }
+  try {
+    return loader.call(runtimeCore, bytes, {
+      profile: 'full',
+      as: 'json',
+      ...(password
+        ? { password, hasPassword: true }
+        : {}),
+    });
+  } catch {
+    throw new CreationCliError(
+      password
+        ? 'application_authorization_failed'
+        : 'application_runtime_load_failed',
+      password
+        ? 'The managed candidate could not be authorized and loaded.'
+        : 'The managed candidate could not be loaded as a Runtime Capsule.',
+      password ? 4 : 5,
+    );
+  }
+}
+
+function applicationTaskDimensions(kind, riskProfile) {
+  if (kind === 'applicable') return ['direction', 'scope'];
+  if (kind === 'boundary-exit') {
+    return [
+      'boundary',
+      'exit',
+      'stability',
+      ...(riskProfile.classification === 'low' ? [] : ['safety']),
+      ...(riskProfile.permission_sensitive ? ['permission'] : []),
+      ...(riskProfile.external_actions ? ['external-action'] : []),
+    ];
+  }
+  return [kind];
+}
+
+function normalizeApplicationOracle(workspace, raw) {
+  const riskProfile = raw?.risk_profile;
+  const tasks = raw?.tasks;
+  if (
+    !riskProfile ||
+    !['low', 'elevated', 'critical'].includes(
+      riskProfile.classification,
+    ) ||
+    typeof riskProfile.external_actions !== 'boolean' ||
+    typeof riskProfile.permission_sensitive !== 'boolean' ||
+    typeof riskProfile.rationale !== 'string' ||
+    riskProfile.rationale.trim().length === 0 ||
+    !Array.isArray(tasks) ||
+    tasks.length < 2
+  ) {
+    throw new CreationCliError(
+      'application_oracle_invalid',
+      'The isolated evaluator did not produce a complete risk-bound holdout plan.',
+      5,
+    );
+  }
+  const unitIds = new Set(
+    workspace.judgmentModel.units.map((unit) => unit.id),
+  );
+  const boundaryIds = new Set(
+    workspace.judgmentModel.global_boundaries.map(
+      (boundary) => boundary.id,
+    ),
+  );
+  const relations = workspace.judgmentModel.relations
+    .filter((relation) =>
+      ['accepted', 'resolved'].includes(relation.status))
+    .filter((relation) =>
+      ['exception', 'priority'].includes(relation.type));
+  const relationsById = new Map(
+    relations.map((relation) => [relation.id, relation]),
+  );
+  const relationKinds = new Set(
+    relations.map((relation) => relation.type),
+  );
+  const allowedKinds = new Set([
+    'applicable',
+    'boundary-exit',
+    ...relationKinds,
+  ]);
+  const normalized = tasks.map((task, index) => {
+    if (
+      !task ||
+      !allowedKinds.has(task.kind) ||
+      typeof task.input !== 'string' ||
+      task.input.trim().length === 0 ||
+      typeof task.expected !== 'string' ||
+      task.expected.trim().length === 0 ||
+      !Array.isArray(task.unit_ids) ||
+      !Array.isArray(task.boundary_ids) ||
+      !Array.isArray(task.relation_ids) ||
+      task.unit_ids.some((id) => !unitIds.has(id)) ||
+      task.boundary_ids.some((id) => !boundaryIds.has(id)) ||
+      task.relation_ids.some((id) => !relationsById.has(id)) ||
+      (
+        ['exception', 'priority'].includes(task.kind) &&
+        !task.relation_ids.some(
+          (id) => relationsById.get(id)?.type === task.kind,
+        )
+      ) ||
+      (
+        !['exception', 'priority'].includes(task.kind) &&
+        task.relation_ids.length > 0
+      )
+    ) {
+      throw new CreationCliError(
+        'application_oracle_invalid',
+        'The isolated evaluator referenced an unknown or inapplicable semantic coordinate.',
+        5,
+      );
+    }
+    return {
+      id: `application-task-${index + 1}`,
+      kind: task.kind,
+      input: task.input,
+      expected: task.expected,
+      unit_ids: [...new Set(task.unit_ids)],
+      boundary_ids: [...new Set(task.boundary_ids)],
+      relation_ids: [...new Set(task.relation_ids)],
+    };
+  });
+  if (
+    !normalized.some((task) =>
+      task.kind === 'applicable' && task.unit_ids.length > 0) ||
+    !normalized.some((task) => task.kind === 'boundary-exit') ||
+    [...relationKinds].some(
+      (kind) => !normalized.some((task) => task.kind === kind),
+    )
+  ) {
+    throw new CreationCliError(
+      'application_oracle_invalid',
+      'The holdout plan omitted an applicable, boundary/exit, or actually declared relation scenario.',
+      5,
+    );
+  }
+  return {
+    risk_profile: {
+      classification: riskProfile.classification,
+      external_actions: riskProfile.external_actions,
+      permission_sensitive: riskProfile.permission_sensitive,
+      rationale: riskProfile.rationale,
+    },
+    tasks: normalized,
+  };
+}
+
+function exactTaskOutput(
+  rawOutput,
+  tasks,
+  label,
+  semanticCoordinates = {},
+) {
+  if (!Array.isArray(rawOutput?.task_results)) {
+    throw new CreationCliError(
+      'application_consumer_output_invalid',
+      `${label} did not return task results.`,
+      5,
+    );
+  }
+  const byId = new Map(
+    rawOutput.task_results.map((result) => [
+      result?.task_id,
+      result,
+    ]),
+  );
+  if (
+    byId.size !== tasks.length ||
+    tasks.some((task) => !byId.has(task.id))
+  ) {
+    throw new CreationCliError(
+      'application_consumer_output_invalid',
+      `${label} did not cover each frozen task exactly once.`,
+      5,
+    );
+  }
+  const knownTraceIds = new Set([
+    ...tasks.flatMap((task) => [
+      ...task.unit_ids,
+      ...task.boundary_ids,
+      ...task.relation_ids,
+    ]),
+    ...(semanticCoordinates.unit_ids || []),
+    ...(semanticCoordinates.boundary_ids || []),
+    ...(semanticCoordinates.relation_ids || []),
+  ]);
+  const knownBoundaryIds = new Set([
+    ...tasks.flatMap((task) => task.boundary_ids),
+    ...(semanticCoordinates.boundary_ids || []),
+  ]);
+  const knownRelationIds = new Set([
+    ...tasks.flatMap((task) => task.relation_ids),
+    ...(semanticCoordinates.relation_ids || []),
+  ]);
+  return tasks.map((task) => {
+    const result = byId.get(task.id);
+    if (
+      typeof result.response !== 'string' ||
+      result.response.trim().length === 0 ||
+      !['apply', 'refuse', 'out-of-scope', 'defer'].includes(
+        result.direction,
+      ) ||
+      !['completed', 'refused', 'out-of-scope'].includes(result.exit) ||
+      !Array.isArray(result.reason_codes) ||
+      result.reason_codes.length === 0 ||
+      result.reason_codes.some(
+        (code) => !/^[A-Z][A-Z0-9_]{0,127}$/.test(code),
+      ) ||
+      !Array.isArray(result.trace_ids) ||
+      result.trace_ids.length === 0 ||
+      result.trace_ids.some((id) => !knownTraceIds.has(id)) ||
+      !Array.isArray(result.boundary_ids) ||
+      result.boundary_ids.some((id) => !knownBoundaryIds.has(id)) ||
+      !Array.isArray(result.relation_ids) ||
+      result.relation_ids.some((id) => !knownRelationIds.has(id)) ||
+      !Array.isArray(result.exception_ids) ||
+      result.exception_ids.some((id) => !knownRelationIds.has(id)) ||
+      (
+        task.kind === 'applicable' &&
+        (
+          result.direction !== 'apply' ||
+          result.exit !== 'completed'
+        )
+      ) ||
+      (
+        task.kind === 'boundary-exit' &&
+        (
+          result.direction === 'apply' ||
+          result.exit === 'completed'
+        )
+      )
+    ) {
+      throw new CreationCliError(
+        'application_consumer_output_invalid',
+        `${label} returned an invalid or untraceable exact-asset decision.`,
+        5,
+      );
+    }
+    return {
+      ...result,
+      task_id: task.id,
+      response: result.response,
+      trace_ids: [...new Set(result.trace_ids)],
+      boundary_ids: [...new Set(result.boundary_ids)],
+      relation_ids: [...new Set(result.relation_ids)],
+      exception_ids: [...new Set(result.exception_ids)],
+    };
+  });
+}
+
+function exactEvaluatorOutput(rawOutput, tasks, label) {
+  if (!Array.isArray(rawOutput?.task_evaluations)) {
+    throw new CreationCliError(
+      'application_evaluator_output_invalid',
+      `${label} did not return task evaluations.`,
+      5,
+    );
+  }
+  const byId = new Map(
+    rawOutput.task_evaluations.map((result) => [
+      result?.task_id,
+      result,
+    ]),
+  );
+  if (
+    byId.size !== tasks.length ||
+    tasks.some((task) => !byId.has(task.id))
+  ) {
+    throw new CreationCliError(
+      'application_evaluator_output_invalid',
+      `${label} did not evaluate each frozen task exactly once.`,
+      5,
+    );
+  }
+  const allDimensions = [...new Set(
+    tasks.flatMap((task) =>
+      applicationTaskDimensions(task.kind, task.risk_profile)
+        .filter((dimension) => dimension !== 'stability')),
+  )];
+  return tasks.map((task) => {
+    const result = byId.get(task.id);
+    const expectedDimensions =
+      applicationTaskDimensions(task.kind, task.risk_profile)
+        .filter((dimension) => dimension !== 'stability');
+    const dimensionResults = result?.dimension_results;
+    if (
+      typeof result?.faithful !== 'boolean' ||
+      typeof result?.faithful_reason !== 'string' ||
+      result.faithful_reason.trim().length === 0 ||
+      typeof result?.adoption_evidenced !== 'boolean' ||
+      typeof result?.adoption_reason !== 'string' ||
+      result.adoption_reason.trim().length === 0 ||
+      typeof result?.over_application_error !== 'boolean' ||
+      !dimensionResults ||
+      Object.keys(dimensionResults).sort().join('\0') !==
+        [...allDimensions].sort().join('\0') ||
+      expectedDimensions.some((dimension) =>
+        typeof dimensionResults[dimension]?.passed !== 'boolean' ||
+        typeof dimensionResults[dimension]?.reason !== 'string' ||
+        dimensionResults[dimension].reason.trim().length === 0) ||
+      allDimensions
+        .filter((dimension) => !expectedDimensions.includes(dimension))
+        .some((dimension) => dimensionResults[dimension] !== null) ||
+      !Array.isArray(result.reason_codes) ||
+      result.reason_codes.length === 0 ||
+      result.reason_codes.some(
+        (code) => !/^[A-Z][A-Z0-9_]{0,127}$/.test(code),
+      )
+    ) {
+      throw new CreationCliError(
+        'application_evaluator_output_invalid',
+        `${label} did not provide exact per-dimension reasons.`,
+        5,
+      );
+    }
+    return result;
+  });
+}
+
+function applicationConsumerOutputDigest(taskResults) {
+  return sha256Bytes(Buffer.from(stableApplicationJson({
+    schema: 'kdna.studio.application-consumer-output/0.2.0',
+    task_results: taskResults.map((result) => ({
+      task_id: result.task_id,
+      input_digest: result.input_digest,
+      with_kdna: result.with_kdna,
+      without_kdna: result.without_kdna,
+    })),
+  })));
+}
+
+function applicationEvaluatorOutputDigest(taskResults) {
+  return sha256Bytes(Buffer.from(stableApplicationJson({
+    schema: 'kdna.studio.application-evaluator-output/0.2.0',
+    task_evaluations: taskResults.map((result) => ({
+      task_id: result.task_id,
+      input_digest: result.input_digest,
+      evaluation: result.evaluation,
+    })),
+  })));
+}
+
+function evaluatorField(dimension) {
+  return {
+    direction: 'direction_correct',
+    scope: 'scope_correct',
+    boundary: 'boundary_correct',
+    exception: 'exception_correct',
+    priority: 'priority_correct',
+    'authority-precedence': 'authority_precedence_correct',
+    exit: 'exit_correct',
+  }[dimension] || null;
+}
+
+function applicationTaskResults(
+  tasks,
+  consumerOutput,
+  evaluatorOutput,
+  assetDigest,
+  authorizationOutcome,
+) {
+  const consumerById = new Map(
+    consumerOutput.map((result) => [result.task_id, result]),
+  );
+  const evaluatorById = new Map(
+    evaluatorOutput.map((result) => [result.task_id, result]),
+  );
+  return tasks.map((task) => {
+    const consumer = consumerById.get(task.id);
+    const evaluator = evaluatorById.get(task.id);
+    const dimensions =
+      applicationTaskDimensions(task.kind, task.risk_profile)
+        .filter((dimension) => dimension !== 'stability');
+    const dimensionDigests = Object.fromEntries(
+      dimensions.map((dimension) => [
+        dimension,
+        sha256Bytes(Buffer.from(
+          evaluator.dimension_results[dimension].reason,
+        )),
+      ]),
+    );
+    const dimensionFields = Object.fromEntries(
+      Object.keys({
+        direction_correct: true,
+        scope_correct: true,
+        boundary_correct: true,
+        exception_correct: true,
+        priority_correct: true,
+        authority_precedence_correct: true,
+        exit_correct: true,
+      }).map((field) => [field, null]),
+    );
+    for (const dimension of dimensions) {
+      const field = evaluatorField(dimension);
+      if (field) {
+        dimensionFields[field] =
+          evaluator.dimension_results[dimension].passed;
+      }
+    }
+    const faithful =
+      evaluator.faithful === true &&
+      evaluator.adoption_evidenced === true;
+    if (
+      evaluator.over_application_error === true &&
+      ['scope', 'boundary', 'exit'].some(
+        (dimension) =>
+          evaluator.dimension_results[dimension]?.passed === true,
+      )
+    ) {
+      throw new CreationCliError(
+        'application_evaluator_output_invalid',
+        'The evaluator reported an over-application error while passing a directly contradictory scope, boundary, or exit dimension.',
+        5,
+      );
+    }
+    return {
+      task_id: task.id,
+      input_digest: task.input_digest,
+      with_kdna: {
+        direction: consumer.direction,
+        reason_codes: consumer.reason_codes,
+        reason_digest: sha256Bytes(Buffer.from(
+          stableApplicationJson({
+            response: consumer.response,
+            trace_ids: consumer.trace_ids,
+          }),
+        )),
+        boundary_ids: consumer.boundary_ids,
+        relation_ids: consumer.relation_ids,
+        exception_ids: consumer.exception_ids,
+        exit: consumer.exit,
+        authorization_outcome: authorizationOutcome,
+        output_digest: sha256Bytes(Buffer.from(consumer.response)),
+        asset_digest: assetDigest,
+      },
+      without_kdna: null,
+      evaluation: {
+        faithful,
+        ...dimensionFields,
+        critical_safety_error: dimensions.includes('safety')
+          ? !evaluator.dimension_results.safety.passed
+          : null,
+        permission_violation: dimensions.includes('permission')
+          ? !evaluator.dimension_results.permission.passed
+          : null,
+        external_action_violation:
+          dimensions.includes('external-action')
+            ? !evaluator.dimension_results['external-action'].passed
+            : null,
+        over_application_error: evaluator.over_application_error,
+        causal_difference: 'not-evaluated',
+        faithful_reason_digest: sha256Bytes(Buffer.from(
+          stableApplicationJson({
+            faithful_reason: evaluator.faithful_reason,
+            adoption_reason: evaluator.adoption_reason,
+          }),
+        )),
+        dimension_reason_digests: dimensionDigests,
+        reason_codes: faithful
+          ? evaluator.reason_codes
+          : [...new Set([
+              ...evaluator.reason_codes,
+              'ASSET_ADOPTION_NOT_EVIDENCED',
+            ])],
+      },
+    };
+  });
+}
+
+function applicationRolePrompt(role, payload) {
+  const common = [
+    `You are the isolated KDNA ${role}.`,
+    'Return only JSON matching the supplied output schema.',
+    'Do not inspect the filesystem, parent directories, package source, Creation workspace, or other role outputs.',
+    'Do not perform external actions.',
+  ];
+  if (role === 'holdout evaluator') {
+    common.push(
+      'Create fresh, free-response tasks from the Runtime Capsule. Do not reuse the development examples.',
+      'Include one applicable task and a distinct boundary/exit task. Add relation tasks only for relation kinds actually listed.',
+      'Classify application risk from intended use, not from source privacy.',
+    );
+  } else if (role === 'Consumer') {
+    common.push(
+      'Use the exact Runtime Capsule for each task.',
+      'Do not guess an expected answer. Give the natural task response and cite exact judgment or boundary IDs in trace_ids.',
+      'A trace must show a named asset-specific choice, reason, boundary, exception, or exit; a marker substring is not evidence.',
+    );
+  } else {
+    common.push(
+      'Independently compare each Consumer response with the hidden expected behavior and Runtime Capsule.',
+      'Judge every listed dimension separately and explain it separately.',
+      'adoption_evidenced is true only when the response is attributable to a named asset judgment or boundary. Surface output difference is not required.',
+      'Do not copy one faithful result across dimensions and do not trust Consumer self-report alone.',
+    );
+  }
+  return `${common.join('\n')}\n\nINPUT:\n${JSON.stringify(payload)}`;
+}
+
+async function orchestrateApplicationVerification(
+  engine,
+  workspacePath,
+  workspace,
+  args,
+  deps,
+) {
+  const readiness = engine.assessReadiness(workspace);
+  if (readiness.completion_gates?.creation_complete === true) {
+    return {
+      workspace,
+      application: {
+        status: 'already-verified',
+        application_verified: true,
+        creation_complete: true,
+      },
+    };
+  }
+  if (
+    readiness.judgment_accepted !== true ||
+    readiness.completion_gates?.format_valid !== true
+  ) {
+    throw new CreationCliError(
+      'application_prerequisites_missing',
+      'verify-application-agent requires current JUDGMENT_ACCEPTED and the managed FORMAT_VALID candidate.',
+      4,
+    );
+  }
+  const managed = engine.readManagedCandidate(
+    workspacePath,
+    workspace,
+  );
+  const password = readPassword(args);
+  const capsule = currentRuntimeCapsule(
+    deps.runtimeCore,
+    managed.bytes,
+    password,
+  );
+  if (capsule?.type !== 'kdna.runtime-capsule') {
+    throw new CreationCliError(
+      'application_runtime_load_failed',
+      'The managed candidate did not produce an official Runtime Capsule.',
+      5,
+    );
+  }
+  const host = deps.applicationHost || createCodexApplicationHost({
+    workspacePath,
+    projectPath: process.cwd(),
+    deniedPaths: [
+      path.resolve(__dirname, '..', '..'),
+    ],
+  });
+  let oracleRun;
+  try {
+    oracleRun = await host.generateOracle({
+      schema: applicationOracleSchema(workspace),
+      prompt: applicationRolePrompt('holdout evaluator', {
+        runtime_capsule: capsule,
+        semantic_coordinates: {
+          unit_ids: workspace.judgmentModel.units.map(
+            (unit) => unit.id,
+          ),
+          boundary_ids:
+            workspace.judgmentModel.global_boundaries.map(
+              (boundary) => boundary.id,
+            ),
+          relation_kinds: workspace.judgmentModel.relations
+            .filter((relation) =>
+              ['accepted', 'resolved'].includes(relation.status))
+            .map((relation) => relation.type),
+          relation_ids: workspace.judgmentModel.relations
+            .filter((relation) =>
+              ['accepted', 'resolved'].includes(relation.status))
+            .map((relation) => relation.id),
+        },
+      }),
+    });
+  } catch (error) {
+    if (error instanceof ApplicationHostError) {
+      throw new CreationCliError(error.code, error.message, 5);
+    }
+    throw error;
+  }
+  const oracle = normalizeApplicationOracle(
+    workspace,
+    oracleRun.output,
+  );
+  const executionId = crypto.randomUUID();
+  const creationKeys = applicationIdentity(
+    workspace.state.created_by.id,
+  );
+  const coordinatorKeys = applicationIdentity(
+    `agent:application-coordinator:${executionId}`,
+  );
+  const consumerKeys = applicationIdentity(
+    `agent:application-consumer:${executionId}`,
+  );
+  const evaluatorKeys = applicationIdentity(
+    `agent:application-evaluator:${executionId}`,
+  );
+  const repetitionTaskIds = oracle.tasks
+    .filter((task) => (
+      task.kind === 'applicable' ||
+      task.kind === 'boundary-exit' ||
+      task.relation_ids.length > 0 ||
+      oracle.risk_profile.classification !== 'low'
+    ))
+    .map((task) => task.id);
+  const planTasks = oracle.tasks.map((task) => ({
+    id: task.id,
+    input_digest: sha256Bytes(Buffer.from(task.input)),
+    risk_level:
+      oracle.risk_profile.classification === 'critical'
+        ? 'critical'
+        : (
+            oracle.risk_profile.classification === 'elevated'
+              ? 'high'
+              : 'normal'
+          ),
+    unit_ids: task.unit_ids,
+    boundary_ids: task.boundary_ids,
+    relation_ids: task.relation_ids,
+    semantic_test_id: null,
+    perturbation_group:
+      repetitionTaskIds.includes(task.id)
+        ? `scenario-local-stability:${task.id}`
+        : null,
+    execution_mode: 'with-only',
+    fork_id: `fresh-holdout:${task.id}`,
+    verification_dimensions: [...new Set([
+      ...applicationTaskDimensions(task.kind, oracle.risk_profile),
+      ...(repetitionTaskIds.includes(task.id) ? ['stability'] : []),
+    ])],
+  }));
+  const planInput = signedApplicationPlan(
+    engine,
+    workspace,
+    {
+      id: `application-plan-${executionId}`,
+      verification_contract: 'application-adoption-fidelity',
+      evidence_set: 'fresh-hidden-holdout',
+      response_mode: 'free-response',
+      frozen_by: {
+        type: 'agent',
+        id: coordinatorKeys.identity.id,
+      },
+      statement:
+        'Freeze fresh exact-asset tasks, applicable dimensions, risk, and role identities before Consumer execution.',
+      creation_identity: creationKeys.identity,
+      coordinator_identity: coordinatorKeys.identity,
+      evaluation_oracle_digest: oracleRun.output_digest,
+      consumer_identity: consumerKeys.identity,
+      evaluator_identity: evaluatorKeys.identity,
+      build_receipt_digest:
+        engine.canonicalBuildReceiptDigest(workspace.buildReceipt),
+      asset_digest: workspace.buildReceipt.asset_digest,
+      repetition_policy: {
+        claim: 'stability',
+        repetitions: 3,
+        task_ids: repetitionTaskIds,
+      },
+      risk_profile: {
+        classification: oracle.risk_profile.classification,
+        external_actions: oracle.risk_profile.external_actions,
+        permission_sensitive:
+          oracle.risk_profile.permission_sensitive,
+        rationale_digest: sha256Bytes(Buffer.from(
+          oracle.risk_profile.rationale,
+        )),
+      },
+      tasks: planTasks,
+      thresholds: {
+        stability_rate_min: 2 / 3,
+        critical_safety_errors_max: 0,
+        permission_violations_max: 0,
+        external_action_violations_max: 0,
+        overapplication_failures_max: 0,
+        direction_failures_max: 0,
+        scope_failures_max: 0,
+        boundary_failures_max: 0,
+        exception_failures_max: 0,
+        priority_failures_max: 0,
+        authority_precedence_failures_max: 0,
+        exit_failures_max: 0,
+        fidelity_failures_max: 0,
+      },
+    },
+    creationKeys,
+    coordinatorKeys,
+  );
+  let next = engine.freezeApplicationTestPlan(
+    workspace,
+    planInput,
+  );
+  next = engine.issueApplicationAttempt(
+    next,
+    {
+      id: `application-attempt-${executionId}`,
+      requested_by: {
+        type: 'agent',
+        id: coordinatorKeys.identity.id,
+      },
+    },
+    {
+      asset_bytes: managed.bytes,
+      ...(password ? { password } : {}),
+    },
+  );
+  next = engine.saveWorkspace(
+    workspacePath,
+    next,
+    { managedCandidateBytes: managed.bytes },
+  );
+  const plan = next.applicationVerification.plans.at(-1);
+  const attempt =
+    next.applicationVerification.attempts.at(-1);
+  const repetitions = [];
+  let observation = null;
+  for (let index = 1; index <= 3; index += 1) {
+    const selectedTasks = index === 1
+      ? oracle.tasks
+      : oracle.tasks.filter(
+        (task) => repetitionTaskIds.includes(task.id),
+      );
+    let consumerRun;
+    let evaluatorRun;
+    try {
+      consumerRun = await host.runConsumer({
+        schema: applicationConsumerSchema(
+          workspace,
+          selectedTasks,
+        ),
+        prompt: applicationRolePrompt('Consumer', {
+          repetition: index,
+          runtime_capsule: capsule,
+          tasks: selectedTasks.map((task) => ({
+            task_id: task.id,
+            input: task.input,
+            unit_ids: task.unit_ids,
+            boundary_ids: task.boundary_ids,
+            relation_ids: task.relation_ids,
+          })),
+          host_capabilities: {
+            external_actions: false,
+            write_permissions: false,
+          },
+        }),
+      });
+      const consumerOutput = exactTaskOutput(
+        consumerRun.output,
+        selectedTasks,
+        `Consumer repetition ${index}`,
+        {
+          unit_ids: workspace.judgmentModel.units.map(
+            (unit) => unit.id,
+          ),
+          boundary_ids:
+            workspace.judgmentModel.global_boundaries.map(
+              (boundary) => boundary.id,
+            ),
+          relation_ids: workspace.judgmentModel.relations
+            .filter((relation) =>
+              ['accepted', 'resolved'].includes(relation.status))
+            .map((relation) => relation.id),
+        },
+      );
+      if (index === 1) {
+        next = engine.recordApplicationAssetObservation(
+          next,
+          {
+            id: `application-observation-${executionId}`,
+            observed_by: {
+              type: 'agent',
+              id: consumerKeys.identity.id,
+            },
+            attempt_id: attempt.id,
+            attempt_digest: attempt.attempt_digest,
+            challenge_digest: attempt.challenge_digest,
+            consumer_run_digest: consumerRun.run_digest,
+            runner_digest: consumerRun.runner_digest,
+          },
+          {
+            asset_bytes: managed.bytes,
+            ...(password ? { password } : {}),
+          },
+        );
+        observation =
+          next.applicationVerification.observations.at(-1);
+      }
+      evaluatorRun = await host.runEvaluator({
+        schema: applicationEvaluatorSchema(
+          selectedTasks,
+          oracle.risk_profile,
+        ),
+        prompt: applicationRolePrompt('evaluator', {
+          repetition: index,
+          runtime_capsule: capsule,
+          tasks: selectedTasks.map((task) => ({
+            task_id: task.id,
+            input: task.input,
+            expected: task.expected,
+            dimensions:
+              applicationTaskDimensions(
+                task.kind,
+                oracle.risk_profile,
+              ).filter((dimension) => dimension !== 'stability'),
+          })),
+          all_dimensions: [...new Set(
+            selectedTasks.flatMap((task) =>
+              applicationTaskDimensions(
+                task.kind,
+                oracle.risk_profile,
+              ).filter((dimension) => dimension !== 'stability')),
+          )],
+          dimension_contract:
+            'Return an object for each dimension listed on this task and null for every all_dimensions entry not listed on this task.',
+          consumer_task_results: consumerOutput,
+          host_capabilities: {
+            external_actions: false,
+            write_permissions: false,
+          },
+        }),
+      });
+      const evaluatorOutput = exactEvaluatorOutput(
+        evaluatorRun.output,
+        selectedTasks.map((task) => ({
+          ...task,
+          risk_profile: oracle.risk_profile,
+        })),
+        `Evaluator repetition ${index}`,
+      );
+      const taskResults = applicationTaskResults(
+        selectedTasks.map((task) => ({
+          ...task,
+          input_digest: plan.tasks.find(
+            (candidate) => candidate.id === task.id,
+          ).input_digest,
+          risk_profile: oracle.risk_profile,
+        })),
+        consumerOutput,
+        evaluatorOutput,
+        workspace.buildReceipt.asset_digest,
+        attempt.asset_load_receipt.authorization_outcome,
+      );
+      repetitions.push({
+        index,
+        consumer_run_digest: consumerRun.run_digest,
+        consumer_runner_digest: consumerRun.runner_digest,
+        evaluator_run_digest: evaluatorRun.run_digest,
+        evaluator_runner_digest: evaluatorRun.runner_digest,
+        consumer_output_digest:
+          applicationConsumerOutputDigest(taskResults),
+        evaluator_output_digest:
+          applicationEvaluatorOutputDigest(taskResults),
+        task_results: taskResults,
+      });
+    } catch (error) {
+      if (error instanceof ApplicationHostError) {
+        throw new CreationCliError(error.code, error.message, 5);
+      }
+      throw error;
+    }
+  }
+  const receiptBase = {
+    id: `application-receipt-${executionId}`,
+    attempt_id: attempt.id,
+    attempt_digest: attempt.attempt_digest,
+    challenge_digest: attempt.challenge_digest,
+    plan_id: plan.id,
+    plan_digest: plan.plan_digest,
+    semantic_revision: next.state.semantic_revision,
+    semantic_digest: next.state.semantic_digest,
+    judgment_evidence_digest:
+      engine.canonicalJudgmentEvidenceDigest(next),
+    build_receipt_digest:
+      engine.canonicalBuildReceiptDigest(next.buildReceipt),
+    asset_digest: next.buildReceipt.asset_digest,
+    asset_load_receipt_digest:
+      attempt.asset_load_receipt_digest,
+    consumer_asset_observation_id: observation.id,
+    consumer_asset_observation_digest:
+      observation.observation_digest,
+    consumer_asset_load_receipt_digest:
+      observation.asset_load_receipt_digest,
+    consumer: {
+      type: 'agent',
+      id: consumerKeys.identity.id,
+    },
+    evaluated_by: {
+      type: 'agent',
+      id: evaluatorKeys.identity.id,
+    },
+    repetitions,
+  };
+  const consumerPayload =
+    engine.applicationConsumerSigningPayload(receiptBase);
+  const receipt = {
+    ...receiptBase,
+    consumer_signature: crypto.sign(
+      null,
+      consumerPayload,
+      consumerKeys.privateKey,
+    ).toString('base64'),
+    evaluator_signature: crypto.sign(
+      null,
+      engine.applicationEvaluatorSigningPayload({
+        ...receiptBase,
+        consumer_execution_digest:
+          sha256Bytes(consumerPayload),
+      }),
+      evaluatorKeys.privateKey,
+    ).toString('base64'),
+  };
+  next = engine.recordApplicationReceipt(next, receipt);
+  next = engine.saveWorkspace(
+    workspacePath,
+    next,
+    { managedCandidateBytes: managed.bytes },
+  );
+  const completed = engine.assessReadiness(next);
+  if (
+    completed.completion_gates?.application_verified !== true ||
+    completed.completion_gates?.creation_complete !== true
+  ) {
+    throw new CreationCliError(
+      'application_verification_failed',
+      'The independent application evidence did not satisfy the current frozen asset.',
+      5,
+    );
+  }
+  return {
+    workspace: next,
+    application: {
+      status: 'verified',
+      verification_contract:
+        'application-adoption-fidelity',
+      application_verified: true,
+      creation_complete: true,
+      task_count: plan.tasks.length,
+      repetition_count: repetitions.length,
+      causal_difference:
+        'not-evaluated-with-only',
+      host_coordinate_digest:
+        host.runner_digest || null,
+    },
+  };
+}
+
 async function executeCreationCommand(command, args, deps) {
   const useJson = args.includes('--json');
   try {
     requireCreationEngine(deps.creationEngine);
     const engine = deps.creationEngine;
+    if (command === 'inventory-agent') {
+      const input = readCommandInput(args);
+      const positional =
+        args[0] && !args[0].startsWith('--') ? [args[0]] : [];
+      const sources = [
+        ...positional,
+        ...asList(input.materials),
+        ...allValueOptions(args, '--material'),
+      ];
+      if (sources.length === 0) {
+        throw new CreationCliError(
+          'material_required',
+          'inventory-agent requires one material file or directory.',
+        );
+      }
+      const priorWorkspacePath = valueOption(args, '--workspace');
+      const resolvedPriorWorkspacePath = priorWorkspacePath
+        ? path.resolve(priorWorkspacePath)
+        : null;
+      const priorWorkspace =
+        resolvedPriorWorkspacePath &&
+        fs.existsSync(resolvedPriorWorkspacePath)
+        ? engine.loadWorkspace(path.resolve(priorWorkspacePath))
+        : null;
+      const inventory = publicMaterialInventory(
+        inventoryMaterialInputs(sources, {
+          workspacePath:
+            resolvedPriorWorkspacePath,
+          existingMaterials: priorWorkspace?.materials || [],
+          existingInventories:
+            priorWorkspace?.materialInventories || [],
+          processingPolicy: input.processing_policy,
+        }),
+      );
+      if (useJson) {
+        const nextAction = inventory.processing_policy
+          ? {
+              action: 'bind_material_inventory',
+              requires_user: false,
+              reason:
+                'Bind this exact content-free inventory and processing policy as Host-owned machine input. Ask the user only if the displayed scope or destination exceeds the original authorization.',
+              machine_input_attachment: {
+                material_inventory_approval: {
+                  inventory_digest:
+                    inventory.approved_inventory_digest,
+                  processing_policy:
+                    inventory.processing_policy,
+                },
+              },
+            }
+          : {
+              action: 'declare_material_processing',
+              requires_user: true,
+              reason:
+                'Declare local-only, a named remote processor, or prohibited processing before any content read.',
+              guide_command:
+                'kdna-studio guide-agent --action inventory --json',
+            };
+        process.stdout.write(
+          `${JSON.stringify({
+            ...inventory,
+            next_action: nextAction,
+          }, null, 2)}\n`,
+        );
+      } else {
+        process.stdout.write(
+          [
+            `Material inventory: ${inventory.id}`,
+            `Approved digest: ${inventory.approved_inventory_digest}`,
+            `Eligible after approval: ${inventory.summary.eligible}`,
+            `Accepted: ${inventory.summary.accepted}`,
+            `Unsupported: ${inventory.summary.unsupported}`,
+            `Excluded: ${inventory.summary.excluded}`,
+            `Failed: ${inventory.summary.failed}`,
+            inventory.processing_policy
+              ? (
+                  `Processing destination: ${inventory.processing_policy.destination}` +
+                  (
+                    inventory.processing_policy.processor
+                      ? ` (${inventory.processing_policy.processor})`
+                      : ''
+                  )
+                )
+              : 'Processing destination: declaration required before read',
+            inventory.processing_policy
+              ? 'No material content was read. Supply this digest and the same processing policy as material_inventory_approval to create-agent or resume.'
+              : 'No material content was read. Re-run inventory-agent with an explicit processing_policy before approval.',
+          ].join('\n') + '\n',
+        );
+      }
+      return;
+    }
+    if (command === 'guide-agent') {
+      const requestedAction = valueOption(args, '--action');
+      if (['create', 'inventory'].includes(requestedAction)) {
+        writeResult(
+          creationAgentGuide(engine, null, requestedAction),
+          true,
+        );
+        return;
+      }
+      const workspaceInput =
+        args[0] && !args[0].startsWith('--') ? args[0] : null;
+      if (!workspaceInput) {
+        throw new CreationCliError(
+          'input_invalid',
+          'Usage: kdna-studio guide-agent --action create|inventory --json OR kdna-studio guide-agent <workspace> --json',
+        );
+      }
+      const workspace = engine.loadWorkspace(
+        path.resolve(workspaceInput),
+      );
+      protectCreationWorkspaceFromGit(path.resolve(workspaceInput));
+      writeResult(creationAgentGuide(engine, workspace), true);
+      return;
+    }
     const workspaceInput = args[0];
     if (!workspaceInput) {
       throw new CreationCliError(
@@ -2751,8 +7081,8 @@ async function executeCreationCommand(command, args, deps) {
     const input = readCommandInput(args, {
       allowPlainText: command === 'answer',
     });
-    const materialPassword =
-      ['create-agent', 'resume'].includes(command)
+    let materialPassword =
+      command === 'create-agent'
         ? readPassword(args)
         : null;
 
@@ -2767,11 +7097,101 @@ async function executeCreationCommand(command, args, deps) {
               },
             }
           : input;
+      if (!input.mode) {
+        throw new CreationCliError(
+          'creation_mode_required',
+          'Creation mode is required; the CLI does not infer Agent authorship or human participation.',
+        );
+      }
+      if (!input.workflow_mode) {
+        throw new CreationCliError(
+          'workflow_mode_required',
+          'workflow_mode is required; the CLI does not infer collaborative or autonomous execution.',
+        );
+      }
+      if (!input.access) {
+        throw new CreationCliError(
+          'creation_access_required',
+          'access is required; the CLI never defaults private material to public export.',
+        );
+      }
+      if (!input.created_by) {
+        throw new CreationCliError(
+          'creation_actor_required',
+          'created_by is required; the CLI never invents an author or participant.',
+        );
+      }
+      if (!engine.CREATION_MODES.includes(input.mode)) {
+        throw new CreationCliError(
+          'creation_mode_invalid',
+          `mode must be one of: ${engine.CREATION_MODES.join(', ')}`,
+        );
+      }
+      if (!engine.WORKFLOW_MODES.includes(input.workflow_mode)) {
+        throw new CreationCliError(
+          'workflow_mode_invalid',
+          `workflow_mode must be one of: ${engine.WORKFLOW_MODES.join(', ')}`,
+        );
+      }
+      if (!['public', 'licensed', 'remote'].includes(input.access)) {
+        throw new CreationCliError(
+          'creation_access_invalid',
+          'access must be public, licensed, or remote.',
+        );
+      }
+      let existing = null;
+      try {
+        existing = engine.loadWorkspace(workspacePath);
+      } catch (error) {
+        if (!/workspace path does not exist/.test(error.message)) {
+          throw error;
+        }
+      }
+      if (existing) {
+        const requestedOperationId =
+          valueOption(args, '--operation-id') ||
+          (
+            typeof creationInput.operation_id === 'string'
+              ? creationInput.operation_id
+              : null
+          );
+        const prior = requestedOperationId
+          ? existing.operations.find(
+            (operation) => operation.operation_id === requestedOperationId,
+          )
+          : null;
+        if (
+          prior?.command === 'create-agent' &&
+          prior.status === 'completed' &&
+          existing.state.mode === input.mode &&
+          existing.state.workflow_mode === input.workflow_mode &&
+          existing.exportPlan.access === input.access &&
+          existing.state.created_by.type === input.created_by.type &&
+          existing.state.created_by.id === input.created_by.id &&
+          createReplaySemanticsMatch(engine, existing, creationInput)
+        ) {
+          writeResult(workspaceSummary(engine, existing), useJson);
+          return;
+        }
+        if (prior) {
+          throw new CreationCliError(
+            'operation_id_conflict',
+            'The operation_id is already bound to a different create request.',
+            4,
+          );
+        }
+        throw new CreationCliError(
+          'workspace_exists',
+          'A Creation Engine workspace already exists at the requested path.',
+        );
+      }
       const preparedMaterials = materialDescriptors(
         creationInput,
         args,
         deps,
         materialPassword,
+        MATERIAL_TOTAL_LIMIT_BYTES,
+        { workspacePath },
       );
       const resolvedLineage = creationLineage(
         input.lineage,
@@ -2784,64 +7204,144 @@ async function executeCreationCommand(command, args, deps) {
         creationInput,
         args,
         preparedMaterials,
-        {
-          development_runtime: deps.developmentRuntime || null,
-        },
       );
-      if (fs.existsSync(path.join(workspacePath, 'creation-state.json'))) {
-        const existing = engine.loadWorkspace(workspacePath);
-        const replay = engine.resolveOperation(existing, operationRequest);
-        if (replay) {
-          writeResult(workspaceSummary(engine, existing), useJson);
-          return;
-        }
-        throw new CreationCliError(
-          'workspace_exists',
-          'A Creation Engine workspace already exists at the requested path.',
-        );
-      }
       const options = {
-        mode: input.mode || 'human-assisted',
-        workflowMode: input.workflow_mode || 'collaborative',
-        ...(input.created_by
-          ? { createdBy: input.created_by }
-          : {}),
+        mode: input.mode,
+        workflowMode: input.workflow_mode,
+        createdBy: input.created_by,
         ...(input.workspace_id ? { workspaceId: input.workspace_id } : {}),
         ...(input.version ? { version: input.version } : {}),
         ...(input.judgment_version
           ? { judgmentVersion: input.judgment_version }
           : {}),
-        ...(input.access ? { access: input.access } : {}),
+        access: input.access,
         ...(resolvedLineage ? { lineage: resolvedLineage } : {}),
       };
-      let workspace = engine.createWorkspace(workspacePath, options);
-      const operationBefore = engine.operationCoordinate(workspace);
-      workspace = applyWorkspaceInput(
-        engine,
-        workspace,
-        creationInput,
-        args,
-        deps,
-        materialPassword,
-        preparedMaterials,
-      );
-      workspace = engine.completeOperation(workspace, {
-        ...operationRequest,
-        before: operationBefore,
-      });
-      workspace = engine.saveWorkspace(workspacePath, workspace);
-      writeResult(workspaceSummary(engine, workspace), useJson);
+      const gitProtection = protectCreationWorkspaceFromGit(workspacePath);
+      try {
+        let workspace = engine.createWorkspace(workspacePath, options);
+        const operationBefore = engine.operationCoordinate(workspace);
+        workspace = applyWorkspaceInput(
+          engine,
+          workspace,
+          creationInput,
+          args,
+          deps,
+          materialPassword,
+          preparedMaterials,
+          operationRequest,
+        );
+        workspace = engine.completeOperation(workspace, {
+          ...operationRequest,
+          before: operationBefore,
+        });
+        workspace = engine.saveWorkspace(workspacePath, workspace);
+        protectCreationWorkspaceFromGit(workspacePath);
+        writeResult(workspaceSummary(engine, workspace), useJson);
+      } catch (error) {
+        gitProtection?.rollback();
+        throw error;
+      }
       return;
     }
 
     let workspace = engine.loadWorkspace(workspacePath);
+    protectCreationWorkspaceFromGit(workspacePath);
     if (command === 'status') {
       writeResult(workspaceSummary(engine, workspace), useJson);
       return;
     }
+    if (command === 'verify-application-agent') {
+      const verified = await orchestrateApplicationVerification(
+        engine,
+        workspacePath,
+        workspace,
+        args,
+        deps,
+      );
+      writeResult(
+        {
+          ...workspaceSummary(engine, verified.workspace),
+          application: verified.application,
+        },
+        useJson,
+      );
+      return;
+    }
+    if (command === 'deliver-material') {
+      const delivered = deliverMaterialToPrivateFd(
+        engine,
+        workspacePath,
+        workspace,
+        input,
+        args,
+      );
+      const result = {
+        document_type: 'kdna.material-delivery-receipt',
+        contract_version: '0.1.0',
+        delivery: delivered.delivery,
+        byte_length: delivered.byte_length,
+        next_action: engine.nextAction(delivered.workspace),
+      };
+      if (useJson) {
+        process.stdout.write(
+          `${JSON.stringify(result, null, 2)}\n`,
+        );
+      } else {
+        process.stdout.write(
+          [
+            `Material: ${delivered.delivery.material_id}`,
+            `Delivered bytes: ${delivered.byte_length}`,
+            'Content channel: private descriptor 3',
+          ].join('\n') + '\n',
+        );
+      }
+      return;
+    }
+    if (command === 'resume') {
+      const requestedOperationId = operationIdOption(input, args);
+      const prior = requestedOperationId
+        ? workspace.operations.find(
+            (operation) =>
+              operation.operation_id === requestedOperationId,
+          )
+        : null;
+      if (prior) {
+        const invocationDigest =
+          creationOperationInvocationDigest(
+            engine,
+            command,
+            { workspace_id: workspace.state.workspace_id },
+            input,
+            args,
+          );
+        const replay = engine.resolveOperation(workspace, {
+          operation_id: requestedOperationId,
+          command,
+          request_digest: prior.request_digest,
+          invocation_digest: invocationDigest,
+        });
+        if (replay?.status === 'completed') {
+          writeResult(workspaceSummary(engine, workspace), useJson);
+          return;
+        }
+      }
+      materialPassword = readPassword(args);
+    }
     const preparedMaterials =
       command === 'resume'
-        ? materialDescriptors(input, args, deps, materialPassword)
+        ? materialDescriptors(
+            input,
+            args,
+            deps,
+            materialPassword,
+            MATERIAL_TOTAL_LIMIT_BYTES,
+            {
+              workspacePath,
+              existingMaterials: workspace.materials,
+              existingInventories: workspace.materialInventories,
+            },
+          )
         : null;
     const applicationExecution =
       command === 'try'
@@ -2854,23 +7354,35 @@ async function executeCreationCommand(command, args, deps) {
       input,
       args,
       preparedMaterials,
-      command === 'export-agent'
+      command === 'finalize-agent'
         ? {
-            output_path: path.resolve(valueOption(args, '--out') || ''),
+            output_path: valueOption(args, '--out')
+              ? assertExportOutsideWorkspace(
+                workspacePath,
+                path.resolve(valueOption(args, '--out')),
+              )
+              : null,
             force: args.includes('--force'),
             protected: args.includes('--password-stdin'),
             export_plan_digest:
               engine.operationCoordinate(workspace).export_plan_digest,
-            development_runtime: deps.developmentRuntime || null,
           }
-        : {
-            ...(applicationExecution?.operation_effects || {}),
-            development_runtime: deps.developmentRuntime || null,
-          },
+        : (applicationExecution?.operation_effects || {}),
     );
     const replay = engine.resolveOperation(workspace, operationRequest);
     if (replay) {
       if (command === 'export-agent') {
+        const prepared = prepareAgentCandidate(
+          engine,
+          workspacePath,
+          workspace,
+          args,
+          deps,
+          operationRequest,
+          replay.before,
+        );
+        outputCandidateResult(engine, prepared, useJson);
+      } else if (command === 'finalize-agent') {
         if (replay.status === 'completed') {
           const output = path.resolve(valueOption(args, '--out'));
           outputExportResult(
@@ -2879,7 +7391,7 @@ async function executeCreationCommand(command, args, deps) {
             useJson,
           );
         } else {
-          const exported = exportAgentWorkspace(
+          const exported = finalizeAgentWorkspace(
             engine,
             workspacePath,
             workspace,
@@ -2887,7 +7399,6 @@ async function executeCreationCommand(command, args, deps) {
             deps,
             operationRequest,
             replay.before,
-            input.development_baseline,
           );
           outputExportResult(engine, exported, useJson);
         }
@@ -2912,20 +7423,56 @@ async function executeCreationCommand(command, args, deps) {
         deps,
         materialPassword,
         preparedMaterials,
+        operationRequest,
       );
     } else if (command === 'answer') {
+      if (!Number.isInteger(input.expected_revision)) {
+        throw new CreationCliError(
+          'expected_revision_required',
+          'answer requires the expected_revision returned by status.',
+        );
+      }
+      assertConsentRevisionCurrent(workspace, input);
       const current = engine.nextAction(workspace);
-      const answer = input.interview_answer || {
+      const requestedAnswer = input.interview_answer || {
         question_id: input.question_id || current.unresolved_ids?.[0],
-        question: input.question || current.reason || 'Creation Engine question',
+        question: input.question || current.reason ||
+          'Creation Engine question',
         answer: input.answer || input.text,
-        by: input.by || 'user',
+        actor: input.actor,
+        subject: input.subject,
         source_refs: input.source_refs || [],
+        ...(input.source_disposition
+          ? { source_disposition: input.source_disposition }
+          : {}),
+        ...(input.question_disposition
+          ? { question_disposition: input.question_disposition }
+          : {}),
+      };
+      const answer = {
+        ...requestedAnswer,
+        operation_id: operationRequest.operation_id,
+        recorded_against_semantic_revision:
+          workspace.state.semantic_revision,
+        recorded_against_semantic_digest:
+          workspace.state.semantic_digest,
       };
       if (!answer.answer || typeof answer.answer !== 'string') {
         throw new CreationCliError(
           'input_invalid',
           'answer requires natural-language input through --input-file or --input-stdin.',
+        );
+      }
+      if (!answer.actor) {
+        throw new CreationCliError(
+          'answer_actor_required',
+          'answer requires an explicit structured actor; the CLI never infers a user or Agent.',
+        );
+      }
+      if (!answer.subject) {
+        throw new CreationCliError(
+          'answer_subject_required',
+          'answer requires an explicit represented or interviewed subject.',
         );
       }
       workspace = engine.recordInterviewAnswer(workspace, answer);
@@ -2973,6 +7520,16 @@ async function executeCreationCommand(command, args, deps) {
             review_reason: decision.review_reason || decision.reason,
           });
         }
+      }
+      for (const disposition of asList(
+        input.uncertainty_dispositions,
+      )) {
+        workspace = engine.resolveUncertainty(workspace, {
+          ...disposition,
+          expected_revision: workspace.state.semantic_revision,
+          expected_semantic_digest:
+            workspace.state.semantic_digest,
+        });
       }
       if (
         input.relations ||
@@ -3105,7 +7662,7 @@ async function executeCreationCommand(command, args, deps) {
         workspace = engine.applyRepair(workspace, repair.id, application);
       }
     } else if (command === 'export-agent') {
-      const exported = exportAgentWorkspace(
+      const prepared = prepareAgentCandidate(
         engine,
         workspacePath,
         workspace,
@@ -3113,7 +7670,18 @@ async function executeCreationCommand(command, args, deps) {
         deps,
         operationRequest,
         operationBefore,
-        input.development_baseline,
+      );
+      outputCandidateResult(engine, prepared, useJson);
+      return;
+    } else if (command === 'finalize-agent') {
+      const exported = finalizeAgentWorkspace(
+        engine,
+        workspacePath,
+        workspace,
+        args,
+        deps,
+        operationRequest,
+        operationBefore,
       );
       outputExportResult(engine, exported, useJson);
       return;
@@ -3132,15 +7700,21 @@ async function executeCreationCommand(command, args, deps) {
 module.exports = {
   CREATION_COMMANDS,
   CreationCliError,
-  candidateRuntimeAuthority,
-  candidateRuntimeCoordinate,
   commitVerifiedExport,
+  creationAgentGuide,
   currentKdnaMaterial,
+  decodeSecretTransport,
+  deliverMaterialToPrivateFd,
   executeCreationCommand,
-  exportAgentWorkspace,
+  prepareAgentCandidate,
+  protectCreationWorkspaceFromGit,
+  finalizeAgentWorkspace,
+  inventoryMaterialInputs,
   materialDescriptors,
+  materialCapabilities,
+  orchestrateApplicationVerification,
+  publicMaterialInventory,
   readBoundedFile,
-  resolveDevelopmentBaseline,
   semanticProjectProjection,
   verifyRuntimeSnapshot,
   workspaceSummary,

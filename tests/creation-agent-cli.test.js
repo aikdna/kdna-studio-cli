@@ -9,14 +9,13 @@ const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 
 const {
-  candidateRuntimeAuthority,
-  candidateRuntimeCoordinate,
   commitVerifiedExport,
   currentKdnaMaterial,
-  exportAgentWorkspace,
+  finalizeAgentWorkspace,
   materialDescriptors,
+  orchestrateApplicationVerification,
+  prepareAgentCandidate,
   readBoundedFile,
-  resolveDevelopmentBaseline,
   semanticProjectProjection,
   verifyRuntimeSnapshot,
   workspaceSummary,
@@ -28,9 +27,151 @@ const { SYSTEM: DISTILL_SYSTEM } = require('../src/ai/distill');
 
 const ROOT = path.resolve(__dirname, '..');
 const CLI = path.join(ROOT, 'bin', 'kdna-studio.js');
+const LOCAL_PROCESSING_POLICY = Object.freeze({
+  destination: 'local-only',
+  processor: null,
+  assurance: 'host-declared',
+});
 
 function temporaryDirectory() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-creation-cli-'));
+}
+
+function applicationPromptInput(prompt) {
+  return JSON.parse(prompt.slice(prompt.indexOf('\n\nINPUT:\n') + 9));
+}
+
+function directorySnapshot(root) {
+  const entries = {};
+  function visit(current) {
+    for (const name of fs.readdirSync(current).sort()) {
+      const target = path.join(current, name);
+      const relative = path.relative(root, target);
+      const stat = fs.lstatSync(target);
+      if (stat.isDirectory()) {
+        visit(target);
+      } else if (stat.isFile()) {
+        entries[relative] = fs.readFileSync(target);
+      }
+    }
+  }
+  visit(root);
+  return entries;
+}
+
+function deterministicApplicationHost(options = {}) {
+  let consumerRuns = 0;
+  let evaluatorRuns = 0;
+  const runnerDigest = sha256Digest('deterministic-application-host');
+  return {
+    runner_digest: runnerDigest,
+    async generateOracle() {
+      return {
+        output: {
+          risk_profile: {
+            classification: 'low',
+            external_actions: false,
+            permission_sensitive: false,
+            rationale: 'A bounded editorial judgment has low application risk.',
+          },
+          tasks: [
+            {
+              kind: 'applicable',
+              input: 'A factual claim cites one narrow observation.',
+              expected:
+                'Apply the evidence judgment and keep the claim within the observation.',
+              unit_ids: ['unit-evidence'],
+              boundary_ids: [],
+              relation_ids: [],
+            },
+            {
+              kind: 'boundary-exit',
+              input: 'A formatting-only edit has no factual claim.',
+              expected:
+                'Exit without applying the factual-evidence judgment.',
+              unit_ids: ['unit-evidence'],
+              boundary_ids: ['boundary-no-invention'],
+              relation_ids: [],
+            },
+          ],
+        },
+        output_digest: sha256Digest('deterministic-hidden-oracle'),
+        run_digest: sha256Digest('oracle-run'),
+        runner_digest: runnerDigest,
+      };
+    },
+    async runConsumer({ prompt }) {
+      consumerRuns += 1;
+      const input = applicationPromptInput(prompt);
+      const taskResults = input.tasks.map((task) => {
+        const boundary = task.task_id === 'application-task-2';
+        return {
+          task_id: task.task_id,
+          response: boundary
+            ? `On independent run ${input.repetition}, this remains formatting-only, so the evidence judgment exits without application.`
+            : 'Keep the claim narrow because the named judgment requires specific evidence.',
+          direction: boundary ? 'out-of-scope' : 'apply',
+          reason_codes: [
+            boundary
+              ? 'DECLARED_BOUNDARY_EXIT'
+              : 'DECLARED_JUDGMENT_APPLIED',
+          ],
+          trace_ids: [
+            boundary ? 'boundary-no-invention' : 'unit-evidence',
+          ],
+          boundary_ids:
+            boundary ? ['boundary-no-invention'] : [],
+          relation_ids: [],
+          exception_ids: [],
+          exit: boundary ? 'out-of-scope' : 'completed',
+        };
+      });
+      return {
+        output: { task_results: taskResults },
+        output_digest: sha256Digest(`consumer-output-${consumerRuns}`),
+        run_digest: sha256Digest(`consumer-run-${consumerRuns}`),
+        runner_digest: runnerDigest,
+      };
+    },
+    async runEvaluator({ prompt }) {
+      evaluatorRuns += 1;
+      const input = applicationPromptInput(prompt);
+      return {
+        output: {
+          task_evaluations: input.tasks.map((task) => ({
+            task_id: task.task_id,
+            faithful: true,
+            faithful_reason:
+              'The response follows the frozen expected behavior.',
+            adoption_evidenced: true,
+            adoption_reason:
+              'The response cites the exact judgment or boundary coordinate and uses its semantic choice.',
+            over_application_error: false,
+            dimension_results: Object.fromEntries(
+              input.all_dimensions.map((dimension) => [
+                dimension,
+                task.dimensions.includes(dimension)
+                  ? {
+                      passed: true,
+                      reason:
+                        `${dimension} matches the hidden expected behavior on independent run ${input.repetition}.`,
+                    }
+                  : null,
+              ]),
+            ),
+            reason_codes: ['HIDDEN_ORACLE_MATCH'],
+          })),
+        },
+        output_digest: sha256Digest(`evaluator-output-${evaluatorRuns}`),
+        run_digest: sha256Digest(`evaluator-run-${evaluatorRuns}`),
+        runner_digest: runnerDigest,
+      };
+    },
+    counts() {
+      return { consumerRuns, evaluatorRuns };
+    },
+    ...options,
+  };
 }
 
 function sha256Digest(value) {
@@ -90,33 +231,107 @@ function signedApplicationPlan(
   };
 }
 
-function makeTreeWritable(root) {
-  let stat;
-  try {
-    stat = fs.lstatSync(root);
-  } catch {
-    return;
+function stableStringifyForApplication(value) {
+  if (value === undefined) return 'null';
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
   }
-  if (stat.isDirectory() && !stat.isSymbolicLink()) {
-    fs.chmodSync(root, 0o700);
-    for (const name of fs.readdirSync(root)) {
-      makeTreeWritable(path.join(root, name));
-    }
-  } else if (stat.isFile()) {
-    fs.chmodSync(root, 0o600);
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringifyForApplication).join(',')}]`;
   }
+  return `{${Object.keys(value)
+    .filter((key) => value[key] !== undefined)
+    .sort()
+    .map((key) => (
+      `${JSON.stringify(key)}:${stableStringifyForApplication(value[key])}`
+    ))
+    .join(',')}}`;
 }
 
-function makeTreeReadOnly(root) {
-  const stat = fs.lstatSync(root);
-  if (stat.isDirectory() && !stat.isSymbolicLink()) {
-    for (const name of fs.readdirSync(root).sort()) {
-      makeTreeReadOnly(path.join(root, name));
-    }
-    fs.chmodSync(root, 0o555);
-  } else if (stat.isFile()) {
-    fs.chmodSync(root, 0o444);
-  }
+function applicationConsumerOutputDigest(taskResults) {
+  return sha256Digest(stableStringifyForApplication({
+    schema: 'kdna.studio.application-consumer-output/0.2.0',
+    task_results: taskResults.map((result) => ({
+      task_id: result.task_id,
+      input_digest: result.input_digest,
+      with_kdna: result.with_kdna,
+      without_kdna: result.without_kdna,
+    })),
+  }));
+}
+
+function applicationEvaluatorOutputDigest(taskResults) {
+  return sha256Digest(stableStringifyForApplication({
+    schema: 'kdna.studio.application-evaluator-output/0.2.0',
+    task_evaluations: taskResults.map((result) => ({
+      task_id: result.task_id,
+      input_digest: result.input_digest,
+      evaluation: result.evaluation,
+    })),
+  }));
+}
+
+function applicationTaskResultsForRepetition(
+  plan,
+  taskResults,
+  repetitionIndex,
+) {
+  const selected = repetitionIndex === 1
+    ? taskResults
+    : taskResults.filter((result) => (
+      plan.repetition_policy.task_ids.includes(result.task_id)
+    ));
+  return selected.map((result) => {
+    if (repetitionIndex === 1) return result;
+    return {
+      ...result,
+      with_kdna: {
+        ...result.with_kdna,
+        reason_digest: sha256Digest(
+          `${result.task_id}:repeat:${repetitionIndex}:reason`,
+        ),
+        output_digest: sha256Digest(
+          `${result.task_id}:repeat:${repetitionIndex}:output`,
+        ),
+      },
+      evaluation: {
+        ...result.evaluation,
+        faithful_reason_digest: sha256Digest(
+          `${result.task_id}:repeat:${repetitionIndex}:faithful`,
+        ),
+        dimension_reason_digests: Object.fromEntries(
+          Object.keys(result.evaluation.dimension_reason_digests).map(
+            (dimension) => [
+              dimension,
+              sha256Digest(
+                `${result.task_id}:repeat:${repetitionIndex}:${dimension}`,
+              ),
+            ],
+          ),
+        ),
+      },
+    };
+  });
+}
+
+function scenarioTaskLane(task, { password = false, assetDigest, label }) {
+  const boundaryExit =
+    task.verification_dimensions.includes('boundary') &&
+    task.verification_dimensions.includes('exit');
+  return {
+    direction: boundaryExit ? 'out-of-scope' : 'apply',
+    reason_codes: boundaryExit
+      ? ['DECLARED_BOUNDARY_EXIT']
+      : ['DECLARED_JUDGMENT_APPLIED'],
+    reason_digest: sha256Digest(`${task.id}:${label}:reason`),
+    boundary_ids: task.boundary_ids,
+    relation_ids: [],
+    exception_ids: [],
+    exit: boundaryExit ? 'out-of-scope' : 'completed',
+    authorization_outcome: password ? 'authorized' : 'not-required',
+    output_digest: sha256Digest(`${task.id}:${label}:output`),
+    asset_digest: assetDigest,
+  };
 }
 
 function run(args, options = {}) {
@@ -131,6 +346,79 @@ function run(args, options = {}) {
       ...(options.env || {}),
     },
   });
+}
+
+function runLocalInventory(args, options = {}) {
+  return run(
+    args.includes('--input-stdin') ? args : [...args, '--input-stdin'],
+    {
+      ...options,
+      input: JSON.stringify({
+        processing_policy: LOCAL_PROCESSING_POLICY,
+      }),
+    },
+  );
+}
+
+function runWithPrivateMaterialDelivery(args, options = {}) {
+  return spawnSync(process.execPath, [CLI, ...args], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    input: options.input,
+    stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      KDNA_IDENTITY_DIR:
+        options.identityDir || path.join(options.temporary || os.tmpdir(), 'no-identity'),
+      ...(options.env || {}),
+    },
+  });
+}
+
+function runWithMaterialDescriptor(args, descriptor, options = {}) {
+  return spawnSync(process.execPath, [CLI, ...args], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    input: options.input,
+    stdio: ['pipe', 'pipe', 'pipe', descriptor],
+    env: {
+      ...process.env,
+      KDNA_IDENTITY_DIR:
+        options.identityDir || path.join(options.temporary || os.tmpdir(), 'no-identity'),
+      ...(options.env || {}),
+    },
+  });
+}
+
+function explicitEmptyCreationInput(overrides = {}) {
+  return {
+    mode: 'agent-authored',
+    workflow_mode: 'autonomous',
+    created_by: { type: 'agent', id: 'agent:test-fixture' },
+    access: 'public',
+    material_processing_policy: LOCAL_PROCESSING_POLICY,
+    ...overrides,
+  };
+}
+
+test('Creation CLI source contains no duplicate judgment-accepted result key', () => {
+  const source = fs.readFileSync(
+    path.join(ROOT, 'src', 'creation-cli.js'),
+    'utf8',
+  );
+  assert.doesNotMatch(
+    source,
+    /judgment_accepted:\s*true,\s*judgment_accepted:/,
+  );
+});
+
+function boundedCounterexampleSearch() {
+  return {
+    scope: 'The declared application scope and its explicit boundary.',
+    method: 'Review one applicable case and one bounded counterexample.',
+    result: 'found',
+    uncertainty: 'Unseen contexts outside the declared scope remain unevaluated.',
+  };
 }
 
 function currentCorePreload(temporary) {
@@ -180,186 +468,15 @@ function currentCorePreload(temporary) {
 }
 
 function creationEngineForTest() {
+  const sibling = path.resolve(
+    ROOT,
+    '../kdna-studio-core/src/creation-engine',
+  );
+  if (fs.existsSync(`${sibling}.js`) || fs.existsSync(sibling)) {
+    return require(sibling);
+  }
   return require('@aikdna/kdna-studio-core').creationEngine;
 }
-
-function syntheticDevelopmentBaseline() {
-  const digest = (character) => `sha256:${character.repeat(64)}`;
-  const binding = (repository, packageName, version, character) => ({
-    bom_repository: repository,
-    package: packageName,
-    version,
-    base_commit: character.repeat(40),
-    base_tree: character.repeat(40),
-    dirty_source_digest: digest(character),
-    source_input_digest: digest(character),
-    candidate_artifact_digest: digest(character),
-  });
-  return {
-    schema: 'aikdna.creation-build-baseline/0.1.0',
-    bom_schema: 'aikdna.creation-engine.wp0-development-bom/1.0',
-    bom_semantic_digest: digest('a'),
-    bom_file_digest: digest('b'),
-    tools: {
-      studio_cli: binding(
-        'kdna-studio-cli',
-        '@aikdna/kdna-studio-cli',
-        '0.11.0',
-        'c',
-      ),
-      studio_core: binding(
-        'kdna-studio-core',
-        '@aikdna/kdna-studio-core',
-        '3.0.0',
-        'd',
-      ),
-      core: binding('kdna', '@aikdna/kdna-core', '0.21.0', 'e'),
-    },
-  };
-}
-
-test('candidate runtime coordinate is auto-discovered from the installed layout and cannot come from command input', (t) => {
-  const temporary = temporaryDirectory();
-  t.after(() => {
-    makeTreeWritable(temporary);
-    fs.rmSync(temporary, { recursive: true, force: true });
-  });
-  const runtimeRoot = path.join(temporary, 'runtime');
-  const packageRoot = path.join(runtimeRoot, 'package');
-  const entrypoint = path.join(packageRoot, 'bin', 'kdna-studio.js');
-  const runtimeSource = path.join(packageRoot, 'src', 'creation-cli.js');
-  fs.mkdirSync(path.dirname(entrypoint), { recursive: true });
-  fs.mkdirSync(path.dirname(runtimeSource), { recursive: true });
-  fs.writeFileSync(entrypoint, '#!/usr/bin/env node\n');
-  fs.writeFileSync(runtimeSource, 'module.exports = {};\n');
-  const stable = (value) => {
-    if (value === null || typeof value !== 'object') return JSON.stringify(value);
-    if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
-    return `{${Object.keys(value)
-      .filter((key) => value[key] !== undefined)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${stable(value[key])}`)
-      .join(',')}}`;
-  };
-  const digest = (bytes) =>
-    `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
-  const receipt = {
-    schema: 'aikdna.creation-engine.wp0-candidate-runtime/1.0',
-    evidence_class: 'IMMUTABLE_WP0_CANDIDATE_ARTIFACT_RUNTIME',
-    release_authorized: false,
-    development_baseline: syntheticDevelopmentBaseline(),
-    runtime_tree_sha256: null,
-    receipt_sha256: null,
-  };
-  const receiptPath = path.join(runtimeRoot, 'wp0-runtime-receipt.json');
-  fs.writeFileSync(receiptPath, '{}\n');
-  makeTreeReadOnly(runtimeRoot);
-  const treeDigest = () => {
-    const entries = [];
-    const visit = (relative = '') => {
-      const target = relative ? path.join(runtimeRoot, relative) : runtimeRoot;
-      const stat = fs.lstatSync(target);
-      if (stat.isDirectory()) {
-        entries.push({
-          path: relative || '.',
-          type: 'directory',
-          mode: stat.mode & 0o777,
-        });
-        for (const name of fs.readdirSync(target).sort()) {
-          visit(path.join(relative, name));
-        }
-      } else {
-        const bytes = fs.readFileSync(target);
-        entries.push({
-          path: relative,
-          type: 'file',
-          mode: stat.mode & 0o777,
-          size: bytes.length,
-          sha256: digest(bytes),
-        });
-      }
-    };
-    visit();
-    return digest(
-      Buffer.from(
-        stable(
-          entries.filter(
-            (entry) => entry.path !== 'wp0-runtime-receipt.json',
-          ),
-        ),
-      ),
-    );
-  };
-  receipt.runtime_tree_sha256 = treeDigest();
-  const unsigned = { ...receipt };
-  delete unsigned.receipt_sha256;
-  receipt.receipt_sha256 = digest(Buffer.from(stable(unsigned)));
-  fs.chmodSync(receiptPath, 0o600);
-  fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
-  fs.chmodSync(receiptPath, 0o444);
-
-  const coordinate = candidateRuntimeCoordinate(packageRoot);
-  assert.deepEqual(coordinate, {
-    schema: 'aikdna.creation-build-runtime/0.1.0',
-    evidence_class: 'IMMUTABLE_WP0_CANDIDATE_ARTIFACT_RUNTIME',
-    candidate_runtime_receipt_sha256: receipt.receipt_sha256,
-    candidate_runtime_tree_sha256: receipt.runtime_tree_sha256,
-    cli_entrypoint_sha256: digest(fs.readFileSync(entrypoint)),
-    bom_semantic_digest:
-      receipt.development_baseline.bom_semantic_digest,
-    bom_file_digest: receipt.development_baseline.bom_file_digest,
-  });
-  assert.equal(candidateRuntimeCoordinate(ROOT), null);
-  assert.deepEqual(
-    candidateRuntimeAuthority(packageRoot).development_baseline,
-    receipt.development_baseline,
-  );
-
-  const exactReceipt = fs.readFileSync(receiptPath);
-  receipt.runtime_tree_sha256 = `sha256:${'4'.repeat(64)}`;
-  fs.chmodSync(receiptPath, 0o600);
-  fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
-  fs.chmodSync(receiptPath, 0o444);
-  assert.throws(
-    () => candidateRuntimeCoordinate(packageRoot),
-    /failed self-validation/,
-  );
-  fs.chmodSync(receiptPath, 0o600);
-  fs.writeFileSync(receiptPath, exactReceipt);
-  fs.chmodSync(receiptPath, 0o444);
-
-  fs.chmodSync(runtimeSource, 0o600);
-  fs.appendFileSync(runtimeSource, '// hostile adjacent-tree drift\n');
-  fs.chmodSync(runtimeSource, 0o444);
-  assert.throws(
-    () => candidateRuntimeCoordinate(packageRoot),
-    /runtime tree failed exact verification/,
-  );
-
-  const recastReceipt = JSON.parse(exactReceipt.toString('utf8'));
-  recastReceipt.runtime_tree_sha256 = treeDigest();
-  recastReceipt.receipt_sha256 = null;
-  const recastUnsigned = { ...recastReceipt };
-  delete recastUnsigned.receipt_sha256;
-  recastReceipt.receipt_sha256 = digest(
-    Buffer.from(stable(recastUnsigned)),
-  );
-  fs.chmodSync(receiptPath, 0o600);
-  fs.writeFileSync(
-    receiptPath,
-    `${JSON.stringify(recastReceipt, null, 2)}\n`,
-  );
-  fs.chmodSync(receiptPath, 0o444);
-  const recastCoordinate = candidateRuntimeCoordinate(packageRoot);
-  assert.notEqual(
-    recastCoordinate.candidate_runtime_receipt_sha256,
-    coordinate.candidate_runtime_receipt_sha256,
-  );
-  assert.notEqual(
-    recastCoordinate.candidate_runtime_tree_sha256,
-    coordinate.candidate_runtime_tree_sha256,
-  );
-});
 
 function prepareAcceptedWorkspace(
   temporary,
@@ -367,9 +484,15 @@ function prepareAcceptedWorkspace(
   options = {},
 ) {
   const actor = { type: 'agent', id: 'agent:test' };
+  const evaluator = {
+    type: 'agent',
+    id: 'agent:independent-evaluator',
+    authority: 'independent-agent-evaluator',
+  };
   const creationInput = {
     name: '@test/accepted-creation',
     mode: 'agent-authored',
+    workflow_mode: 'autonomous',
     created_by: actor,
     access: options.access || 'public',
     purpose: {
@@ -411,6 +534,7 @@ function prepareAcceptedWorkspace(
         contrary_evidence: [
           'A high-level frame can be useful when it is explicitly provisional.',
         ],
+        counterexample_search: boundedCounterexampleSearch(),
         source_refs: ['source-notes'],
         confidence: {
           status: 'high',
@@ -473,24 +597,40 @@ function prepareAcceptedWorkspace(
             boundary_ids: ['boundary-no-invention'],
           },
         ],
+        test_plan: {
+          id: 'semantic-plan-evidence',
+          actor: evaluator,
+          statement:
+            'The applicable, counterexample, and boundary tasks were frozen before evaluation.',
+        },
+      }),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  result = run(
+    ['try', workspacePath, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify({
+        expected_revision: reviewedRevision,
         test_results: [
           {
             test_id: 'test-applicable',
             result: 'pass',
-            evaluated_by: actor,
+            evaluated_by: evaluator,
           },
           {
             test_id: 'test-counterexample',
             result: 'pass',
-            evaluated_by: actor,
+            evaluated_by: evaluator,
           },
           {
             test_id: 'test-boundary',
             result: 'pass',
-            evaluated_by: actor,
+            evaluated_by: evaluator,
             acceptance: {
               accepted: true,
-              actor,
+              actor: evaluator,
               statement:
                 'I accept the current semantic examples for this Agent-authored asset.',
             },
@@ -501,7 +641,288 @@ function prepareAcceptedWorkspace(
   );
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
   const tried = JSON.parse(result.stdout);
-  assert.equal(tried.readiness.creation_accepted, true);
+  assert.equal(tried.readiness.judgment_accepted, true);
+}
+
+function prepareApplicationVerifiedWorkspace(
+  temporary,
+  workspacePath,
+  options = {},
+) {
+  const access = options.access || 'public';
+  const password = options.password || null;
+  prepareAcceptedWorkspace(temporary, workspacePath, { access });
+  const candidateArgs = [
+    'export-agent',
+    workspacePath,
+    '--operation-id',
+    options.operationId || 'candidate:verified-fixture',
+    ...(password ? ['--password-stdin'] : []),
+    '--json',
+  ];
+  const candidateResult = run(candidateArgs, {
+    temporary,
+    ...(password ? { input: `${password}\n` } : {}),
+  });
+  assert.equal(
+    candidateResult.status,
+    0,
+    `${candidateResult.stderr}\n${candidateResult.stdout}`,
+  );
+
+  const engine = creationEngineForTest();
+  let workspace = engine.loadWorkspace(workspacePath);
+  const managed = engine.readManagedCandidate(workspacePath, workspace);
+  const creationKeys = applicationSigningIdentity('agent:test');
+  const coordinatorKeys =
+    applicationSigningIdentity('agent:fixture-coordinator');
+  const consumerKeys =
+    applicationSigningIdentity('agent:fixture-consumer');
+  const evaluatorKeys =
+    applicationSigningIdentity('agent:fixture-evaluator');
+  const planInput = signedApplicationPlan(
+    engine,
+    workspacePath,
+    {
+      id: 'application-plan-fixture',
+      verification_contract: 'application-adoption-fidelity',
+      evidence_set: 'fresh-hidden-holdout',
+      response_mode: 'free-response',
+      frozen_by: {
+        type: 'agent',
+        id: coordinatorKeys.identity.id,
+      },
+      statement:
+        'Freeze a low-risk exact-asset fidelity and boundary fixture.',
+      creation_identity: creationKeys.identity,
+      coordinator_identity: coordinatorKeys.identity,
+      evaluation_oracle_digest:
+        sha256Digest('fixture-private-oracle'),
+      consumer_identity: consumerKeys.identity,
+      evaluator_identity: evaluatorKeys.identity,
+      build_receipt_digest:
+        engine.canonicalBuildReceiptDigest(workspace.buildReceipt),
+      asset_digest: workspace.buildReceipt.asset_digest,
+      repetition_policy: {
+        claim: 'stability',
+        repetitions: 3,
+        task_ids: ['fixture-task-boundary'],
+      },
+      risk_profile: {
+        classification: 'low',
+        external_actions: false,
+        permission_sensitive: false,
+        rationale_digest:
+          sha256Digest('fixture-low-risk-profile'),
+      },
+      tasks: [
+        {
+          id: 'fixture-task-applicable',
+          input_digest: sha256Digest('fixture applicable input'),
+          risk_level: 'normal',
+          unit_ids: ['unit-evidence'],
+          boundary_ids: [],
+          semantic_test_id: null,
+          perturbation_group: null,
+          execution_mode: 'with-only',
+          fork_id: 'fixture-applicable-fork',
+          verification_dimensions: ['direction', 'scope'],
+        },
+        {
+          id: 'fixture-task-boundary',
+          input_digest: sha256Digest('fixture boundary input'),
+          risk_level: 'normal',
+          unit_ids: ['unit-evidence'],
+          boundary_ids: ['boundary-no-invention'],
+          semantic_test_id: null,
+          perturbation_group: 'fixture-boundary-perturbations',
+          execution_mode: 'with-only',
+          fork_id: 'fixture-boundary-fork',
+          verification_dimensions: ['boundary', 'exit', 'stability'],
+        },
+      ],
+      thresholds: {
+        stability_rate_min: 0.9,
+        critical_safety_errors_max: 0,
+        permission_violations_max: 0,
+        external_action_violations_max: 0,
+        overapplication_failures_max: 0,
+        direction_failures_max: 0,
+        scope_failures_max: 0,
+        boundary_failures_max: 0,
+        exception_failures_max: 0,
+        priority_failures_max: 0,
+        authority_precedence_failures_max: 0,
+        exit_failures_max: 0,
+        fidelity_failures_max: 0,
+      },
+    },
+    creationKeys,
+    coordinatorKeys,
+  );
+  workspace = engine.freezeApplicationTestPlan(workspace, planInput);
+  workspace = engine.issueApplicationAttempt(
+    workspace,
+    {
+      id: 'application-attempt-fixture',
+      requested_by: {
+        type: 'agent',
+        id: coordinatorKeys.identity.id,
+      },
+    },
+    {
+      asset_bytes: managed.bytes,
+      ...(password ? { password } : {}),
+    },
+  );
+  const attempt = workspace.applicationVerification.attempts.at(-1);
+  workspace = engine.recordApplicationAssetObservation(
+    workspace,
+    {
+      id: 'application-observation-fixture',
+      observed_by: {
+        type: 'agent',
+        id: consumerKeys.identity.id,
+      },
+      attempt_id: attempt.id,
+      attempt_digest: attempt.attempt_digest,
+      challenge_digest: attempt.challenge_digest,
+      consumer_run_digest: sha256Digest('fixture-consumer-run'),
+      runner_digest: sha256Digest('fixture-consumer-runner'),
+    },
+    {
+      asset_bytes: managed.bytes,
+      ...(password ? { password } : {}),
+    },
+  );
+  const plan = workspace.applicationVerification.plans.at(-1);
+  const observation =
+    workspace.applicationVerification.observations.at(-1);
+  const taskResults = plan.tasks.map((task) => ({
+    task_id: task.id,
+    input_digest: task.input_digest,
+    with_kdna: scenarioTaskLane(task, {
+      password,
+      assetDigest: managed.asset_digest,
+      label: 'fixture',
+    }),
+    without_kdna: null,
+    evaluation: {
+      faithful: true,
+      direction_correct:
+        task.verification_dimensions.includes('direction') ? true : null,
+      scope_correct:
+        task.verification_dimensions.includes('scope') ? true : null,
+      boundary_correct:
+        task.verification_dimensions.includes('boundary') ? true : null,
+      exception_correct: null,
+      priority_correct: null,
+      authority_precedence_correct: null,
+      exit_correct:
+        task.verification_dimensions.includes('exit') ? true : null,
+      critical_safety_error: null,
+      permission_violation: null,
+      external_action_violation: null,
+      over_application_error: false,
+      causal_difference: 'not-evaluated',
+      faithful_reason_digest:
+        sha256Digest(`${task.id}:fixture:faithful`),
+      dimension_reason_digests: Object.fromEntries(
+        task.verification_dimensions
+          .filter((dimension) => dimension !== 'stability')
+          .map((dimension) => [
+          dimension,
+          sha256Digest(`${task.id}:fixture:${dimension}`),
+        ]),
+      ),
+      reason_codes: ['ORACLE_MATCH'],
+    },
+  }));
+  const repetitions = Array.from({ length: 3 }, (_, offset) => {
+    const index = offset + 1;
+    const currentTaskResults = applicationTaskResultsForRepetition(
+      plan,
+      taskResults,
+      index,
+    );
+    return {
+      index,
+      consumer_run_digest: index === 1
+        ? observation.consumer_run_digest
+        : sha256Digest(`fixture-consumer-run-${index}`),
+      consumer_runner_digest: index === 1
+        ? observation.runner_digest
+        : sha256Digest(`fixture-consumer-runner-${index}`),
+      evaluator_run_digest:
+        sha256Digest(`fixture-evaluator-run-${index}`),
+      evaluator_runner_digest:
+        sha256Digest(`fixture-evaluator-runner-${index}`),
+      consumer_output_digest:
+        applicationConsumerOutputDigest(currentTaskResults),
+      evaluator_output_digest:
+        applicationEvaluatorOutputDigest(currentTaskResults),
+      task_results: currentTaskResults,
+    };
+  });
+  const receiptBase = {
+    id: 'application-receipt-fixture',
+    attempt_id: attempt.id,
+    attempt_digest: attempt.attempt_digest,
+    challenge_digest: attempt.challenge_digest,
+    plan_id: plan.id,
+    plan_digest: plan.plan_digest,
+    semantic_revision: workspace.state.semantic_revision,
+    semantic_digest: workspace.state.semantic_digest,
+    judgment_evidence_digest:
+      engine.canonicalJudgmentEvidenceDigest(workspace),
+    build_receipt_digest:
+      engine.canonicalBuildReceiptDigest(workspace.buildReceipt),
+    asset_digest: managed.asset_digest,
+    asset_load_receipt_digest: attempt.asset_load_receipt_digest,
+    consumer_asset_observation_id: observation.id,
+    consumer_asset_observation_digest:
+      observation.observation_digest,
+    consumer_asset_load_receipt_digest:
+      observation.asset_load_receipt_digest,
+    consumer: { type: 'agent', id: consumerKeys.identity.id },
+    evaluated_by: { type: 'agent', id: evaluatorKeys.identity.id },
+    repetitions,
+  };
+  const consumerPayload =
+    engine.applicationConsumerSigningPayload(receiptBase);
+  const receipt = {
+    ...receiptBase,
+    consumer_signature: crypto.sign(
+      null,
+      consumerPayload,
+      consumerKeys.privateKey,
+    ).toString('base64'),
+    evaluator_signature: crypto.sign(
+      null,
+      engine.applicationEvaluatorSigningPayload({
+        ...receiptBase,
+        consumer_execution_digest: sha256Digest(consumerPayload),
+      }),
+      evaluatorKeys.privateKey,
+    ).toString('base64'),
+  };
+  workspace = engine.recordApplicationReceipt(workspace, receipt);
+  workspace = engine.saveWorkspace(
+    workspacePath,
+    workspace,
+    { managedCandidateBytes: managed.bytes },
+  );
+  assert.equal(
+    engine.assessReadiness(workspace)
+      .completion_gates.creation_complete,
+    true,
+  );
+  return {
+    engine,
+    workspace,
+    candidateBytes: managed.bytes,
+    password,
+  };
 }
 
 function createDerivationWorkspace(
@@ -527,7 +948,9 @@ function createDerivationWorkspace(
       input: JSON.stringify({
         name: '@test/derived-creation',
         mode: sourceAsset ? 'interpretive' : 'agent-authored',
+        workflow_mode: 'autonomous',
         created_by: { type: 'agent', id: agentId },
+        access: 'public',
         purpose: {
           objective: 'Derive a reviewed update from an existing KDNA asset',
           scope: 'Editorial evidence review',
@@ -562,14 +985,17 @@ test('default help leads with Agent creation while retaining expert authoring', 
   const result = run(['--help']);
   assert.equal(result.status, 0, result.stderr);
   for (const command of [
+    'guide-agent',
     'create-agent',
     'resume',
     'status',
     'answer',
     'review',
     'try',
+    'verify-application-agent',
     'repair',
     'export-agent',
+    'finalize-agent',
   ]) {
     assert.match(result.stdout, new RegExp(`kdna-studio ${command}`));
   }
@@ -577,12 +1003,106 @@ test('default help leads with Agent creation while retaining expert authoring', 
   assert.match(result.stdout, /kdna-studio card add/);
 });
 
+test('public Agent guide exposes stable create input without source inspection', () => {
+  const result = run([
+    'guide-agent',
+    '--action',
+    'create',
+    '--json',
+  ]);
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  const guide = JSON.parse(result.stdout);
+  assert.equal(guide.document_type, 'kdna.creation-agent-guide');
+  assert.equal(guide.action, 'create');
+  assert.equal(
+    guide.input_contract.template.purpose.highest_question,
+    undefined,
+  );
+  assert.deepEqual(
+    guide.host_owned_fields,
+    ['created_by.id', 'operation_id', 'workspace path'],
+  );
+  assert.match(
+    guide.notes.join('\n'),
+    /do not ask the user to choose an enum or technical identifier/i,
+  );
+});
+
+test('public inventory guide returns a normalized approval attachment', (t) => {
+  const guideResult = run([
+    'guide-agent',
+    '--action',
+    'inventory',
+    '--json',
+  ]);
+  assert.equal(
+    guideResult.status,
+    0,
+    `${guideResult.stderr}\n${guideResult.stdout}`,
+  );
+  const guide = JSON.parse(guideResult.stdout);
+  assert.equal(guide.action, 'inventory');
+  assert.deepEqual(
+    guide.input_contract.required,
+    ['processing_policy'],
+  );
+
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const source = path.join(temporary, 'source.md');
+  fs.writeFileSync(source, 'An explicitly authorized source.');
+  const result = run(
+    ['inventory-agent', source, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify({
+        processing_policy: {
+          destination: 'named-remote-processor',
+          processor: 'test-remote-host',
+          assurance: 'host-declared',
+        },
+      }),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  const inventory = JSON.parse(result.stdout);
+  assert.equal(inventory.next_action.requires_user, false);
+  assert.equal(
+    inventory.next_action.machine_input_attachment
+      .material_inventory_approval.inventory_digest,
+    inventory.approved_inventory_digest,
+  );
+  assert.deepEqual(
+    inventory.next_action.machine_input_attachment
+      .material_inventory_approval.processing_policy,
+    inventory.processing_policy,
+  );
+});
+
+test('finalize-agent names its own missing operation receipt', () => {
+  assert.throws(
+    () => finalizeAgentWorkspace(
+      {},
+      '/tmp/not-read',
+      {},
+      [],
+      {},
+      null,
+    ),
+    (error) =>
+      error.code === 'operation_id_required' &&
+      /finalize-agent requires a private operation receipt/.test(
+        error.message,
+      ) &&
+      !/export-agent requires/.test(error.message),
+  );
+});
+
 test('stable creation summary uses the user-facing vocabulary', () => {
   const engine = {
     assessReadiness() {
       return {
-        format_ready: false,
-        creation_accepted: false,
+        judgment_accepted: false,
         blocking: ['judgment_missing'],
         warnings: [],
       };
@@ -600,7 +1120,8 @@ test('stable creation summary uses the user-facing vocabulary', () => {
   const workspace = {
     root: 'creation',
     state: {
-      mode: 'human-assisted',
+      mode: 'agent-authored',
+      workflow_mode: 'collaborative',
       status: 'reviewing',
       semantic_revision: 2,
       semantic_digest: 'private-gate-binding',
@@ -642,6 +1163,9 @@ test('stable creation summary uses the user-facing vocabulary', () => {
       'workspace',
       'purpose',
       'materials',
+      'material_inventories',
+      'source_deliveries',
+      'import_mappings',
       'judgments',
       'candidate_reviews',
       'boundaries',
@@ -656,6 +1180,7 @@ test('stable creation summary uses the user-facing vocabulary', () => {
       'application_receipts',
       'interview_answers',
       'incomplete_operations',
+      'operations',
       'confirmations',
       'readiness',
       'next_action',
@@ -675,11 +1200,13 @@ test('create-agent saves an eleven-artifact workspace and status resumes it', (t
     operation_id: 'create:agent-creation',
     name: '@test/agent-creation',
     mode: 'agent-authored',
+    workflow_mode: 'autonomous',
     created_by: {
       type: 'agent',
       id: 'agent:test',
       name: 'Test Agent',
     },
+    access: 'public',
     purpose: {
       objective: 'Review arguments for evidential strength',
       scope: 'Long-form editorial review',
@@ -703,6 +1230,18 @@ test('create-agent saves an eleven-artifact workspace and status resumes it', (t
   assert.equal(created.purpose.objective, input.purpose.objective);
   assert.equal(created.next_action.action, 'add_candidate');
   assert.equal(fs.readdirSync(workspace).length, 11);
+  result = run(['guide-agent', workspace, '--json'], { temporary });
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  const guide = JSON.parse(result.stdout);
+  assert.equal(guide.next_action.action, 'add_candidate');
+  assert.equal(
+    guide.input_contract.template.expected_revision,
+    created.workspace.revision,
+  );
+  assert.deepEqual(
+    guide.input_contract.template.candidates[0].source_refs,
+    ['agent-inference:agent:test'],
+  );
 
   const creationHistoryLength =
     creationEngineForTest().loadWorkspace(workspace).history.length;
@@ -736,6 +1275,9 @@ test('create-agent saves an eleven-artifact workspace and status resumes it', (t
   const status = JSON.parse(result.stdout);
   assert.equal(status.workspace.path, workspace);
   assert.equal(status.workspace.mode, 'agent-authored');
+  assert.equal(status.operations.length, 1);
+  assert.equal(status.operations[0].command, 'create-agent');
+  assert.equal(status.operations[0].status, 'completed');
   assert.match(
     status.readiness.completion_gates.semantic_digest,
     /^sha256:[0-9a-f]{64}$/,
@@ -751,8 +1293,10 @@ test('answer persists natural-language stdin for a later Agent process', (t) => 
     {
       temporary,
       input: JSON.stringify({
-        mode: 'human-assisted',
+        mode: 'agent-authored',
+        workflow_mode: 'collaborative',
         created_by: { type: 'agent', id: 'agent:first' },
+        access: 'public',
         purpose: {
           objective: 'Choose one content topic worth drafting',
           scope: 'Personal short-form topic selection',
@@ -773,6 +1317,15 @@ test('answer persists natural-language stdin for a later Agent process', (t) => 
 
   const naturalLanguage =
     'I reject broad themes; show one recognizable audience situation first.';
+  const answeredRevision =
+    creationEngineForTest().loadWorkspace(workspace).state.semantic_revision;
+  const structuredAnswer = {
+    expected_revision: answeredRevision,
+    question: 'Which idea deserves a first draft?',
+    answer: naturalLanguage,
+    actor: { type: 'agent', id: 'agent:first' },
+    subject: { type: 'agent', id: 'agent:first' },
+  };
   result = run(
     [
       'answer',
@@ -782,14 +1335,15 @@ test('answer persists natural-language stdin for a later Agent process', (t) => 
       'answer:creator-clarification',
       '--json',
     ],
-    { temporary, input: naturalLanguage },
+    { temporary, input: JSON.stringify(structuredAnswer) },
   );
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
 
   let persisted = creationEngineForTest().loadWorkspace(workspace);
   assert.equal(persisted.interviewAnswers.length, 1);
   assert.equal(persisted.interviewAnswers[0].answer, naturalLanguage);
-  assert.equal(persisted.interviewAnswers[0].by, 'user');
+  assert.equal(persisted.interviewAnswers[0].actor.id, 'agent:first');
+  assert.equal(persisted.interviewAnswers[0].subject.id, 'agent:first');
   assert.ok(persisted.interviewAnswers[0].question);
 
   const historyLength = persisted.history.length;
@@ -802,7 +1356,7 @@ test('answer persists natural-language stdin for a later Agent process', (t) => 
       'answer:creator-clarification',
       '--json',
     ],
-    { temporary, input: naturalLanguage },
+    { temporary, input: JSON.stringify(structuredAnswer) },
   );
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
   persisted = creationEngineForTest().loadWorkspace(workspace);
@@ -818,7 +1372,13 @@ test('answer persists natural-language stdin for a later Agent process', (t) => 
       'answer:creator-clarification',
       '--json',
     ],
-    { temporary, input: 'A different answer under the same operation ID.' },
+    {
+      temporary,
+      input: JSON.stringify({
+        ...structuredAnswer,
+        answer: 'A different answer under the same operation ID.',
+      }),
+    },
   );
   assert.equal(result.status, 4);
   assert.equal(JSON.parse(result.stdout).error.code, 'operation_id_conflict');
@@ -829,7 +1389,8 @@ test('answer persists natural-language stdin for a later Agent process', (t) => 
   assert.equal(handoff.workspace.path, workspace);
   assert.equal(handoff.interview_answers.length, 1);
   assert.equal(handoff.interview_answers[0].answer, naturalLanguage);
-  assert.equal(handoff.interview_answers[0].by, 'user');
+  assert.equal(handoff.interview_answers[0].actor.id, 'agent:first');
+  assert.equal(handoff.interview_answers[0].subject.id, 'agent:first');
   assert.equal(handoff.incomplete_operations.length, 0);
 });
 
@@ -843,7 +1404,9 @@ test('review reclassifies an ingested source with a replay-safe private receipt'
       temporary,
       input: JSON.stringify({
         mode: 'interpretive',
+        workflow_mode: 'autonomous',
         created_by: { type: 'agent', id: 'agent:source-review' },
+        access: 'public',
         purpose: {
           objective: 'Interpret one bounded source judgment',
           scope: 'Editorial evidence review',
@@ -937,6 +1500,35 @@ test('review reclassifies an ingested source with a replay-safe private receipt'
     {
       temporary,
       input: JSON.stringify({
+        operation_id: 'review:source-sensitivity-escalation',
+        material_decisions: [{
+          id: 'source-unclassified',
+          reviewed_by: { type: 'agent', id: 'agent:source-review' },
+          review_reason:
+            'A later private review identifies sensitive source content.',
+          changes: {
+            sensitivity: 'sensitive',
+            in_scope: false,
+          },
+        }],
+      }),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  reviewed = JSON.parse(result.stdout);
+  assert.equal(reviewed.materials[0].sensitivity, 'sensitive');
+  assert.equal(reviewed.materials[0].in_scope, false);
+  assert.ok(
+    reviewed.materials[0].review_receipts.at(-1).changed_fields.includes(
+      'sensitivity',
+    ),
+  );
+
+  result = run(
+    ['review', workspace, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify({
         operation_id: 'review:immutable-source-bytes',
         material_decisions: [{
           id: 'source-unclassified',
@@ -958,8 +1550,11 @@ test('resume, review, try, repair, and export operations replay exactly and reje
 
   const resumeWorkspace = path.join(temporary, 'resume-creation');
   let result = run(
-    ['create-agent', resumeWorkspace, '--json'],
-    { temporary },
+    ['create-agent', resumeWorkspace, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify(explicitEmptyCreationInput()),
+    },
   );
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
   const material = path.join(temporary, 'resume-source.md');
@@ -971,27 +1566,53 @@ test('resume, review, try, repair, and export operations replay exactly and reje
     material,
     '--operation-id',
     'resume:material-one',
+    '--input-stdin',
     '--json',
   ];
-  result = run(resumeArgs, { temporary });
+  const resumeInput = JSON.stringify({
+    material_processing_policy: LOCAL_PROCESSING_POLICY,
+  });
+  result = run(resumeArgs, { temporary, input: resumeInput });
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
   let persisted = creationEngineForTest().loadWorkspace(resumeWorkspace);
   const resumeHistoryLength = persisted.history.length;
   assert.equal(persisted.materials.length, 1);
-  result = run(resumeArgs, { temporary });
+  result = run(resumeArgs, { temporary, input: resumeInput });
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
   persisted = creationEngineForTest().loadWorkspace(resumeWorkspace);
   assert.equal(persisted.materials.length, 1);
   assert.equal(persisted.history.length, resumeHistoryLength);
   fs.writeFileSync(material, 'Changed bytes under the same operation ID.');
-  result = run(resumeArgs, { temporary });
-  assert.equal(result.status, 4);
+  result = run(resumeArgs, { temporary, input: resumeInput });
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  persisted = creationEngineForTest().loadWorkspace(resumeWorkspace);
+  assert.equal(persisted.materials.length, 1);
+  assert.equal(persisted.history.length, resumeHistoryLength);
+
+  const differentMaterial = path.join(temporary, 'different-source.md');
+  fs.writeFileSync(differentMaterial, 'A different invocation coordinate.');
+  result = run(
+    [
+      'resume',
+      resumeWorkspace,
+      '--material',
+      differentMaterial,
+      '--operation-id',
+      'resume:material-one',
+      '--input-stdin',
+      '--json',
+    ],
+    { temporary, input: resumeInput },
+  );
+  assert.equal(result.status, 4, `${result.stderr}\n${result.stdout}`);
   assert.equal(JSON.parse(result.stdout).error.code, 'operation_id_conflict');
 
   const reviewWorkspace = path.join(temporary, 'review-creation');
   const reviewCreationInput = {
     mode: 'agent-authored',
+    workflow_mode: 'autonomous',
     created_by: { type: 'agent', id: 'agent:review-idempotency' },
+    access: 'public',
     purpose: {
       objective: 'Choose a bounded editorial judgment',
       scope: 'Editorial review',
@@ -1013,6 +1634,7 @@ test('resume, review, try, repair, and export operations replay exactly and reje
         contrary_evidence: [
           'Formatting-only work does not require an evidential judgment.',
         ],
+        counterexample_search: boundedCounterexampleSearch(),
         agent_inference: true,
         confidence: { status: 'high', reason: 'Explicit synthetic test input.' },
         card_type: 'axiom',
@@ -1075,22 +1697,17 @@ test('resume, review, try, repair, and export operations replay exactly and reje
   const status = JSON.parse(
     run(['status', acceptedWorkspace, '--json'], { temporary }).stdout,
   );
-  const actor = { type: 'agent', id: 'agent:test' };
+  const actor = {
+    type: 'agent',
+    id: 'agent:comparison-evaluator',
+    authority: 'independent-agent-evaluator',
+  };
   const tryInput = {
     operation_id: 'try:comparison-one',
     expected_revision: status.workspace.revision,
-    tests: [
-      {
-        id: 'test-idempotent-comparison',
-        kind: 'comparison',
-        input: 'Compare a broad claim with and without source evidence.',
-        expected: 'Prefer the source-grounded claim.',
-        unit_ids: ['unit-evidence'],
-      },
-    ],
     test_results: [
       {
-        test_id: 'test-idempotent-comparison',
+        test_id: 'test-applicable',
         result: 'pass',
         evaluated_by: actor,
         acceptance: {
@@ -1117,7 +1734,7 @@ test('resume, review, try, repair, and export operations replay exactly and reje
   persisted = creationEngineForTest().loadWorkspace(acceptedWorkspace);
   assert.equal(
     persisted.semanticTestReport.cases.filter(
-      (testCase) => testCase.id === 'test-idempotent-comparison',
+      (testCase) => testCase.id === 'test-applicable',
     ).length,
     1,
   );
@@ -1126,10 +1743,10 @@ test('resume, review, try, repair, and export operations replay exactly and reje
     temporary,
     input: JSON.stringify({
       ...tryInput,
-      tests: [
+      test_results: [
         {
-          ...tryInput.tests[0],
-          expected: 'A conflicting expectation under the same operation ID.',
+          ...tryInput.test_results[0],
+          notes: 'A conflicting evaluation under the same operation ID.',
         },
       ],
     }),
@@ -1168,24 +1785,31 @@ test('resume, review, try, repair, and export operations replay exactly and reje
   assert.equal(result.status, 4);
   assert.equal(JSON.parse(result.stdout).error.code, 'operation_id_conflict');
 
-  const output = path.join(temporary, 'idempotent-export.kdna');
   const exportArgs = [
     'export-agent',
     acceptedWorkspace,
-    '--out',
-    output,
     '--operation-id',
     'export:accepted-one',
     '--json',
   ];
   result = run(exportArgs, { temporary });
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
-  const originalAsset = fs.readFileSync(output);
   persisted = creationEngineForTest().loadWorkspace(acceptedWorkspace);
+  const originalAsset =
+    creationEngineForTest().readManagedCandidate(
+      acceptedWorkspace,
+      persisted,
+    ).bytes;
   const exportHistoryLength = persisted.history.length;
   result = run(exportArgs, { temporary });
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
-  assert.deepEqual(fs.readFileSync(output), originalAsset);
+  assert.deepEqual(
+    creationEngineForTest().readManagedCandidate(
+      acceptedWorkspace,
+      creationEngineForTest().loadWorkspace(acceptedWorkspace),
+    ).bytes,
+    originalAsset,
+  );
   assert.equal(
     creationEngineForTest().loadWorkspace(acceptedWorkspace).history.length,
     exportHistoryLength,
@@ -1202,11 +1826,14 @@ test('resume, review, try, repair, and export operations replay exactly and reje
     ],
     { temporary },
   );
-  assert.equal(result.status, 4);
-  assert.equal(JSON.parse(result.stdout).error.code, 'operation_id_conflict');
+  assert.equal(result.status, 2);
+  assert.equal(
+    JSON.parse(result.stdout).error.code,
+    'candidate_output_forbidden',
+  );
 });
 
-test('material symlinks fail with a stable input error', (t) => {
+test('material symlinks are reported and never followed', (t) => {
   const temporary = temporaryDirectory();
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
   const material = path.join(temporary, 'notes.txt');
@@ -1219,12 +1846,20 @@ test('material symlinks fail with a stable input error', (t) => {
     path.join(temporary, 'creation'),
     '--material',
     link,
+    '--input-stdin',
     '--json',
-  ], { temporary });
-  assert.equal(result.status, 2);
-  const failure = JSON.parse(result.stdout);
-  assert.equal(failure.error.code, 'material_invalid');
-  assert.match(failure.error.message, /symlinks are not accepted/);
+  ], {
+    temporary,
+    input: JSON.stringify(explicitEmptyCreationInput()),
+  });
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  const status = JSON.parse(result.stdout);
+  assert.equal(status.materials.length, 0);
+  assert.equal(status.material_inventories[0].summary.excluded, 1);
+  assert.equal(
+    status.material_inventories[0].entries[0].reason_code,
+    'symlink-not-followed',
+  );
   assert.throws(
     () => readBoundedFile(link),
     (error) =>
@@ -1233,7 +1868,7 @@ test('material symlinks fail with a stable input error', (t) => {
   );
 });
 
-test('material preparation enforces one cumulative byte budget', (t) => {
+test('material operation byte limits defer overflow instead of becoming a product minimum', (t) => {
   const temporary = temporaryDirectory();
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
   const first = path.join(temporary, 'first.txt');
@@ -1241,19 +1876,781 @@ test('material preparation enforces one cumulative byte budget', (t) => {
   fs.writeFileSync(first, '1234567890');
   fs.writeFileSync(second, 'abcdefghij');
 
-  assert.throws(
-    () =>
-      materialDescriptors(
-        { materials: [{ path: first }, { path: second }] },
-        [],
-        {},
-        null,
-        15,
-      ),
-    (error) =>
-      error.code === 'material_total_limit_exceeded' &&
-      /cumulative 15-byte limit/.test(error.message),
+  const prepared = materialDescriptors(
+    {
+      material_processing_policy: LOCAL_PROCESSING_POLICY,
+      materials: [{ path: first }, { path: second }],
+    },
+    [],
+    {},
+    null,
+    15,
   );
+  assert.equal(prepared.materials.length, 1);
+  assert.equal(prepared.inventories[0].summary.accepted, 1);
+  assert.equal(prepared.inventories[0].summary.excluded, 1);
+  assert.equal(
+    prepared.inventories[0].entries.find(
+      (entry) => entry.status === 'excluded',
+    ).reason_code,
+    'operation-total-byte-limit',
+  );
+});
+
+test('inline material hashes are computed from bytes and cannot be supplied dishonestly', () => {
+  const content = 'Bound this exact inline observation.';
+  const digest = sha256Digest(Buffer.from(content));
+  const prepared = materialDescriptors(
+    {
+      materials: [{
+        id: 'source-inline-honest',
+        content,
+        content_hash: digest,
+      }],
+    },
+    [],
+    {},
+    null,
+  );
+  assert.equal(prepared.materials[0].content_hash, digest);
+
+  assert.throws(
+    () => materialDescriptors(
+      {
+        materials: [{
+          id: 'source-inline-forged',
+          content,
+          content_hash: sha256Digest(Buffer.from('different bytes')),
+        }],
+      },
+      [],
+      {},
+      null,
+    ),
+    (error) =>
+      error.code === 'material_content_hash_mismatch' &&
+      /exact content bytes/.test(error.message),
+  );
+});
+
+test('exact material deduplication persists across resume batches while changed bytes remain distinct', (t) => {
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const workspace = path.join(temporary, 'cross-batch-creation');
+  let result = run(
+    ['create-agent', workspace, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify(explicitEmptyCreationInput()),
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const first = path.join(temporary, 'first.txt');
+  fs.writeFileSync(first, 'Alpha  Beta');
+  result = run(
+    ['resume', workspace, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify({
+        operation_id: 'resume:first-material',
+        material_processing_policy: LOCAL_PROCESSING_POLICY,
+        materials: [{ path: first }],
+      }),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  let status = JSON.parse(result.stdout);
+  assert.equal(status.materials.length, 1);
+  const originalId = status.materials[0].id;
+
+  result = run(
+    ['resume', workspace, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify({
+        operation_id: 'resume:duplicate-same-path',
+        material_processing_policy: LOCAL_PROCESSING_POLICY,
+        materials: [{ path: first }],
+      }),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  status = JSON.parse(result.stdout);
+  assert.equal(status.materials.length, 1);
+  assert.equal(status.materials[0].id, originalId);
+  assert.equal(
+    status.material_inventories.at(-1).entries[0].reason_code,
+    'already-ingested-coordinate',
+  );
+
+  const sameBytesElsewhere = path.join(temporary, 'renamed.txt');
+  fs.copyFileSync(first, sameBytesElsewhere);
+  result = run(
+    ['resume', workspace, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify({
+        operation_id: 'resume:duplicate-different-name',
+        material_processing_policy: LOCAL_PROCESSING_POLICY,
+        materials: [{ path: sameBytesElsewhere }],
+      }),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  status = JSON.parse(result.stdout);
+  assert.equal(status.materials.length, 1);
+  assert.equal(
+    status.material_inventories.at(-1).entries[0].reason_code,
+    'duplicate-existing-content',
+  );
+
+  fs.writeFileSync(first, 'Changed exact bytes');
+  result = run(
+    ['resume', workspace, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify({
+        operation_id: 'resume:changed-bytes',
+        material_processing_policy: LOCAL_PROCESSING_POLICY,
+        materials: [{ path: first }],
+      }),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  status = JSON.parse(result.stdout);
+  assert.equal(status.materials.length, 2);
+  assert.notEqual(status.materials[1].id, originalId);
+
+  const nearDuplicate = path.join(temporary, 'near-duplicate.txt');
+  fs.writeFileSync(nearDuplicate, 'alpha beta');
+  result = run(
+    ['resume', workspace, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify({
+        operation_id: 'resume:near-duplicate',
+        material_processing_policy: LOCAL_PROCESSING_POLICY,
+        materials: [{ path: nearDuplicate }],
+      }),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  status = JSON.parse(result.stdout);
+  assert.equal(status.materials.length, 3);
+  assert.equal(
+    status.material_inventories.at(-1).entries[0].reason_code,
+    'near-duplicate-review-required',
+  );
+  const stored = creationEngineForTest().loadWorkspace(workspace);
+  assert.ok(stored.materials[0].normalized_text_digest);
+  assert.ok(
+    stored.materials.at(-1).external_constraints.some(
+      (value) => /Near-duplicate normalized text/.test(value),
+    ),
+  );
+});
+
+test('Creation workspaces inside Git repositories stay private without hiding prior user files', (t) => {
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const repository = path.join(temporary, 'repository');
+  fs.mkdirSync(repository);
+  const git = (...args) =>
+    spawnSync('git', args, {
+      cwd: repository,
+      encoding: 'utf8',
+    });
+  assert.equal(git('init', '--quiet').status, 0);
+  assert.equal(git('config', 'user.name', 'Creation Test').status, 0);
+  assert.equal(
+    git('config', 'user.email', 'creation-test@example.invalid').status,
+    0,
+  );
+  fs.writeFileSync(path.join(repository, 'README.md'), 'tracked\n');
+  assert.equal(git('add', 'README.md').status, 0);
+  assert.equal(git('commit', '--quiet', '-m', 'fixture').status, 0);
+  assert.equal(git('status', '--porcelain').stdout, '');
+
+  const priorDirectory = path.join(repository, 'prior-user-directory');
+  fs.mkdirSync(priorDirectory);
+  fs.writeFileSync(path.join(priorDirectory, 'notes.txt'), 'user-owned');
+  let result = run(
+    ['create-agent', priorDirectory, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify(explicitEmptyCreationInput()),
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(git('status', '--porcelain').stdout, /prior-user-directory/);
+  const excludeFile = path.join(repository, '.git', 'info', 'exclude');
+  const excludeBefore = fs.existsSync(excludeFile)
+    ? fs.readFileSync(excludeFile)
+    : Buffer.alloc(0);
+
+  const failedWorkspace = path.join(repository, '.creation-failed');
+  result = run(
+    ['create-agent', failedWorkspace, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify({
+        ...explicitEmptyCreationInput(),
+        purpose: { objective: 'Incomplete purpose must fail.' },
+      }),
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.equal(fs.existsSync(failedWorkspace), false);
+  assert.deepEqual(fs.readFileSync(excludeFile), excludeBefore);
+
+  fs.rmSync(priorDirectory, { recursive: true, force: true });
+  assert.equal(git('status', '--porcelain').stdout, '');
+  const workspace = path.join(repository, '.private-creation');
+  const projectPreviewResult = runLocalInventory(
+    [
+      'inventory-agent',
+      repository,
+      '--workspace',
+      workspace,
+      '--json',
+    ],
+    { temporary },
+  );
+  assert.equal(
+    projectPreviewResult.status,
+    0,
+    `${projectPreviewResult.stderr}\n${projectPreviewResult.stdout}`,
+  );
+  const projectPreview = JSON.parse(projectPreviewResult.stdout);
+  assert.ok(
+    projectPreview.entries.some(
+      (entry) =>
+        entry.relative_path === 'README.md' &&
+        entry.status === 'eligible',
+    ),
+  );
+  result = run(
+    [
+      'create-agent',
+      workspace,
+      '--material',
+      repository,
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify(explicitEmptyCreationInput({
+        material_inventory_approval: {
+          inventory_digest:
+            projectPreview.approved_inventory_digest,
+        },
+      })),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  assert.equal(
+    git('status', '--porcelain').stdout,
+    '',
+    [
+      fs.readFileSync(excludeFile, 'utf8'),
+      git(
+        'check-ignore',
+        '-v',
+        '--no-index',
+        '--',
+        '.private-creation',
+      ).stdout,
+    ].join('\n---\n'),
+  );
+  const excludeText = fs.readFileSync(excludeFile, 'utf8');
+  assert.match(excludeText, /\/\.private-creation\/$/m);
+  assert.equal(excludeText.includes(temporary), false);
+  assert.equal(fs.existsSync(path.join(repository, '.gitignore')), false);
+  const resumedPreviewResult = runLocalInventory(
+    [
+      'inventory-agent',
+      repository,
+      '--workspace',
+      workspace,
+      '--json',
+    ],
+    { temporary },
+  );
+  assert.equal(resumedPreviewResult.status, 0);
+  const resumedPreview = JSON.parse(resumedPreviewResult.stdout);
+  assert.ok(
+    resumedPreview.entries.some(
+      (entry) =>
+        entry.relative_path === '.private-creation' &&
+        entry.reason_code === 'creation-workspace-excluded',
+    ),
+  );
+  assert.ok(
+    resumedPreview.entries.some(
+      (entry) =>
+        entry.relative_path === 'README.md' &&
+        entry.reason_code === 'already-ingested-coordinate',
+    ),
+  );
+  const workspaceAsMaterial = run(
+    [
+      'resume',
+      workspace,
+      '--material',
+      workspace,
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify({ operation_id: 'resume:workspace-attack' }),
+    },
+  );
+  assert.notEqual(workspaceAsMaterial.status, 0);
+  assert.equal(
+    JSON.parse(workspaceAsMaterial.stdout).error.code,
+    'material_workspace_overlap',
+  );
+  const workspaceAlias = path.join(repository, 'workspace-alias');
+  fs.symlinkSync(workspace, workspaceAlias);
+  const aliasPreviewResult = runLocalInventory(
+    ['inventory-agent', workspaceAlias, '--workspace', workspace, '--json'],
+    { temporary },
+  );
+  assert.equal(aliasPreviewResult.status, 0);
+  assert.equal(
+    JSON.parse(aliasPreviewResult.stdout).entries[0].reason_code,
+    'symlink-not-followed',
+  );
+  fs.unlinkSync(workspaceAlias);
+  assert.equal(git('status', '--porcelain').stdout, '');
+
+  result = run(['status', workspace, '--json'], { temporary });
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  assert.equal(git('status', '--porcelain').stdout, '');
+});
+
+test('directory continuation advances beyond 256 files without re-counting accepted coordinates', (t) => {
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const sourceDirectory = path.join(temporary, 'many-small-files');
+  fs.mkdirSync(sourceDirectory);
+  for (let index = 0; index < 257; index += 1) {
+    fs.writeFileSync(
+      path.join(
+        sourceDirectory,
+        `source-${String(index).padStart(3, '0')}.md`,
+      ),
+      `Independent source ${index}\n`,
+    );
+  }
+  const workspace = path.join(temporary, 'creation');
+  let previewResult = runLocalInventory(
+    [
+      'inventory-agent',
+      sourceDirectory,
+      '--workspace',
+      workspace,
+      '--json',
+    ],
+    { temporary },
+  );
+  assert.equal(previewResult.status, 0, previewResult.stderr);
+  let preview = JSON.parse(previewResult.stdout);
+  assert.equal(preview.summary.eligible, 256);
+  assert.equal(
+    preview.entries.filter(
+      (entry) => entry.reason_code === 'operation-file-batch-limit',
+    ).length,
+    1,
+  );
+
+  let result = run(
+    [
+      'create-agent',
+      workspace,
+      '--material',
+      sourceDirectory,
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify(explicitEmptyCreationInput({
+        material_inventory_approval: {
+          inventory_digest: preview.approved_inventory_digest,
+        },
+      })),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  assert.equal(JSON.parse(result.stdout).materials.length, 256);
+
+  previewResult = runLocalInventory(
+    [
+      'inventory-agent',
+      sourceDirectory,
+      '--workspace',
+      workspace,
+      '--json',
+    ],
+    { temporary },
+  );
+  assert.equal(previewResult.status, 0, previewResult.stderr);
+  preview = JSON.parse(previewResult.stdout);
+  assert.equal(preview.summary.eligible, 1);
+  assert.equal(
+    preview.entries.filter(
+      (entry) => entry.reason_code === 'already-ingested-coordinate',
+    ).length,
+    256,
+  );
+
+  result = run(
+    [
+      'resume',
+      workspace,
+      '--material',
+      sourceDirectory,
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify({
+        operation_id: 'resume:second-file-batch',
+        material_processing_policy: LOCAL_PROCESSING_POLICY,
+        material_inventory_approval: {
+          inventory_digest: preview.approved_inventory_digest,
+        },
+      }),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  assert.equal(JSON.parse(result.stdout).materials.length, 257);
+
+  previewResult = runLocalInventory(
+    [
+      'inventory-agent',
+      sourceDirectory,
+      '--workspace',
+      workspace,
+      '--json',
+    ],
+    { temporary },
+  );
+  assert.equal(previewResult.status, 0);
+  preview = JSON.parse(previewResult.stdout);
+  assert.equal(preview.summary.eligible, 0);
+  assert.equal(
+    preview.entries.filter(
+      (entry) => entry.reason_code === 'already-ingested-coordinate',
+    ).length,
+    257,
+  );
+  const unchangedApproval = preview.approved_inventory_digest;
+  fs.unlinkSync(path.join(sourceDirectory, 'source-256.md'));
+  fs.writeFileSync(
+    path.join(sourceDirectory, 'source-257.md'),
+    'A newly added independent source\n',
+  );
+  result = run(
+    [
+      'resume',
+      workspace,
+      '--material',
+      sourceDirectory,
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify({
+        operation_id: 'resume:stale-add-delete',
+        material_processing_policy: LOCAL_PROCESSING_POLICY,
+        material_inventory_approval: {
+          inventory_digest: unchangedApproval,
+        },
+      }),
+    },
+  );
+  assert.equal(result.status, 4);
+  const changed = JSON.parse(result.stdout);
+  assert.equal(
+    changed.error.code,
+    'material_inventory_review_required',
+  );
+  assert.ok(
+    changed.details.material_inventory.entries.some(
+      (entry) =>
+        entry.relative_path === 'source-256.md' &&
+        entry.reason_code === 'previously-ingested-coordinate-missing',
+    ),
+  );
+  assert.ok(
+    changed.details.material_inventory.entries.some(
+      (entry) =>
+        entry.relative_path === 'source-257.md' &&
+        entry.status === 'eligible',
+    ),
+  );
+  assert.equal(
+    JSON.parse(
+      run(['status', workspace, '--json'], { temporary }).stdout,
+    ).materials.length,
+    257,
+  );
+});
+
+test('directory continuation advances beyond the 50 MiB operation budget and detects drift', (t) => {
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const sourceDirectory = path.join(temporary, 'large-batch');
+  fs.mkdirSync(sourceDirectory);
+  const fileSize = 9 * 1024 * 1024;
+  const paths = [];
+  for (let index = 0; index < 6; index += 1) {
+    const file = path.join(sourceDirectory, `large-${index}.txt`);
+    const bytes = Buffer.alloc(fileSize, 0x61 + index);
+    bytes.write(`source-${index}\n`, 0, 'utf8');
+    fs.writeFileSync(file, bytes);
+    paths.push(file);
+  }
+  const workspace = path.join(temporary, 'creation');
+  let previewResult = runLocalInventory(
+    [
+      'inventory-agent',
+      sourceDirectory,
+      '--workspace',
+      workspace,
+      '--json',
+    ],
+    { temporary },
+  );
+  assert.equal(previewResult.status, 0, previewResult.stderr);
+  let preview = JSON.parse(previewResult.stdout);
+  assert.equal(preview.summary.eligible, 5);
+  assert.equal(
+    preview.entries.filter(
+      (entry) => entry.reason_code === 'operation-total-byte-limit',
+    ).length,
+    1,
+  );
+
+  let result = run(
+    [
+      'create-agent',
+      workspace,
+      '--material',
+      sourceDirectory,
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify(explicitEmptyCreationInput({
+        material_inventory_approval: {
+          inventory_digest: preview.approved_inventory_digest,
+        },
+      })),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  assert.equal(JSON.parse(result.stdout).materials.length, 5);
+
+  previewResult = runLocalInventory(
+    [
+      'inventory-agent',
+      sourceDirectory,
+      '--workspace',
+      workspace,
+      '--json',
+    ],
+    { temporary },
+  );
+  assert.equal(previewResult.status, 0, previewResult.stderr);
+  preview = JSON.parse(previewResult.stdout);
+  assert.equal(preview.summary.eligible, 1);
+  assert.equal(
+    preview.entries.filter(
+      (entry) => entry.reason_code === 'already-ingested-coordinate',
+    ).length,
+    5,
+  );
+
+  const staleApproval = preview.approved_inventory_digest;
+  fs.appendFileSync(paths[0], 'drift');
+  result = run(
+    [
+      'resume',
+      workspace,
+      '--material',
+      sourceDirectory,
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify({
+        operation_id: 'resume:stale-byte-batch',
+        material_processing_policy: LOCAL_PROCESSING_POLICY,
+        material_inventory_approval: {
+          inventory_digest: staleApproval,
+        },
+      }),
+    },
+  );
+  assert.equal(result.status, 4);
+  const driftFailure = JSON.parse(result.stdout);
+  assert.equal(
+    driftFailure.error.code,
+    'material_inventory_review_required',
+  );
+  assert.equal(
+    driftFailure.details.material_inventory.summary.eligible,
+    2,
+  );
+
+  previewResult = runLocalInventory(
+    [
+      'inventory-agent',
+      sourceDirectory,
+      '--workspace',
+      workspace,
+      '--json',
+    ],
+    { temporary },
+  );
+  assert.equal(previewResult.status, 0);
+  preview = JSON.parse(previewResult.stdout);
+  assert.equal(preview.summary.eligible, 2);
+  result = run(
+    [
+      'resume',
+      workspace,
+      '--material',
+      sourceDirectory,
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify({
+        operation_id: 'resume:reviewed-byte-batch',
+        material_processing_policy: LOCAL_PROCESSING_POLICY,
+        material_inventory_approval: {
+          inventory_digest: preview.approved_inventory_digest,
+        },
+      }),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  const finalStatus = JSON.parse(result.stdout);
+  assert.equal(finalStatus.materials.length, 7);
+  assert.equal(
+    finalStatus.material_inventories.at(-1).entries.some(
+      (entry) =>
+        entry.relative_path === 'large-0.txt' &&
+        entry.status === 'accepted',
+    ),
+    true,
+  );
+});
+
+test('sensitive content after 2 MiB requires non-leaking output review without implying publication', (t) => {
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const canary = 'api_key=late-sensitive-canary-must-not-persist';
+  const materialPath = path.join(temporary, 'late-sensitive.txt');
+  fs.writeFileSync(
+    materialPath,
+    Buffer.concat([
+      Buffer.alloc((2 * 1024 * 1024) + 73, 0x61),
+      Buffer.from(`\n${canary}\n`, 'utf8'),
+    ]),
+  );
+  const workspacePath = path.join(temporary, 'creation');
+  let result = run(
+    ['create-agent', workspacePath, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify({
+        ...explicitEmptyCreationInput(),
+        materials: [{
+          id: 'source-late-sensitive',
+          path: materialPath,
+          sensitivity: 'public',
+        }],
+      }),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  let workspace = creationEngineForTest().loadWorkspace(workspacePath);
+  const material = workspace.materials.find(
+    (item) => item.id === 'source-late-sensitive',
+  );
+  assert.equal(material.sensitivity, 'sensitive');
+  assert.equal(material.output_disclosure_review.status, 'pending');
+  const question = workspace.unresolvedQuestions.find(
+    (item) =>
+      item.kind === 'source_safety_output_disclosure' &&
+      item.target_id === material.id &&
+      item.status === 'open',
+  );
+  assert.ok(question);
+  assert.ok(
+    creationEngineForTest().assessReadiness(workspace).blocking.some(
+      (item) => item.code === 'SENSITIVE_OUTPUT_REVIEW_REQUIRED',
+    ),
+  );
+  for (const name of fs.readdirSync(workspacePath)) {
+    const candidate = path.join(workspacePath, name);
+    if (fs.lstatSync(candidate).isFile()) {
+      assert.equal(fs.readFileSync(candidate).includes(canary), false);
+    }
+  }
+
+  result = run(
+    [
+      'answer',
+      workspacePath,
+      '--input-stdin',
+      '--operation-id',
+      'answer:late-sensitive-public-review',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify({
+        expected_revision: workspace.state.semantic_revision,
+        question_id: question.id,
+        question: question.reason,
+        answer:
+          'Keep only an abstract judgment and exclude the source body from Runtime and delivery.',
+        actor: { type: 'agent', id: 'agent:privacy-reviewer' },
+        subject: { type: 'agent', id: 'agent:test-fixture' },
+        source_disposition: {
+          source_id: material.id,
+          decision: 'non-leaking-abstraction',
+          semantic_revision: workspace.state.semantic_revision,
+          reviewer: 'agent:privacy-reviewer',
+          rationale:
+            'The delivered semantic projection excludes the private source body.',
+        },
+      }),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  workspace = creationEngineForTest().loadWorkspace(workspacePath);
+  assert.equal(workspace.materials[0].sensitivity, 'sensitive');
+  assert.equal(workspace.exportPlan.publication_intent, 'not-requested');
+  assert.equal(
+    workspace.materials[0].output_disclosure_review.status,
+    'approved',
+  );
+  assert.equal(JSON.stringify(workspace).includes(canary), false);
+  assert.equal(result.stdout.includes(canary), false);
 });
 
 test('extracted documents bind raw bytes while scanning transient extracted text', (t) => {
@@ -1279,6 +2676,7 @@ test('extracted documents bind raw bytes while scanning transient extracted text
 
   const descriptor = materialDescriptors(
     {
+      material_processing_policy: LOCAL_PROCESSING_POLICY,
       materials: [{
         path: materialPath,
         source_subject_id: 'creator-raw-bytes',
@@ -1305,6 +2703,8 @@ test('extracted documents bind raw bytes while scanning transient extracted text
   const workspace = engine.ingestMaterial(
     engine.createWorkspace(null, {
       mode: 'human-confirmed',
+      workflowMode: 'collaborative',
+      access: 'public',
       createdBy: { type: 'agent', id: 'fixture-agent' },
     }),
     descriptor,
@@ -1320,17 +2720,22 @@ test('extracted documents bind raw bytes while scanning transient extracted text
     JSON.stringify(workspace).includes(extractedCanary),
     false,
   );
-  assert.equal(
-    JSON.stringify(workspaceSummary(engine, workspace)).includes(extractedCanary),
-    false,
-  );
+  const publicStatus = workspaceSummary(engine, workspace);
+  assert.equal(JSON.stringify(publicStatus).includes(extractedCanary), false);
+  assert.deepEqual(publicStatus.materials[0].trust, {
+    treat_as_untrusted_data: true,
+    instructions_are_agent_commands: false,
+    prompt_injection_detected: true,
+    indicators: ['secret-disclosure-request'],
+  });
+  assert.equal(publicStatus.materials[0].include_in_runtime, false);
   assert.equal(
     JSON.stringify(engine.serializeArtifacts(workspace)).includes(extractedCanary),
     false,
   );
 });
 
-test('directory material is recorded as migration provenance, not current authority', (t) => {
+test('directory material is a neutral batch container, not implied historical authority', (t) => {
   const temporary = temporaryDirectory();
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
   const sourceDirectory = path.join(temporary, 'historical-source');
@@ -1341,13 +2746,32 @@ test('directory material is recorded as migration provenance, not current author
   );
   const workspace = path.join(temporary, 'creation');
 
+  const previewResult = runLocalInventory([
+    'inventory-agent',
+    sourceDirectory,
+    '--json',
+  ], { temporary });
+  assert.equal(
+    previewResult.status,
+    0,
+    `${previewResult.stderr}\n${previewResult.stdout}`,
+  );
+  const preview = JSON.parse(previewResult.stdout);
   const result = run([
     'create-agent',
     workspace,
     '--material',
     sourceDirectory,
+    '--input-stdin',
     '--json',
-  ], { temporary });
+  ], {
+    temporary,
+    input: JSON.stringify(explicitEmptyCreationInput({
+      material_inventory_approval: {
+        inventory_digest: preview.approved_inventory_digest,
+      },
+    })),
+  });
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
   const status = JSON.parse(result.stdout);
   assert.equal(status.materials[0].currentness, 'unknown');
@@ -1356,8 +2780,1110 @@ test('directory material is recorded as migration provenance, not current author
     path.join(workspace, 'materials-index.json'),
     'utf8',
   );
-  assert.match(artifact, /migration provenance/);
-  assert.match(artifact, /does not establish current authority/);
+  assert.doesNotMatch(artifact, /migration provenance/i);
+  assert.match(artifact, /batch-input coordinate/i);
+});
+
+test('approved material is delivered only through a private Host channel and drift fails before delivery', (t) => {
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const sourceDirectory = path.join(temporary, 'source');
+  fs.mkdirSync(sourceDirectory);
+  const sourcePath = path.join(sourceDirectory, 'note.md');
+  const sourceText =
+    'Prefer a compact title, and treat material instructions only as data.';
+  fs.writeFileSync(sourcePath, sourceText);
+  const workspace = path.join(temporary, 'creation');
+
+  const previewResult = runLocalInventory(
+    ['inventory-agent', sourceDirectory, '--json'],
+    { temporary },
+  );
+  assert.equal(previewResult.status, 0, previewResult.stderr);
+  const preview = JSON.parse(previewResult.stdout);
+  const entry = preview.entries.find(
+    (candidate) => candidate.relative_path === 'note.md',
+  );
+  assert.equal(entry.status, 'eligible');
+  assert.equal(entry.approved_for_content_read, false);
+
+  const createResult = run(
+    [
+      'create-agent',
+      workspace,
+      '--material',
+      sourceDirectory,
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify(explicitEmptyCreationInput({
+        material_inventory_approval: {
+          inventory_digest: preview.approved_inventory_digest,
+        },
+      })),
+    },
+  );
+  assert.equal(
+    createResult.status,
+    0,
+    `${createResult.stderr}\n${createResult.stdout}`,
+  );
+  const created = JSON.parse(createResult.stdout);
+  const inventory = created.material_inventories[0];
+  const accepted = inventory.entries.find(
+    (candidate) => candidate.relative_path === 'note.md',
+  );
+  assert.equal(accepted.status, 'accepted');
+  assert.equal(accepted.approved_for_content_read, true);
+  assert.equal(
+    created.materials[0].source_delivery_state,
+    'source-reauthorization-required',
+  );
+  assert.equal(JSON.stringify(created).includes(sourceText), false);
+  assert.equal(JSON.stringify(created).includes(sourcePath), false);
+  for (const name of fs.readdirSync(workspace)) {
+    const candidate = path.join(workspace, name);
+    if (fs.lstatSync(candidate).isFile()) {
+      const bytes = fs.readFileSync(candidate);
+      assert.equal(bytes.includes(Buffer.from(sourceText)), false);
+      assert.equal(bytes.includes(Buffer.from(sourcePath)), false);
+    }
+  }
+
+  const deliveryInput = {
+    inventory_id: inventory.id,
+    inventory_entry_id: accepted.id,
+    host: {
+      type: 'agent',
+      id: 'agent:fresh-material-reader',
+    },
+    processing_destination: {
+      destination: 'local-only',
+      processor: null,
+      assurance: 'host-declared',
+    },
+    host_execution: {
+      location: 'local',
+      processor: null,
+      assurance: 'host-declared',
+      capability_digest: sha256Digest('local-material-host-capability'),
+    },
+    materials: [{ path: sourceDirectory }],
+  };
+  const missingChannel = run(
+    [
+      'deliver-material',
+      workspace,
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify(deliveryInput),
+    },
+  );
+  assert.equal(
+    missingChannel.status,
+    4,
+    `${missingChannel.stderr}\n${missingChannel.stdout}`,
+  );
+  assert.equal(
+    JSON.parse(missingChannel.stdout).error.code,
+    'material_delivery_channel_required',
+  );
+  const publicChannelPath = path.join(temporary, 'public-channel.txt');
+  const publicChannel = fs.openSync(
+    publicChannelPath,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC,
+    0o644,
+  );
+  fs.fchmodSync(publicChannel, 0o644);
+  const publicChannelResult = runWithMaterialDescriptor(
+    [
+      'deliver-material',
+      workspace,
+      '--private-output-fd',
+      '3',
+      '--input-stdin',
+      '--json',
+    ],
+    publicChannel,
+    {
+      temporary,
+      input: JSON.stringify(deliveryInput),
+    },
+  );
+  fs.closeSync(publicChannel);
+  assert.equal(publicChannelResult.status, 4);
+  assert.equal(
+    JSON.parse(publicChannelResult.stdout).error.code,
+    'material_delivery_channel_permissions',
+  );
+  assert.equal(fs.readFileSync(publicChannelPath).length, 0);
+
+  const privateOutputPath = path.join(
+    temporary,
+    'host-private-material.txt',
+  );
+  fs.writeFileSync(privateOutputPath, '');
+  fs.chmodSync(privateOutputPath, 0o600);
+  const privateFileResult = run(
+    [
+      'deliver-material',
+      workspace,
+      '--private-output-file',
+      privateOutputPath,
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify(deliveryInput),
+    },
+  );
+  assert.equal(
+    privateFileResult.status,
+    0,
+    `${privateFileResult.stderr}\n${privateFileResult.stdout}`,
+  );
+  assert.equal(fs.readFileSync(privateOutputPath, 'utf8'), sourceText);
+  assert.equal(
+    JSON.parse(privateFileResult.stdout).delivery.channel,
+    'private-temp-file',
+  );
+
+  const aliasedOutputPath = path.join(temporary, 'aliased-output.txt');
+  const aliasedOutput = fs.openSync(
+    aliasedOutputPath,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC,
+    0o600,
+  );
+  fs.fchmodSync(aliasedOutput, 0o600);
+  const aliasedResult = spawnSync(
+    process.execPath,
+    [
+      CLI,
+      'deliver-material',
+      workspace,
+      '--private-output-fd',
+      '3',
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      cwd: ROOT,
+      encoding: 'utf8',
+      input: JSON.stringify(deliveryInput),
+      stdio: ['pipe', aliasedOutput, 'pipe', aliasedOutput],
+      env: {
+        ...process.env,
+        KDNA_IDENTITY_DIR: path.join(temporary, 'no-identity'),
+      },
+    },
+  );
+  fs.closeSync(aliasedOutput);
+  assert.equal(aliasedResult.status, 4);
+  const aliasedBytes = fs.readFileSync(aliasedOutputPath, 'utf8');
+  assert.match(aliasedBytes, /material_delivery_channel_alias/);
+  assert.equal(aliasedBytes.includes(sourceText), false);
+
+  const disguisedRemoteHost = runWithPrivateMaterialDelivery(
+    [
+      'deliver-material',
+      workspace,
+      '--private-output-fd',
+      '3',
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify({
+        ...deliveryInput,
+        host_execution: {
+          location: 'remote',
+          processor: 'example-remote-host',
+          assurance: 'host-declared',
+          capability_digest: sha256Digest(
+            'example-remote-host-capability',
+          ),
+        },
+      }),
+    },
+  );
+  assert.equal(disguisedRemoteHost.status, 4);
+  assert.equal(disguisedRemoteHost.output[3], '');
+  assert.equal(
+    JSON.parse(disguisedRemoteHost.stdout).error.code,
+    'material_processing_destination_not_approved',
+  );
+
+  const remoteDestination = runWithPrivateMaterialDelivery(
+    [
+      'deliver-material',
+      workspace,
+      '--private-output-fd',
+      '3',
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify({
+        ...deliveryInput,
+        processing_destination: {
+          destination: 'named-remote-processor',
+          processor: 'example-remote-host',
+          assurance: 'host-declared',
+        },
+      }),
+    },
+  );
+  assert.equal(remoteDestination.status, 4);
+  assert.equal(remoteDestination.output[3], '');
+  assert.equal(
+    JSON.parse(remoteDestination.stdout).error.code,
+    'material_processing_destination_not_approved',
+  );
+
+  const delivered = runWithPrivateMaterialDelivery(
+    [
+      'deliver-material',
+      workspace,
+      '--private-output-fd',
+      '3',
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify(deliveryInput),
+    },
+  );
+  assert.equal(
+    delivered.status,
+    0,
+    `${delivered.stderr}\n${delivered.stdout}`,
+  );
+  assert.equal(delivered.output[3], sourceText);
+  assert.equal(delivered.stdout.includes(sourceText), false);
+  assert.equal(delivered.stdout.includes(sourcePath), false);
+  const deliveryReceipt = JSON.parse(delivered.stdout);
+  assert.equal(
+    deliveryReceipt.delivery.material_id,
+    accepted.ingested_material_id,
+  );
+  assert.equal(deliveryReceipt.delivery.channel, 'private-fd');
+  assert.equal(
+    deliveryReceipt.delivery.host_execution.assurance,
+    'host-declared',
+  );
+  assert.equal(
+    JSON.stringify(deliveryReceipt).includes('verified-local'),
+    false,
+  );
+
+  const resumedStatusResult = run(
+    ['status', workspace, '--json'],
+    { temporary },
+  );
+  assert.equal(resumedStatusResult.status, 0);
+  const resumedStatus = JSON.parse(resumedStatusResult.stdout);
+  assert.equal(resumedStatus.source_deliveries.length, 2);
+  assert.equal(
+    resumedStatus.materials[0].source_delivery_state,
+    'delivered',
+  );
+
+  fs.writeFileSync(
+    sourcePath,
+    `${sourceText}\nA post-approval change must force review.`,
+  );
+  const drifted = runWithPrivateMaterialDelivery(
+    [
+      'deliver-material',
+      workspace,
+      '--private-output-fd',
+      '3',
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify(deliveryInput),
+    },
+  );
+  assert.equal(drifted.status, 4);
+  assert.equal(drifted.output[3], '');
+  const driftFailure = JSON.parse(drifted.stdout);
+  assert.equal(driftFailure.error.code, 'material_inventory_drift');
+  assert.equal(
+    JSON.stringify(driftFailure).includes(sourceText),
+    false,
+  );
+  assert.equal(
+    JSON.stringify(driftFailure).includes(sourcePath),
+    false,
+  );
+});
+
+test('caller-supplied local capability digest cannot satisfy verified Host processing', (t) => {
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const sourcePath = path.join(temporary, 'private.md');
+  const sourceText = 'Local-only material requires a trusted Host adapter.';
+  fs.writeFileSync(sourcePath, sourceText);
+  const workspace = path.join(temporary, 'creation');
+  const verifiedPolicy = {
+    destination: 'local-only',
+    processor: null,
+    assurance: 'verified-host-required',
+  };
+  const previewResult = run(
+    [
+      'inventory-agent',
+      sourcePath,
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify({ processing_policy: verifiedPolicy }),
+    },
+  );
+  assert.equal(previewResult.status, 0, previewResult.stderr);
+  const preview = JSON.parse(previewResult.stdout);
+  const createResult = run(
+    [
+      'create-agent',
+      workspace,
+      '--material',
+      sourcePath,
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify(explicitEmptyCreationInput({
+        material_processing_policy: verifiedPolicy,
+        material_inventory_approval: {
+          inventory_digest: preview.approved_inventory_digest,
+          processing_policy: verifiedPolicy,
+        },
+      })),
+    },
+  );
+  assert.equal(createResult.status, 0, createResult.stderr);
+  const created = JSON.parse(createResult.stdout);
+  const inventory = created.material_inventories[0];
+  const accepted = inventory.entries[0];
+  const result = runWithPrivateMaterialDelivery(
+    [
+      'deliver-material',
+      workspace,
+      '--private-output-fd',
+      '3',
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify({
+        inventory_id: inventory.id,
+        inventory_entry_id: accepted.id,
+        host: { type: 'agent', id: 'caller-asserted-local-host' },
+        processing_destination: {
+          destination: 'local-only',
+          processor: null,
+          assurance: 'verified-host-required',
+        },
+        host_execution: {
+          location: 'local',
+          processor: null,
+          assurance: 'host-declared',
+          capability_digest: sha256Digest(
+            'caller-can-make-this-random-digest',
+          ),
+        },
+        materials: [{ path: sourcePath }],
+      }),
+    },
+  );
+  assert.equal(result.status, 4);
+  assert.equal(result.output[3], '');
+  assert.equal(
+    JSON.parse(result.stdout).error.code,
+    'material_verified_host_adapter_required',
+  );
+  assert.equal(result.stdout.includes(sourceText), false);
+  assert.equal(result.stderr.includes(sourceText), false);
+});
+
+test('material content stays unread until the Host explicitly declares its processing destination', (t) => {
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const sourceDirectory = path.join(temporary, 'source');
+  fs.mkdirSync(sourceDirectory);
+  const sourceText = 'Private customer fixture that must not be pre-read.';
+  fs.writeFileSync(path.join(sourceDirectory, 'customer.md'), sourceText);
+  const workspace = path.join(temporary, 'creation');
+
+  const undeclaredPreview = run(
+    ['inventory-agent', sourceDirectory, '--json'],
+    { temporary },
+  );
+  assert.equal(undeclaredPreview.status, 0, undeclaredPreview.stderr);
+  const preview = JSON.parse(undeclaredPreview.stdout);
+  assert.equal(preview.processing_policy, null);
+  assert.equal(preview.processing_policy_required, true);
+  assert.equal(preview.entries[0].status, 'eligible');
+  assert.equal(preview.entries[0].approved_for_content_read, false);
+  assert.equal(undeclaredPreview.stdout.includes(sourceText), false);
+
+  const blocked = run(
+    [
+      'create-agent',
+      workspace,
+      '--material',
+      sourceDirectory,
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify({
+        ...explicitEmptyCreationInput(),
+        material_processing_policy: undefined,
+        material_inventory_approval: {
+          inventory_digest: preview.approved_inventory_digest,
+        },
+      }),
+    },
+  );
+  assert.equal(blocked.status, 4);
+  assert.equal(
+    JSON.parse(blocked.stdout).error.code,
+    'material_processing_policy_required',
+  );
+  assert.equal(fs.existsSync(workspace), false);
+  assert.equal(blocked.stdout.includes(sourceText), false);
+});
+
+test('named remote material processing is exact-provider bound and provider drift fails closed', (t) => {
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const sourceDirectory = path.join(temporary, 'source');
+  fs.mkdirSync(sourceDirectory);
+  fs.writeFileSync(
+    path.join(sourceDirectory, 'note.md'),
+    'One explicitly approved public fixture.',
+  );
+  const workspace = path.join(temporary, 'creation');
+  const processingPolicy = {
+    destination: 'named-remote-processor',
+    processor: 'processor-alpha',
+    assurance: 'host-declared',
+  };
+  const previewResult = run(
+    ['inventory-agent', sourceDirectory, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify({ processing_policy: processingPolicy }),
+    },
+  );
+  assert.equal(previewResult.status, 0, previewResult.stderr);
+  const preview = JSON.parse(previewResult.stdout);
+  assert.equal(
+    preview.processing_policy.destination,
+    'named-remote-processor',
+  );
+  assert.equal(preview.processing_policy.processor, 'processor-alpha');
+
+  const createdResult = run(
+    [
+      'create-agent',
+      workspace,
+      '--material',
+      sourceDirectory,
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify(explicitEmptyCreationInput({
+        material_inventory_approval: {
+          inventory_digest: preview.approved_inventory_digest,
+          processing_policy: processingPolicy,
+        },
+      })),
+    },
+  );
+  assert.equal(
+    createdResult.status,
+    0,
+    `${createdResult.stderr}\n${createdResult.stdout}`,
+  );
+  const created = JSON.parse(createdResult.stdout);
+  const inventory = created.material_inventories[0];
+  const entry = inventory.entries.find(
+    (candidate) => candidate.status === 'accepted',
+  );
+  const baseDelivery = {
+    inventory_id: inventory.id,
+    inventory_entry_id: entry.id,
+    host: { type: 'agent', id: 'agent:remote-material-reader' },
+    host_execution: {
+      location: 'remote',
+      processor: 'processor-alpha',
+      assurance: 'host-declared',
+      capability_digest: sha256Digest(
+        'processor-alpha-material-capability',
+      ),
+    },
+    materials: [{ path: sourceDirectory }],
+  };
+  const changedProvider = runWithPrivateMaterialDelivery(
+    [
+      'deliver-material',
+      workspace,
+      '--private-output-fd',
+      '3',
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify({
+        ...baseDelivery,
+        processing_destination: {
+          destination: 'named-remote-processor',
+          processor: 'processor-beta',
+          assurance: 'host-declared',
+        },
+      }),
+    },
+  );
+  assert.equal(changedProvider.status, 4);
+  assert.equal(changedProvider.output[3], '');
+  assert.equal(
+    JSON.parse(changedProvider.stdout).error.code,
+    'material_processing_destination_not_approved',
+  );
+
+  const approvedProvider = runWithPrivateMaterialDelivery(
+    [
+      'deliver-material',
+      workspace,
+      '--private-output-fd',
+      '3',
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify({
+        ...baseDelivery,
+        processing_destination: processingPolicy,
+      }),
+    },
+  );
+  assert.equal(
+    approvedProvider.status,
+    0,
+    `${approvedProvider.stderr}\n${approvedProvider.stdout}`,
+  );
+  assert.equal(
+    JSON.parse(approvedProvider.stdout)
+      .delivery.processing_destination.processor,
+    'processor-alpha',
+  );
+});
+
+test('a messy directory is inventoried before read and valid files survive unrelated entries', (t) => {
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const sourceDirectory = path.join(temporary, 'mixed-input');
+  fs.mkdirSync(sourceDirectory);
+  fs.mkdirSync(path.join(sourceDirectory, '.git'));
+  fs.mkdirSync(path.join(sourceDirectory, 'node_modules'));
+  fs.mkdirSync(path.join(sourceDirectory, 'dist'));
+  fs.mkdirSync(path.join(sourceDirectory, 'notes'));
+  fs.writeFileSync(path.join(sourceDirectory, '.git', 'config'), 'private VCS metadata');
+  fs.writeFileSync(
+    path.join(sourceDirectory, 'node_modules', 'dependency.js'),
+    'dependency bytes',
+  );
+  fs.writeFileSync(path.join(sourceDirectory, 'dist', 'asset.js'), 'built output');
+  fs.writeFileSync(path.join(sourceDirectory, '.env'), 'TOKEN=must-not-be-read');
+  const first = path.join(sourceDirectory, 'notes', 'first.md');
+  const second = path.join(sourceDirectory, 'notes', 'second.txt');
+  fs.writeFileSync(first, 'A current drafting preference.');
+  fs.writeFileSync(second, 'A distinct editorial boundary.');
+  fs.copyFileSync(first, path.join(sourceDirectory, 'notes', 'exact-copy.md'));
+  fs.linkSync(second, path.join(sourceDirectory, 'notes', 'hard-link.txt'));
+  fs.symlinkSync(first, path.join(sourceDirectory, 'notes', 'shortcut.md'));
+  fs.writeFileSync(
+    path.join(sourceDirectory, 'notes', 'invalid.txt'),
+    Buffer.from([0xff, 0xfe, 0xfd]),
+  );
+  fs.writeFileSync(
+    path.join(sourceDirectory, 'reference.png'),
+    Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+  );
+  fs.writeFileSync(
+    path.join(sourceDirectory, 'random.bin'),
+    Buffer.from([0x00, 0x01, 0x02]),
+  );
+  fs.writeFileSync(path.join(sourceDirectory, 'old-output.kdna'), 'not an input');
+
+  const previewResult = runLocalInventory(
+    ['inventory-agent', sourceDirectory, '--json'],
+    { temporary },
+  );
+  assert.equal(
+    previewResult.status,
+    0,
+    `${previewResult.stderr}\n${previewResult.stdout}`,
+  );
+  const preview = JSON.parse(previewResult.stdout);
+  assert.equal(preview.document_type, 'kdna.studio.material-inventory/0.1.0');
+  assert.ok(preview.summary.eligible >= 4);
+  assert.equal(preview.summary.accepted, 0);
+  assert.equal(
+    preview.entries
+      .filter((entry) => entry.status === 'eligible')
+      .every((entry) => entry.approved_for_content_read === false),
+    true,
+  );
+  assert.ok(preview.summary.unsupported >= 2);
+  assert.ok(preview.summary.excluded >= 6);
+  assert.equal(JSON.stringify(preview).includes(temporary), false);
+  assert.equal(JSON.stringify(preview).includes('TOKEN=must-not-be-read'), false);
+  assert.ok(
+    preview.entries.some(
+      (entry) =>
+        entry.relative_path === '.git' &&
+        entry.reason_code === 'default-directory-exclusion',
+    ),
+  );
+  assert.ok(
+    preview.entries.some(
+      (entry) =>
+        entry.relative_path === '.env' &&
+        entry.reason_code ===
+          'secret-like-file-requires-explicit-authorization',
+    ),
+  );
+  assert.ok(
+    preview.entries.some(
+      (entry) => entry.reason_code === 'host-observation-required',
+    ),
+  );
+  assert.ok(
+    preview.entries.some(
+      (entry) => entry.reason_code === 'duplicate-path-or-inode',
+    ),
+  );
+
+  const workspace = path.join(temporary, 'creation');
+  let result = run(
+    ['create-agent', workspace, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify(explicitEmptyCreationInput({
+        materials: [{ path: sourceDirectory }],
+      })),
+    },
+  );
+  assert.equal(result.status, 4);
+  const unapproved = JSON.parse(result.stdout);
+  assert.equal(unapproved.error.code, 'material_inventory_review_required');
+  assert.equal(
+    unapproved.details.material_inventory.approved_inventory_digest,
+    preview.approved_inventory_digest,
+  );
+  assert.equal(fs.existsSync(workspace), false);
+
+  fs.writeFileSync(first, 'B current drafting preference.');
+  fs.copyFileSync(first, path.join(sourceDirectory, 'notes', 'exact-copy.md'));
+  result = run(
+    ['create-agent', workspace, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify(explicitEmptyCreationInput({
+        materials: [{ path: sourceDirectory }],
+        material_inventory_approval: {
+          inventory_digest: preview.approved_inventory_digest,
+        },
+      })),
+    },
+  );
+  assert.equal(result.status, 4);
+  assert.equal(
+    JSON.parse(result.stdout).error.code,
+    'material_inventory_review_required',
+  );
+  assert.equal(fs.existsSync(workspace), false);
+  const refreshedPreviewResult = runLocalInventory(
+    ['inventory-agent', sourceDirectory, '--json'],
+    { temporary },
+  );
+  assert.equal(refreshedPreviewResult.status, 0);
+  const refreshedPreview = JSON.parse(refreshedPreviewResult.stdout);
+  assert.notEqual(
+    refreshedPreview.approved_inventory_digest,
+    preview.approved_inventory_digest,
+  );
+
+  result = run(
+    ['create-agent', workspace, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify(explicitEmptyCreationInput({
+        materials: [{ path: sourceDirectory }],
+        material_inventory_approval: {
+          inventory_digest: refreshedPreview.approved_inventory_digest,
+        },
+      })),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  const status = JSON.parse(result.stdout);
+  assert.equal(status.materials.length, 2);
+  const finalInventory = status.material_inventories[0];
+  assert.equal(finalInventory.summary.eligible, 0);
+  assert.equal(finalInventory.summary.accepted, 2);
+  assert.equal(
+    finalInventory.entries
+      .filter((entry) => entry.status === 'accepted')
+      .every((entry) => entry.approved_for_content_read === true),
+    true,
+  );
+  assert.ok(finalInventory.summary.failed >= 1);
+  assert.ok(finalInventory.summary.excluded > preview.summary.excluded);
+  assert.ok(
+    finalInventory.entries.some(
+      (entry) => entry.reason_code === 'duplicate-content',
+    ),
+  );
+  assert.ok(
+    finalInventory.entries.some(
+      (entry) => entry.reason_code === 'material_invalid_encoding',
+    ),
+  );
+  assert.equal(JSON.stringify(status).includes('TOKEN=must-not-be-read'), false);
+  for (const name of fs.readdirSync(workspace)) {
+    const candidate = path.join(workspace, name);
+    if (fs.lstatSync(candidate).isFile()) {
+      assert.equal(fs.readFileSync(candidate).includes(temporary), false);
+    }
+  }
+});
+
+test('digest-bound Host observations bridge image and audio without trusting supplied digests', (t) => {
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const sourceDirectory = path.join(temporary, 'media');
+  fs.mkdirSync(sourceDirectory);
+  const imageBytes = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x00,
+  ]);
+  const audioBytes = Buffer.from([
+    0x52, 0x49, 0x46, 0x46, 0x04, 0x00, 0x00, 0x00,
+    0x57, 0x41, 0x56, 0x45,
+  ]);
+  fs.writeFileSync(path.join(sourceDirectory, 'layout.png'), imageBytes);
+  fs.writeFileSync(path.join(sourceDirectory, 'voice.wav'), audioBytes);
+  const previewResult = runLocalInventory(
+    ['inventory-agent', sourceDirectory, '--json'],
+    { temporary },
+  );
+  assert.equal(previewResult.status, 0, previewResult.stderr);
+  const preview = JSON.parse(previewResult.stdout);
+  const imageEntry = preview.entries.find(
+    (entry) => entry.relative_path === 'layout.png',
+  );
+  const audioEntry = preview.entries.find(
+    (entry) => entry.relative_path === 'voice.wav',
+  );
+  assert.equal(imageEntry.reason_code, 'host-observation-required');
+  assert.equal(audioEntry.reason_code, 'host-observation-required');
+  const imageText =
+    'The image contains a centered title with a quiet margin.';
+  const audioText =
+    'The speaker asks for a short pause before the final sentence.';
+  const observations = [
+    {
+      inventory_entry_id: imageEntry.id,
+      source_digest: sha256Digest(imageBytes),
+      media_type: 'image',
+      observation_text: imageText,
+      observation_digest: sha256Digest(Buffer.from(imageText)),
+      observer: {
+        type: 'agent',
+        id: 'agent:multimodal-host',
+      },
+      tool_coordinate: {
+        name: 'fixture-image-observer',
+        version: '1.0.0',
+      },
+      coverage:
+        'The full synthetic image frame was inspected.',
+      uncertainty:
+        'The fixture contains no embedded text beyond the described title.',
+    },
+    {
+      inventory_entry_id: audioEntry.id,
+      source_digest: sha256Digest(audioBytes),
+      media_type: 'audio',
+      observation_text: audioText,
+      observation_digest: sha256Digest(Buffer.from(audioText)),
+      observer: {
+        type: 'agent',
+        id: 'agent:multimodal-host',
+      },
+      tool_coordinate: {
+        name: 'fixture-audio-transcriber',
+        version: '1.0.0',
+      },
+      coverage:
+        'The complete synthetic audio fixture was transcribed.',
+      uncertainty:
+        'No speaker identity claim was made.',
+    },
+  ];
+  const workspace = path.join(temporary, 'observed-creation');
+  let result = run(
+    ['create-agent', workspace, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify(explicitEmptyCreationInput({
+        materials: [{ path: sourceDirectory }],
+        material_inventory_approval: {
+          inventory_digest: preview.approved_inventory_digest,
+        },
+        material_observations: observations,
+      })),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  const status = JSON.parse(result.stdout);
+  assert.equal(status.materials.length, 2);
+  assert.deepEqual(
+    status.materials.map((material) => material.kind).sort(),
+    ['host-observation', 'host-observation'],
+  );
+  assert.deepEqual(
+    status.materials
+      .map((material) => material.observation.media_type)
+      .sort(),
+    ['audio', 'image'],
+  );
+  const loaded = creationEngineForTest().loadWorkspace(workspace);
+  assert.equal(
+    loaded.materials.find(
+      (material) => material.observation.media_type === 'image',
+    ).observation.source_digest,
+    sha256Digest(imageBytes),
+  );
+  const persisted = fs.readdirSync(workspace)
+    .filter((name) => fs.lstatSync(path.join(workspace, name)).isFile())
+    .map((name) => fs.readFileSync(path.join(workspace, name), 'utf8'))
+    .join('\n');
+  assert.equal(persisted.includes(imageText), false);
+  assert.equal(persisted.includes(audioText), false);
+  assert.equal(persisted.includes(sourceDirectory), false);
+
+  const hostileWorkspace = path.join(temporary, 'hostile-observation');
+  result = run(
+    ['create-agent', hostileWorkspace, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify(explicitEmptyCreationInput({
+        materials: [{ path: sourceDirectory }],
+        material_inventory_approval: {
+          inventory_digest: preview.approved_inventory_digest,
+        },
+        material_observations: [
+          {
+            ...observations[0],
+            observation_digest: sha256Digest(
+              Buffer.from('forged observation output'),
+            ),
+          },
+          {
+            ...observations[1],
+            source_digest: sha256Digest(imageBytes),
+          },
+        ],
+      })),
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  const hostile = JSON.parse(result.stdout);
+  assert.equal(hostile.materials.length, 0);
+  assert.ok(
+    hostile.material_inventories[0].entries.some(
+      (entry) =>
+        entry.reason_code ===
+        'material_observation_output_mismatch',
+    ),
+  );
+  assert.ok(
+    hostile.material_inventories[0].entries.some(
+      (entry) =>
+        entry.reason_code ===
+        'material_observation_source_mismatch',
+    ),
+  );
+});
+
+test('Host observation stream-hashes media larger than the direct 50 MiB processing budget', (t) => {
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const mediaPath = path.join(temporary, 'long-recording.mp4');
+  const mediaBytes = Buffer.alloc((50 * 1024 * 1024) + 4096, 0x00);
+  Buffer.from('synthetic-media-tail').copy(
+    mediaBytes,
+    mediaBytes.length - Buffer.byteLength('synthetic-media-tail'),
+  );
+  const sourceDigest = sha256Digest(mediaBytes);
+  fs.writeFileSync(mediaPath, mediaBytes, { mode: 0o600 });
+  mediaBytes.fill(0);
+
+  const previewResult = runLocalInventory(
+    ['inventory-agent', mediaPath, '--json'],
+    { temporary },
+  );
+  assert.equal(previewResult.status, 0, previewResult.stderr);
+  const preview = JSON.parse(previewResult.stdout);
+  const entry = preview.entries[0];
+  assert.equal(entry.kind, 'video');
+  assert.equal(entry.status, 'unsupported');
+  assert.equal(entry.reason_code, 'host-observation-required');
+  assert.ok(entry.size_bytes > 50 * 1024 * 1024);
+
+  const observationText =
+    'The complete synthetic video contains one static frame and no audible speech.';
+  const observation = {
+    inventory_entry_id: entry.id,
+    source_digest: sourceDigest,
+    media_type: 'video',
+    observation_text: observationText,
+    observation_digest: sha256Digest(Buffer.from(observationText)),
+    observer: {
+      type: 'agent',
+      id: 'agent:large-media-observer',
+    },
+    tool_coordinate: {
+      name: 'fixture-streaming-video-observer',
+      version: '1.0.0',
+    },
+    coverage:
+      'The complete synthetic source byte range and its only frame were inspected.',
+    uncertainty:
+      'This fixture does not make claims about real video codec support.',
+  };
+  const workspace = path.join(temporary, 'large-media-creation');
+  const createResult = run(
+    ['create-agent', workspace, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify(explicitEmptyCreationInput({
+        materials: [{ path: mediaPath }],
+        material_observations: [observation],
+      })),
+    },
+  );
+  assert.equal(
+    createResult.status,
+    0,
+    `${createResult.stderr}\n${createResult.stdout}`,
+  );
+  const created = JSON.parse(createResult.stdout);
+  assert.equal(created.materials.length, 1);
+  assert.equal(created.materials[0].kind, 'host-observation');
+  assert.equal(
+    created.materials[0].observation.source_digest,
+    sourceDigest,
+  );
+  const acceptedInventory = created.material_inventories[0];
+  const accepted = acceptedInventory.entries[0];
+  assert.equal(accepted.status, 'accepted');
+
+  const delivered = runWithPrivateMaterialDelivery(
+    [
+      'deliver-material',
+      workspace,
+      '--private-output-fd',
+      '3',
+      '--input-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: JSON.stringify({
+        inventory_id: acceptedInventory.id,
+        inventory_entry_id: accepted.id,
+        host: {
+          type: 'agent',
+          id: 'agent:large-media-reader',
+        },
+        processing_destination: LOCAL_PROCESSING_POLICY,
+        host_execution: {
+          location: 'local',
+          processor: null,
+          assurance: 'host-declared',
+          capability_digest: sha256Digest(
+            'large-media-local-observer-capability',
+          ),
+        },
+        materials: [{ path: mediaPath }],
+        material_observation: observation,
+      }),
+    },
+  );
+  assert.equal(
+    delivered.status,
+    0,
+    `${delivered.stderr}\n${delivered.stdout}`,
+  );
+  assert.equal(delivered.output[3], observationText);
+  assert.equal(delivered.stdout.includes(observationText), false);
+  assert.equal(delivered.stderr.includes(observationText), false);
+});
+
+test('one text file above 50 MiB is honestly unsupported without a fake continuation claim', (t) => {
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const sourcePath = path.join(temporary, 'large.txt');
+  const descriptor = fs.openSync(sourcePath, 'w');
+  fs.ftruncateSync(descriptor, (50 * 1024 * 1024) + 1);
+  fs.closeSync(descriptor);
+
+  const result = runLocalInventory(
+    ['inventory-agent', sourcePath, '--json'],
+    { temporary },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const inventory = JSON.parse(result.stdout);
+  assert.equal(inventory.entries.length, 1);
+  assert.equal(inventory.entries[0].status, 'unsupported');
+  assert.equal(
+    inventory.entries[0].reason_code,
+    'single-file-chunking-not-implemented',
+  );
+  assert.match(
+    inventory.entries[0].reason,
+    /explicitly selected split copy.*full ordering and coverage/u,
+  );
+  assert.doesNotMatch(
+    inventory.entries[0].reason,
+    /recoverable content batch/u,
+  );
 });
 
 test('structured filesystem references never persist the private lookup path', (t) => {
@@ -1374,6 +3900,7 @@ test('structured filesystem references never persist the private lookup path', (
     {
       temporary,
       input: JSON.stringify({
+        ...explicitEmptyCreationInput(),
         materials: [{ reference: material }],
       }),
     },
@@ -1392,6 +3919,7 @@ test('structured filesystem references never persist the private lookup path', (
 
   const declared = materialDescriptors(
     {
+      material_processing_policy: LOCAL_PROCESSING_POLICY,
       materials: [{
         path: material,
         source_created_at: '2020-01-01T00:00:00.000Z',
@@ -1482,11 +4010,167 @@ test('KDNA material digest and semantics use one immutable byte snapshot', (t) =
   assert.deepEqual(fs.readFileSync(materialPath), replacement);
 });
 
+test('KDNA card import mapping reports every card and unresolved judgment cards block acceptance', (t) => {
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const materialPath = path.join(temporary, 'mixed-source.kdna');
+  const bytes = Buffer.from('authorized source asset bytes');
+  fs.writeFileSync(materialPath, bytes);
+  const cards = [
+    {
+      id: 'complete-judgment',
+      type: 'axiom',
+      fields: {
+        statement: 'Prefer explicit evidence.',
+        rationale: 'Explicit evidence is reviewable.',
+        applies_when: ['reviewing a factual claim'],
+        does_not_apply_when: ['formatting prose'],
+        misuse_risk: 'Rejecting clearly labeled hypotheses',
+      },
+    },
+    {
+      id: 'incomplete-judgment',
+      type: 'principle',
+      fields: {
+        statement: 'Keep decisions reversible.',
+      },
+    },
+    {
+      id: 'supporting-attachment',
+      type: 'evidence',
+      fields: {
+        title: 'Source bibliography',
+      },
+    },
+    {
+      id: 'unknown-type-card',
+      fields: {
+        statement: 'Do not guess my card type.',
+      },
+    },
+  ];
+  const deps = {
+    runtimeCore: {
+      validate() {
+        return { overall_valid: true };
+      },
+      inspect() {
+        return { asset_id: 'kdna:test:mixed-source' };
+      },
+      planLoad() {
+        return { state: 'ready', can_load_now: true, issues: [] };
+      },
+      loadAuthorized() {
+        return {
+          type: 'kdna.runtime-capsule',
+          profile: 'full',
+          context: {
+            manifest: {
+              asset_id: 'kdna:test:mixed-source',
+              asset_uid: 'urn:uuid:mixed-source',
+              version: '1.0.0',
+            },
+            payload: {},
+          },
+        };
+      },
+    },
+    reimportCapsule() {
+      return { cards };
+    },
+  };
+  const loaded = currentKdnaMaterial(
+    { path: materialPath, derive_candidates: true },
+    deps,
+    null,
+  );
+  assert.equal(loaded.candidates.length, 1);
+  assert.deepEqual(loaded.mappingReport.summary, {
+    mapped: 1,
+    evidence_only: 1,
+    unsupported: 2,
+    user_excluded: 0,
+    total: 4,
+  });
+  assert.deepEqual(
+    loaded.mappingReport.entries.map((entry) => entry.source_card_id),
+    cards.map((card) => card.id),
+  );
+  assert.equal(
+    loaded.mappingReport.entries.every(
+      (entry) =>
+        /^sha256:[0-9a-f]{64}$/.test(entry.source_card_digest) &&
+        !Object.hasOwn(entry, 'fields'),
+    ),
+    true,
+  );
+
+  const engine = creationEngineForTest();
+  let workspace = engine.createWorkspace(null, {
+    mode: 'interpretive',
+    workflowMode: 'autonomous',
+    access: 'public',
+    createdBy: { type: 'agent', id: 'agent:importer' },
+  });
+  workspace = engine.ingestMaterial(workspace, loaded.material);
+  workspace = engine.recordImportMappingReport(
+    workspace,
+    loaded.mappingReport,
+  );
+  assert.equal(
+    workspace.unresolvedQuestions.filter(
+      (question) =>
+        question.kind === 'import_mapping_review' &&
+        question.status === 'open',
+    ).length,
+    2,
+  );
+  assert.ok(
+    engine.assessReadiness(workspace).blocking.some(
+      (item) => item.code === 'UNRESOLVED_QUESTION',
+    ),
+  );
+  const incomplete = loaded.mappingReport.entries.find(
+    (entry) => entry.source_card_id === 'incomplete-judgment',
+  );
+  workspace = engine.reviewImportMapping(workspace, {
+    mapping_id: loaded.mappingReport.id,
+    entry_id: incomplete.id,
+    decision: 'evidence-only',
+    actor: {
+      type: 'agent',
+      id: 'agent:independent-import-reviewer',
+    },
+    rationale:
+      'The card lacks the scope fields needed for a JudgmentUnit and remains source evidence.',
+  });
+  assert.equal(
+    workspace.importMappings[0].entries.find(
+      (entry) => entry.id === incomplete.id,
+    ).status,
+    'evidence-only',
+  );
+  assert.equal(
+    workspace.unresolvedQuestions.filter(
+      (question) =>
+        question.kind === 'import_mapping_review' &&
+        question.status === 'open',
+    ).length,
+    1,
+  );
+});
+
 test('confirmation and semantic acceptance require the reviewed workspace revision', (t) => {
   const temporary = temporaryDirectory();
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
   const workspace = path.join(temporary, 'creation');
-  const created = run(['create-agent', workspace, '--json'], { temporary });
+  const created = run(
+    ['create-agent', workspace, '--input-stdin', '--json'],
+    {
+      temporary,
+      input: JSON.stringify(explicitEmptyCreationInput()),
+    },
+  );
   assert.equal(created.status, 0, created.stderr);
   const revision = JSON.parse(created.stdout).workspace.revision;
   const confirmation = {
@@ -1533,7 +4217,9 @@ test('confirmation and semantic acceptance require the reviewed workspace revisi
       temporary,
       input: JSON.stringify({
         mode: 'agent-authored',
+        workflow_mode: 'autonomous',
         created_by: { type: 'agent', id: 'agent:mixed' },
+        access: 'public',
         purpose: {
           objective: 'Review claims',
           scope: 'Editorial review',
@@ -1568,6 +4254,7 @@ test('confirmation and semantic acceptance require the reviewed workspace revisi
             contrary_evidence: [
               'A clearly labeled hypothesis can remain useful without direct evidence.',
             ],
+            counterexample_search: boundedCounterexampleSearch(),
             source_refs: ['mixed-source'],
             confidence: 'high',
             card_type: 'axiom',
@@ -1582,6 +4269,7 @@ test('confirmation and semantic acceptance require the reviewed workspace revisi
             contrary_evidence: [
               'Low-stakes reversible decisions can justify lighter evidence.',
             ],
+            counterexample_search: boundedCounterexampleSearch(),
             source_refs: ['mixed-source'],
             confidence: 'high',
             card_type: 'axiom',
@@ -1947,189 +4635,35 @@ test('semantic projection compares authored judgment rather than container metad
   );
 });
 
-test('export fails closed when the durable verified byte snapshot is replaced', (t) => {
+test('managed candidate replay fails closed after exact bytes are replaced', (t) => {
   const temporary = temporaryDirectory();
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
-  const output = path.join(temporary, 'snapshot.kdna');
   const workspacePath = path.join(temporary, 'workspace');
-  const original = Buffer.from('verified packed Runtime snapshot');
-  const replacement = Buffer.from('hostile path replacement');
-  const project = {
-    author: { name: 'Snapshot Agent', id: 'agent:snapshot' },
-    lineage: { type: 'original' },
-    release: {
-      version: '1.0.0',
-      judgment_version: '1.0.0',
-    },
-    distillation_target: {
-      task_scope: 'Snapshot review',
-      include_areas: ['Snapshot review'],
-      exclude_areas: [],
-      load_condition: 'Before trusting a packed asset',
-    },
-    judgment_core: { highest_question: 'Are these the verified bytes?' },
-    source_core_structure: [],
-    cards: [],
-  };
-  const workspace = {
-    state: {
-      semantic_revision: 7,
-      semantic_digest: `sha256:${'1'.repeat(64)}`,
-    },
-    exportPlan: {
-      version: '1.0.0',
-      judgment_version: '1.0.0',
-    },
-  };
-  const observed = [];
-  let operationReceipt = null;
-  const assertSnapshot = (input) => {
-    assert.equal(Buffer.isBuffer(input), true);
-    assert.deepEqual(input, original);
-    observed.push(Buffer.from(input));
-  };
-  let fullCapsule = null;
-  let reimportedCapsule = null;
-  const engine = {
-    operationCoordinate() {
-      return {
-        semantic_revision: 7,
-        semantic_digest: `sha256:${'1'.repeat(64)}`,
-        export_plan_digest: `sha256:${'3'.repeat(64)}`,
-        workspace_status: 'ready_to_export',
-        history_length: 1,
-      };
-    },
-    assessReadiness() {
-      return { creation_accepted: true };
-    },
-    compileProject() {
-      return { project };
-    },
-    recordBuildReceipt(current, receipt) {
-      return { ...current, buildReceipt: receipt };
-    },
-    resolveOperation() {
-      return operationReceipt;
-    },
-    prepareExportOperation(current, input) {
-      operationReceipt = {
-        ...input,
-        status: 'prepared',
-        before: input.before,
-        asset_digest: null,
-      };
-      return current;
-    },
-    verifyExportOperation(current, input) {
-      operationReceipt = {
-        ...operationReceipt,
-        status: 'verified',
-        asset_digest: input.asset_digest,
-      };
-      return current;
-    },
-    completeExportOperation(current) {
-      operationReceipt = {
-        ...operationReceipt,
-        status: 'completed',
-      };
-      return current;
-    },
-    saveWorkspace(_pathname, current) {
-      return current;
-    },
-  };
-  let failure;
-  assert.throws(() =>
-    exportAgentWorkspace(
-      engine,
-      workspacePath,
-      workspace,
-      ['--out', output],
-      {
-      exportRuntime: {
-        exportRuntimeAsset() {
-          return {
-            files: {
-              mimetype: Buffer.from('application/vnd.kdna'),
-              'kdna.json': Buffer.from('{}'),
-              'payload.kdnab': Buffer.from('payload'),
-              'checksums.json': Buffer.from('{}'),
-            },
-          };
-        },
-      },
-      runtimeCore: {
-        pack(_directory, candidatePath) {
-          fs.writeFileSync(candidatePath, original);
-        },
-        validate(input) {
-          assertSnapshot(input);
-          const durableCandidate = fs
-            .readdirSync(temporary)
-            .find((name) => name.includes('.creation-') && name.endsWith('.candidate'));
-          assert.ok(durableCandidate);
-          fs.writeFileSync(path.join(temporary, durableCandidate), replacement);
-          return { overall_valid: true };
-        },
-        inspect(input) {
-          assertSnapshot(input);
-          return {
-            version: '1.0.0',
-            judgment_version: '1.0.0',
-          };
-        },
-        planLoad(input) {
-          assertSnapshot(input);
-          return { state: 'ready', can_load_now: true, issues: [] };
-        },
-        loadAuthorized(input, options) {
-          assertSnapshot(input);
-          const capsule = {
-            type: 'kdna.runtime-capsule',
-            profile: options.profile,
-            context: { manifest: {}, payload: {} },
-          };
-          if (options.profile === 'full') fullCapsule = capsule;
-          return capsule;
-        },
-      },
-      reimportCapsule(capsule) {
-        reimportedCapsule = capsule;
-        return JSON.parse(JSON.stringify(project));
-      },
-      cliVersion: '@aikdna/kdna-studio-cli@test',
-      studioCoreVersion: '@aikdna/kdna-studio-core@test',
-      runtimeCoreVersion: '@aikdna/kdna-core@test',
-      },
-      {
-        operation_id: 'export:snapshot',
-        command: 'export-agent',
-        request_digest: `sha256:${'2'.repeat(64)}`,
-      },
-      {
-        semantic_revision: 7,
-        semantic_digest: `sha256:${'1'.repeat(64)}`,
-        export_plan_digest: `sha256:${'3'.repeat(64)}`,
-        workspace_status: 'ready_to_export',
-        history_length: 1,
-      },
-    ),
-    (error) => {
-      failure = error;
-      return true;
-    },
+  prepareAcceptedWorkspace(temporary, workspacePath);
+  const args = [
+    'export-agent',
+    workspacePath,
+    '--operation-id',
+    'export:snapshot',
+    '--json',
+  ];
+  let result = run(args, { temporary });
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  const managedPath = path.join(
+    workspacePath,
+    'managed-candidate',
+    'managed-candidate.kdna',
   );
+  const original = fs.readFileSync(managedPath);
+  fs.writeFileSync(managedPath, Buffer.from('hostile path replacement'));
 
-  assert.equal(observed.length, 5, failure.message);
-  assert.equal(reimportedCapsule, fullCapsule);
-  assert.equal(failure.code, 'export_recovery_invalid');
-  assert.equal(fs.existsSync(output), false);
-  assert.equal(operationReceipt.status, 'verified');
+  result = run(args, { temporary });
+  assert.equal(result.status, 5);
+  assert.equal(JSON.parse(result.stdout).error.code, 'creation_failed');
+  assert.notDeepEqual(fs.readFileSync(managedPath), original);
   assert.equal(
-    operationReceipt.asset_digest,
-    `sha256:${crypto.createHash('sha256').update(original).digest('hex')}`,
+    fs.existsSync(path.join(temporary, 'snapshot.kdna')),
+    false,
   );
 });
 
@@ -2176,238 +4710,43 @@ test('exact Runtime verification rejects an old release coordinate', () => {
   assert.equal(loadPlanned, false);
 });
 
-test('export-agent verifies, re-imports, compares, and receipts an accepted creation', (t) => {
+test('export-agent creates only a verified managed candidate', (t) => {
   const temporary = temporaryDirectory();
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
   const workspacePath = path.join(temporary, 'creation');
-  const output = path.join(temporary, 'dist', 'accepted.kdna');
+  const userOutput = path.join(temporary, 'dist', 'accepted.kdna');
   const engine = creationEngineForTest();
   prepareAcceptedWorkspace(temporary, workspacePath);
 
   const result = run([
     'export-agent',
     workspacePath,
-    '--out',
-    output,
-    '--input-stdin',
+    '--operation-id',
+    'candidate:accepted',
     '--json',
-  ], { temporary, input: '{}' });
+  ], { temporary });
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
   const response = JSON.parse(result.stdout);
-  assert.equal(response.export.format_valid, true);
-  assert.equal(response.export.creation_accepted, true);
-  assert.equal(fs.existsSync(output), true);
+  assert.equal(response.candidate.format_valid, true);
+  assert.equal(response.candidate.application_verified, false);
+  assert.equal(response.candidate.creation_complete, false);
+  assert.equal(fs.existsSync(userOutput), false);
 
   const restored = engine.loadWorkspace(workspacePath);
-  assert.equal(restored.buildReceipt.status, 'verified');
-  assert.equal(restored.buildReceipt.development_baseline, undefined);
-  assert.equal(restored.buildReceipt.development_runtime, undefined);
+  const managed = engine.readManagedCandidate(workspacePath, restored);
   assert.equal(
-    restored.operations.every(
-      (operation) => operation.development_runtime === null,
-    ),
-    true,
+    sha256Digest(managed.bytes),
+    restored.buildReceipt.asset_digest,
   );
+  assert.equal(restored.buildReceipt.status, 'verified');
   assert.equal(restored.buildReceipt.results.validate.status, 'pass');
   assert.equal(restored.buildReceipt.results.reimport.status, 'pass');
   assert.equal(
     restored.buildReceipt.results.semantic_round_trip.status,
     'pass',
   );
-  const studioCoreCoordinate = restored.buildReceipt.tool_coordinates.studio_core;
-  assert.equal(studioCoreCoordinate.package, '@aikdna/kdna-studio-core');
-  assert.ok(
-    ['installed-package', 'source-checkout'].includes(
-      studioCoreCoordinate.distribution,
-    ),
-  );
-  if (studioCoreCoordinate.distribution === 'source-checkout') {
-    assert.match(
-      studioCoreCoordinate.source_tree_digest,
-      /^sha256:[0-9a-f]{64}$/,
-    );
-  }
-
-  const derivedPath = path.join(temporary, 'derived');
-  const derivedStatus = createDerivationWorkspace(
-    temporary,
-    derivedPath,
-    'agent:derived',
-    output,
-  );
-  assert.equal(derivedStatus.materials[0].kind, 'kdna');
-  assert.equal(derivedStatus.judgments[0].review_state, 'proposed');
-  assert.equal(derivedStatus.judgments[0].confirmation_state, 'not-required');
-  assert.equal(derivedStatus.next_action.action, 'promote_candidate');
-  const materialArtifact = fs.readFileSync(
-    path.join(derivedPath, 'materials-index.json'),
-    'utf8',
-  );
-  assert.equal(materialArtifact.includes(output), false);
-  assert.equal(materialArtifact.includes('payload.kdnab'), false);
-
-  let derivedResult = run(
-    ['review', derivedPath, '--input-stdin', '--json'],
-    {
-      temporary,
-      input: JSON.stringify({
-        material_decisions: [
-          {
-            id: derivedStatus.materials[0].id,
-            changes: { in_scope: true },
-            reviewed_by: {
-              type: 'agent',
-              id: 'agent:derived',
-            },
-            review_reason:
-              'The exact verified parent asset is in scope for this bounded derivation.',
-          },
-        ],
-        candidate_decisions: [
-          {
-            id: derivedStatus.judgments[0].id,
-            decision: 'promote',
-            changes: { unit_id: 'unit-derived' },
-          },
-        ],
-      }),
-    },
-  );
-  assert.equal(
-    derivedResult.status,
-    0,
-    `${derivedResult.stderr}\n${derivedResult.stdout}`,
-  );
-  const derivedRevision = JSON.parse(derivedResult.stdout).workspace.revision;
-  const derivedActor = { type: 'agent', id: 'agent:derived' };
-  const representedAgent = derivedStatus.purpose.represented_subject;
-  derivedResult = run(
-    ['try', derivedPath, '--input-stdin', '--json'],
-    {
-      temporary,
-      input: JSON.stringify({
-        expected_revision: derivedRevision,
-        tests: [
-          {
-            id: 'derived-applicable',
-            kind: 'applicable',
-            input: 'A causal claim has one narrow observation.',
-            expected: 'Check whether the observation supports the claim scope.',
-            unit_ids: ['unit-derived'],
-          },
-          {
-            id: 'derived-counterexample',
-            kind: 'counterexample',
-            input: 'A heading needs capitalization.',
-            expected: 'Do not require causal evidence for formatting.',
-            unit_ids: ['unit-derived'],
-          },
-          {
-            id: 'derived-boundary',
-            kind: 'boundary',
-            input: 'No source supports the claim.',
-            expected: 'State the gap and do not invent evidence.',
-            boundary_ids: ['boundary_1'],
-          },
-        ],
-        test_results: [
-          {
-            test_id: 'derived-applicable',
-            result: 'pass',
-            evaluated_by: derivedActor,
-          },
-          {
-            test_id: 'derived-counterexample',
-            result: 'pass',
-            evaluated_by: derivedActor,
-          },
-          {
-            test_id: 'derived-boundary',
-            result: 'pass',
-            evaluated_by: derivedActor,
-            acceptance: {
-              accepted: true,
-              actor: representedAgent,
-              statement:
-                'As the distinct represented Agent, I accept the derived semantic examples.',
-            },
-          },
-        ],
-      }),
-    },
-  );
-  assert.equal(
-    derivedResult.status,
-    0,
-    `${derivedResult.stderr}\n${derivedResult.stdout}`,
-  );
-  const derivedTried = JSON.parse(derivedResult.stdout);
-  assert.equal(
-    derivedTried.readiness.creation_accepted,
-    true,
-    JSON.stringify(derivedTried.readiness.blocking),
-  );
-  const derivedOutput = path.join(temporary, 'dist', 'derived.kdna');
-  derivedResult = run([
-    'export-agent',
-    derivedPath,
-    '--out',
-    derivedOutput,
-    '--json',
-  ], { temporary });
-  assert.equal(
-    derivedResult.status,
-    0,
-    `${derivedResult.stderr}\n${derivedResult.stdout}`,
-  );
-  const runtimeCore = require('@aikdna/kdna-core');
-  const sourceManifest = runtimeCore.readLayout(output).manifest;
-  const derivedManifest = runtimeCore.readLayout(derivedOutput).manifest;
-  const sourceDigest = `sha256:${crypto
-    .createHash('sha256')
-    .update(fs.readFileSync(output))
-    .digest('hex')}`;
-  assert.equal(derivedManifest.lineage.type, 'fork');
-  assert.equal(
-    derivedManifest.lineage.parent_asset_id,
-    sourceManifest.asset_id,
-  );
-  assert.equal(
-    derivedManifest.lineage.parent_asset_uid,
-    sourceManifest.asset_uid,
-  );
-  assert.equal(
-    derivedManifest.lineage.parent_version,
-    sourceManifest.version,
-  );
-  assert.equal(
-    derivedManifest.lineage.parent_asset_digest,
-    sourceDigest,
-  );
-  const derivedWorkspace = engine.loadWorkspace(derivedPath);
-  assert.equal(derivedWorkspace.confirmationReceipts.length, 0);
-
-  const ambiguousPath = path.join(temporary, 'ambiguous-derivation');
-  const ambiguous = run(
-    ['create-agent', ambiguousPath, '--input-stdin', '--json'],
-    {
-      temporary,
-      input: JSON.stringify({
-        mode: 'agent-authored',
-        created_by: { type: 'agent', id: 'agent:ambiguous' },
-        from_kdna: [
-          { path: output },
-          { path: output },
-        ],
-      }),
-    },
-  );
-  assert.equal(ambiguous.status, 2);
-  assert.equal(
-    JSON.parse(ambiguous.stdout).error.code,
-    'primary_lineage_required',
-  );
-  assert.equal(fs.existsSync(ambiguousPath), false);
+  assert.equal(restored.applicationVerification.receipts.length, 0);
+  assert.equal(fs.existsSync(userOutput), false);
 });
 
 test('resume can advance only the distributed version before a same-semantic rebuild', (t) => {
@@ -2420,7 +4759,13 @@ test('resume can advance only the distributed version before a same-semantic reb
   prepareAcceptedWorkspace(temporary, workspacePath);
 
   let result = run(
-    ['export-agent', workspacePath, '--out', firstOutput, '--json'],
+    [
+      'export-agent',
+      workspacePath,
+      '--operation-id',
+      'candidate:first-version',
+      '--json',
+    ],
     { temporary },
   );
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
@@ -2544,7 +4889,13 @@ test('resume can advance only the distributed version before a same-semantic reb
   assert.equal(updatedGates.creation_complete, false);
 
   result = run(
-    ['export-agent', workspacePath, '--out', secondOutput, '--json'],
+    [
+      'export-agent',
+      workspacePath,
+      '--operation-id',
+      'candidate:second-version',
+      '--json',
+    ],
     { temporary },
   );
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
@@ -2561,8 +4912,8 @@ test('resume can advance only the distributed version before a same-semantic reb
   assert.equal(updatedGates.format_valid, true);
   assert.equal(updatedGates.application_verified, false);
   assert.equal(updatedGates.creation_complete, false);
-  assert.equal(fs.existsSync(firstOutput), true);
-  assert.equal(fs.existsSync(secondOutput), true);
+  assert.equal(fs.existsSync(firstOutput), false);
+  assert.equal(fs.existsSync(secondOutput), false);
 });
 
 test('non-axiom creation cannot cross the Core format-valid gate', (t) => {
@@ -2580,7 +4931,7 @@ test('non-axiom creation cannot cross the Core format-valid gate', (t) => {
   assert.equal(before.judgmentModel.units.length, 1);
   assert.equal(before.judgmentModel.units[0].card_type, 'reasoning');
   assert.equal(beforeReadiness.compile_ready, true);
-  assert.equal(beforeReadiness.creation_accepted, true);
+  assert.equal(beforeReadiness.judgment_accepted, true);
   assert.equal(
     beforeReadiness.completion_gates.judgment_accepted,
     true,
@@ -2590,7 +4941,7 @@ test('non-axiom creation cannot cross the Core format-valid gate', (t) => {
 
   const exactCore = currentCorePreload(temporary);
   const result = run(
-    ['export-agent', workspacePath, '--out', output, '--json'],
+    ['export-agent', workspacePath, '--json'],
     {
       temporary,
       env: exactCore.env,
@@ -2608,7 +4959,7 @@ test('non-axiom creation cannot cross the Core format-valid gate', (t) => {
   const afterReadiness = engine.assessReadiness(after);
   assert.equal(after.buildReceipt, null);
   assert.equal(afterReadiness.compile_ready, true);
-  assert.equal(afterReadiness.creation_accepted, true);
+  assert.equal(afterReadiness.judgment_accepted, true);
   assert.equal(
     afterReadiness.completion_gates.judgment_accepted,
     true,
@@ -2617,89 +4968,238 @@ test('non-axiom creation cannot cross the Core format-valid gate', (t) => {
   assert.equal(afterReadiness.completion_gates.creation_complete, false);
 });
 
-test('candidate baseline is runtime-derived and caller baseline cannot mint evidence', () => {
-  const bound = syntheticDevelopmentBaseline();
-  const runtime = {
-    schema: 'aikdna.creation-build-runtime/0.1.0',
-    evidence_class: 'IMMUTABLE_WP0_CANDIDATE_ARTIFACT_RUNTIME',
-    candidate_runtime_receipt_sha256: sha256Digest('receipt'),
-    candidate_runtime_tree_sha256: sha256Digest('tree'),
-    cli_entrypoint_sha256: sha256Digest('cli'),
-    bom_semantic_digest: bound.bom_semantic_digest,
-    bom_file_digest: bound.bom_file_digest,
-  };
-  assert.deepEqual(
-    resolveDevelopmentBaseline({
-      developmentRuntime: runtime,
-      developmentBaseline: bound,
-    }),
-    bound,
-  );
-  assert.deepEqual(
-    resolveDevelopmentBaseline({
-      developmentRuntime: runtime,
-      developmentBaseline: bound,
-    }, JSON.parse(JSON.stringify(bound))),
-    bound,
-  );
-
-  const forged = JSON.parse(JSON.stringify(bound));
-  forged.tools.core.candidate_artifact_digest = sha256Digest('forged');
-  assert.throws(
-    () => resolveDevelopmentBaseline({
-      developmentRuntime: runtime,
-      developmentBaseline: bound,
-    }, forged),
-    /does not match the adjacent WP0 candidate runtime receipt/,
-  );
-  assert.throws(
-    () => resolveDevelopmentBaseline({}, bound),
-    /cannot establish candidate evidence without an adjacent immutable WP0 runtime receipt/,
-  );
-  assert.throws(
-    () => resolveDevelopmentBaseline({
-      developmentRuntime: runtime,
-    }),
-    /does not provide its exact development baseline/,
-  );
-});
-
-test('source-only export rejects a caller baseline before creating export state', (t) => {
+test('official application orchestrator hides role machinery and completes the exact managed candidate', async (t) => {
   const temporary = temporaryDirectory();
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
   const workspacePath = path.join(temporary, 'creation');
-  const output = path.join(temporary, 'dist', 'forged-candidate.kdna');
   const engine = creationEngineForTest();
   prepareAcceptedWorkspace(temporary, workspacePath);
-
-  const before = engine.loadWorkspace(workspacePath);
-  const result = run([
-    'export-agent',
-    workspacePath,
-    '--out',
-    output,
-    '--input-stdin',
-    '--json',
-  ], {
-    temporary,
-    input: JSON.stringify({
-      development_baseline: syntheticDevelopmentBaseline(),
-    }),
-  });
-  assert.equal(result.status, 5, `${result.stderr}\n${result.stdout}`);
-  assert.equal(
-    JSON.parse(result.stdout).error.code,
-    'candidate_runtime_invalid',
+  const candidate = run(
+    [
+      'export-agent',
+      workspacePath,
+      '--operation-id',
+      'candidate:official-orchestrator',
+      '--json',
+    ],
+    { temporary },
   );
-  assert.equal(fs.existsSync(output), false);
-
-  const after = engine.loadWorkspace(workspacePath);
-  assert.equal(after.buildReceipt, null);
-  assert.equal(after.operations.length, before.operations.length);
-  assert.equal(after.state.revision, before.state.revision);
   assert.equal(
-    engine.assessReadiness(after).completion_gates.format_valid,
+    candidate.status,
+    0,
+    `${candidate.stderr}\n${candidate.stdout}`,
+  );
+  const applicationHost = deterministicApplicationHost();
+  const result = await orchestrateApplicationVerification(
+    engine,
+    workspacePath,
+    engine.loadWorkspace(workspacePath),
+    [],
+    {
+      runtimeCore: require('@aikdna/kdna-core'),
+      applicationHost,
+    },
+  );
+  assert.equal(result.application.application_verified, true);
+  assert.equal(result.application.creation_complete, true);
+  assert.equal(result.application.task_count, 2);
+  assert.equal(result.application.repetition_count, 3);
+  assert.equal(
+    result.application.causal_difference,
+    'not-evaluated-with-only',
+  );
+  assert.deepEqual(applicationHost.counts(), {
+    consumerRuns: 3,
+    evaluatorRuns: 3,
+  });
+  const reloaded = engine.loadWorkspace(workspacePath);
+  assert.equal(
+    engine.assessReadiness(reloaded)
+      .completion_gates.creation_complete,
+    true,
+  );
+  const persisted = Object.entries(directorySnapshot(workspacePath))
+    .filter(([name]) => name.endsWith('.json'))
+    .map(([, bytes]) => bytes.toString('utf8'))
+    .join('\n');
+  assert.equal(persisted.includes('BEGIN PRIVATE KEY'), false);
+  assert.equal(
+    persisted.includes('A formatting-only edit has no factual claim.'),
     false,
+  );
+  assert.equal(
+    persisted.includes('Exit without applying the factual-evidence judgment.'),
+    false,
+  );
+});
+
+test('public guide routes the application gate through the official orchestrator without exposing role keys', (t) => {
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const workspacePath = path.join(temporary, 'creation');
+  prepareAcceptedWorkspace(temporary, workspacePath);
+  const candidate = run(
+    [
+      'export-agent',
+      workspacePath,
+      '--operation-id',
+      'candidate:guide-application',
+      '--json',
+    ],
+    { temporary },
+  );
+  assert.equal(candidate.status, 0);
+  const result = run(
+    ['guide-agent', workspacePath, '--json'],
+    { temporary },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  const guide = JSON.parse(result.stdout);
+  assert.equal(
+    guide.command,
+    'kdna-studio verify-application-agent <workspace> --json',
+  );
+  assert.deepEqual(guide.input_contract.required, []);
+  assert.equal(Object.hasOwn(guide, 'blocker'), false);
+  assert.equal(
+    JSON.stringify(guide).includes('private_key'),
+    false,
+  );
+  assert.match(
+    guide.notes.join('\n'),
+    /must not hand-compose role keys/i,
+  );
+});
+
+test('application orchestrator failure persists a recoverable plan and attempt without any signed receipt or key material', async (t) => {
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const workspacePath = path.join(temporary, 'creation');
+  const engine = creationEngineForTest();
+  prepareAcceptedWorkspace(temporary, workspacePath);
+  const candidate = run(
+    [
+      'export-agent',
+      workspacePath,
+      '--operation-id',
+      'candidate:failed-orchestrator',
+      '--json',
+    ],
+    { temporary },
+  );
+  assert.equal(candidate.status, 0);
+  const applicationHost = deterministicApplicationHost({
+    async runEvaluator() {
+      const error = new Error('injected evaluator failure');
+      error.code = 'injected_evaluator_failure';
+      throw error;
+    },
+  });
+  await assert.rejects(
+    orchestrateApplicationVerification(
+      engine,
+      workspacePath,
+      engine.loadWorkspace(workspacePath),
+      [],
+      {
+        runtimeCore: require('@aikdna/kdna-core'),
+        applicationHost,
+      },
+    ),
+    /injected evaluator failure/,
+  );
+  const after = directorySnapshot(workspacePath);
+  const reloaded = engine.loadWorkspace(workspacePath);
+  assert.ok(
+    reloaded.applicationVerification.plans.length >= 1,
+    'the frozen application plan must survive for recovery',
+  );
+  assert.ok(
+    reloaded.applicationVerification.attempts.length >= 1,
+    'the issued single-use attempt must be durably saved before external role execution',
+  );
+  assert.equal(
+    reloaded.applicationVerification.receipts.length,
+    0,
+    'a failed orchestration must never persist a signed receipt',
+  );
+  assert.equal(
+    Object.values(after).some((bytes) =>
+      bytes.includes(Buffer.from('BEGIN PRIVATE KEY'))),
+    false,
+    'role key material must never be written to the workspace',
+  );
+  const resumed = engine.nextAction(reloaded);
+  assert.equal(
+    resumed.action,
+    'record_application_asset_observation',
+    'a fresh Agent must be able to resume the durable recovery point',
+  );
+});
+
+test('installed Codex adapter can complete a fresh-context application smoke', {
+  skip:
+    process.env.KDNA_REAL_CODEX_APPLICATION_SMOKE !== '1',
+  timeout: 30 * 60 * 1000,
+}, async (t) => {
+  const temporary = temporaryDirectory();
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const workspacePath = path.join(temporary, 'creation');
+  const engine = creationEngineForTest();
+  prepareAcceptedWorkspace(temporary, workspacePath);
+  const candidate = run(
+    [
+      'export-agent',
+      workspacePath,
+      '--operation-id',
+      'candidate:real-codex-application-smoke',
+      '--json',
+    ],
+    { temporary },
+  );
+  assert.equal(candidate.status, 0);
+  const result = await orchestrateApplicationVerification(
+    engine,
+    workspacePath,
+    engine.loadWorkspace(workspacePath),
+    [],
+    {
+      runtimeCore: require('@aikdna/kdna-core'),
+    },
+  );
+  assert.equal(result.application.application_verified, true);
+  assert.equal(result.application.creation_complete, true);
+});
+
+
+test('isolated application Host must stay deny-by-default and never inherit the parent environment', () => {
+  const hostSource = fs.readFileSync(
+    path.join(ROOT, 'src', 'application-host.js'),
+    'utf8',
+  );
+  assert.equal(
+    hostSource.includes("'(allow default)'"),
+    false,
+    'the isolated application Host must not start from an allow-all OS sandbox',
+  );
+  assert.ok(
+    hostSource.includes("'(deny default)'"),
+    'the isolated application Host must start from a deny-by-default OS sandbox',
+  );
+  assert.ok(
+    /\('allow process-exec \(literal/.test(hostSource) ||
+    /allow process-exec \(literal \$\{/.test(hostSource),
+    'only the already selected native Host executable may execute inside the role',
+  );
+  assert.equal(
+    hostSource.includes('env: {\n      ...process.env'),
+    false,
+    'the isolated role process must not inherit the entire parent environment',
+  );
+  assert.equal(
+    /env:\s*\{\s*\.\.\.process\.env/.test(hostSource),
+    false,
+    'the role process environment must be an explicit allowlist',
   );
 });
 
@@ -2739,15 +5239,45 @@ test('official Creation CLI completes only after attempt, exact-asset observatio
     'A perturbed control formatting task preserves the same supported wording.',
   ];
   result = run(
-    ['export-agent', workspacePath, '--out', output, '--json'],
+    [
+      'export-agent',
+      workspacePath,
+      '--operation-id',
+      'candidate:triple-gated',
+      '--json',
+    ],
     { temporary },
   );
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
   let response = JSON.parse(result.stdout);
-  assert.equal(response.export.format_valid, true);
-  assert.equal(response.export.application_verified, false);
-  assert.equal(response.export.creation_complete, false);
+  assert.equal(response.candidate.format_valid, true);
+  assert.equal(response.candidate.application_verified, false);
+  assert.equal(response.candidate.creation_complete, false);
+  assert.equal(fs.existsSync(output), false);
   const builtWorkspace = engine.loadWorkspace(workspacePath);
+  const candidatePath = path.join(
+    workspacePath,
+    'managed-candidate',
+    'managed-candidate.kdna',
+  );
+  result = run(
+    [
+      'finalize-agent',
+      workspacePath,
+      '--out',
+      output,
+      '--operation-id',
+      'finalize:too-early',
+      '--json',
+    ],
+    { temporary },
+  );
+  assert.equal(result.status, 4);
+  assert.equal(
+    JSON.parse(result.stdout).error.code,
+    'creation_not_complete',
+  );
+  assert.equal(fs.existsSync(output), false);
   result = run(
     ['try', workspacePath, '--input-stdin', '--json'],
     {
@@ -2758,7 +5288,7 @@ test('official Creation CLI completes only after attempt, exact-asset observatio
           workspacePath,
           {
           id: 'application-plan-cli',
-          verification_contract: 'adoption-fidelity',
+          verification_contract: 'application-adoption-fidelity',
           evidence_set: 'fresh-hidden-holdout',
           response_mode: 'free-response',
           frozen_by: {
@@ -2778,30 +5308,40 @@ test('official Creation CLI completes only after attempt, exact-asset observatio
               builtWorkspace.buildReceipt,
             ),
           asset_digest: builtWorkspace.buildReceipt.asset_digest,
+          repetition_policy: {
+            claim: 'stability',
+            repetitions: 3,
+            task_ids: ['application-task-2'],
+          },
+          risk_profile: {
+            classification: 'low',
+            external_actions: false,
+            permission_sensitive: false,
+            rationale_digest: sha256Digest(
+              'low-risk-editorial-application-profile',
+            ),
+          },
           tasks: taskInputs.map((input, index) => ({
             id: `application-task-${index + 1}`,
             input_digest: sha256Digest(input),
-            risk_level: index === 0 ? 'critical' : 'high',
+            risk_level: 'normal',
             unit_ids: ['unit-evidence'],
-            boundary_ids: [],
+            boundary_ids:
+              index % 2 === 1 ? ['boundary-no-invention'] : [],
             semantic_test_id: null,
             perturbation_group: 'causal-claim-pair',
-            fork_id: index === 0
-              ? 'authorization-boundary-fork'
-              : 'causal-direction-fork',
-            verification_dimensions: index === 0
-              ? [
-                'scope',
-                'boundary',
-                'exception',
-                'priority',
-                'authority-precedence',
-                'safety',
-                'permission',
-                'external-action',
-                'exit',
-              ]
-              : ['direction', 'stability'],
+            execution_mode: 'with-only',
+            fork_id: index % 2 === 0
+              ? 'causal-direction-fork'
+              : 'editorial-boundary-fork',
+            verification_dimensions:
+              index % 2 === 0
+                ? ['direction', 'scope']
+                : (
+                    index === 1
+                      ? ['boundary', 'exit', 'stability']
+                      : ['boundary', 'exit']
+                  ),
           })),
           thresholds: {
             stability_rate_min: 0.9,
@@ -2816,7 +5356,7 @@ test('official Creation CLI completes only after attempt, exact-asset observatio
             priority_failures_max: 0,
             authority_precedence_failures_max: 0,
             exit_failures_max: 0,
-            adoption_failures_max: 0,
+            fidelity_failures_max: 0,
           },
           },
           creationKeys,
@@ -2876,7 +5416,7 @@ test('official Creation CLI completes only after attempt, exact-asset observatio
       'try',
       workspacePath,
       '--asset',
-      output,
+      candidatePath,
       '--input-stdin',
       '--json',
     ],
@@ -2894,7 +5434,7 @@ test('official Creation CLI completes only after attempt, exact-asset observatio
       'try',
       workspacePath,
       '--asset',
-      output,
+      candidatePath,
       '--input-stdin',
       '--json',
     ],
@@ -2915,7 +5455,7 @@ test('official Creation CLI completes only after attempt, exact-asset observatio
       'try',
       workspacePath,
       '--asset',
-      output,
+      candidatePath,
       '--input-stdin',
       '--json',
     ],
@@ -3089,7 +5629,7 @@ test('official Creation CLI completes only after attempt, exact-asset observatio
       'try',
       workspacePath,
       '--asset',
-      output,
+      candidatePath,
       '--input-stdin',
       '--json',
     ],
@@ -3118,7 +5658,7 @@ test('official Creation CLI completes only after attempt, exact-asset observatio
       'try',
       workspacePath,
       '--asset',
-      output,
+      candidatePath,
       '--input-stdin',
       '--json',
     ],
@@ -3147,46 +5687,68 @@ test('official Creation CLI completes only after attempt, exact-asset observatio
   const taskResults = plan.tasks.map((task) => ({
     task_id: task.id,
     input_digest: task.input_digest,
-    with_kdna: {
-      direction: 'apply',
-      reason_codes: ['DECLARED_JUDGMENT_APPLIED'],
-      reason_digest: sha256Digest(`${task.id}:with:reason`),
-      boundary_ids: [],
-      exception_ids: [],
-      exit: 'completed',
-      over_applied: false,
-      authorization_outcome: 'not-required',
-      output_digest: sha256Digest(`${task.id}:with:output`),
-      asset_digest: assetDigest,
-    },
-    without_kdna: {
-      direction: 'defer',
-      reason_codes: ['NO_PERSONA_AUTHORITY'],
-      reason_digest: sha256Digest(`${task.id}:without:reason`),
-      boundary_ids: [],
-      exception_ids: [],
-      exit: 'completed',
-      over_applied: false,
-      authorization_outcome: 'not-required',
-      output_digest: sha256Digest(`${task.id}:without:output`),
-      asset_digest: null,
-    },
+    with_kdna: scenarioTaskLane(task, {
+      assetDigest,
+      label: 'with',
+    }),
+    without_kdna: null,
     evaluation: {
       faithful: true,
-      direction_correct: true,
-      scope_correct: true,
-      boundary_correct: true,
-      exception_correct: true,
-      priority_correct: true,
-      authority_precedence_correct: true,
-      exit_correct: true,
-      stable: true,
-      critical_safety_error: false,
-      permission_violation: false,
-      external_action_violation: false,
+      direction_correct:
+        task.verification_dimensions.includes('direction') ? true : null,
+      scope_correct:
+        task.verification_dimensions.includes('scope') ? true : null,
+      boundary_correct:
+        task.verification_dimensions.includes('boundary') ? true : null,
+      exception_correct: null,
+      priority_correct: null,
+      authority_precedence_correct: null,
+      exit_correct:
+        task.verification_dimensions.includes('exit') ? true : null,
+      critical_safety_error: null,
+      permission_violation: null,
+      external_action_violation: null,
+      over_application_error: false,
+      causal_difference: 'not-evaluated',
+      faithful_reason_digest:
+        sha256Digest(`${task.id}:faithful-reason`),
+      dimension_reason_digests: Object.fromEntries(
+        task.verification_dimensions
+          .filter((dimension) => dimension !== 'stability')
+          .map((dimension) => [
+          dimension,
+          sha256Digest(`${task.id}:${dimension}:reason`),
+        ]),
+      ),
       reason_codes: ['ORACLE_MATCH'],
     },
   }));
+  const repetitions = Array.from({ length: 3 }, (_, offset) => {
+    const index = offset + 1;
+    const currentTaskResults = applicationTaskResultsForRepetition(
+      plan,
+      taskResults,
+      index,
+    );
+    return {
+      index,
+      consumer_run_digest: index === 1
+        ? consumerRunDigest
+        : sha256Digest(`consumer-run-coordinate-${index}`),
+      consumer_runner_digest: index === 1
+        ? consumerRunnerDigest
+        : sha256Digest(`consumer-runner-coordinate-${index}`),
+      evaluator_run_digest:
+        sha256Digest(`evaluator-run-coordinate-${index}`),
+      evaluator_runner_digest:
+        sha256Digest(`evaluator-runner-coordinate-${index}`),
+      consumer_output_digest:
+        applicationConsumerOutputDigest(currentTaskResults),
+      evaluator_output_digest:
+        applicationEvaluatorOutputDigest(currentTaskResults),
+      task_results: currentTaskResults,
+    };
+  });
   const receiptBase = {
     id: 'application-receipt-cli',
     attempt_id: attempt.id,
@@ -3209,11 +5771,7 @@ test('official Creation CLI completes only after attempt, exact-asset observatio
       observation.asset_load_receipt_digest,
     consumer: { type: 'agent', id: consumerKeys.identity.id },
     evaluated_by: { type: 'agent', id: evaluatorKeys.identity.id },
-    consumer_run_digest: consumerRunDigest,
-    runner_digest: consumerRunnerDigest,
-    evaluator_run_digest: sha256Digest('evaluator-run-coordinate'),
-    evaluator_runner_digest: sha256Digest('evaluator-runner-coordinate'),
-    task_results: taskResults,
+    repetitions,
   };
   const consumerPayload =
     engine.applicationConsumerSigningPayload(receiptBase);
@@ -3253,13 +5811,25 @@ test('official Creation CLI completes only after attempt, exact-asset observatio
   assert.equal(response.next_action.action, 'complete');
 
   result = run(
-    ['export-agent', workspacePath, '--out', output, '--json'],
+    [
+      'finalize-agent',
+      workspacePath,
+      '--out',
+      output,
+      '--operation-id',
+      'finalize:triple-gated',
+      '--json',
+    ],
     { temporary },
   );
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
   response = JSON.parse(result.stdout);
   assert.equal(response.export.application_verified, true);
   assert.equal(response.export.creation_complete, true);
+  assert.deepEqual(
+    fs.readFileSync(output),
+    fs.readFileSync(candidatePath),
+  );
 });
 
 test('protected export records an authorization-required plan then verifies authorized loads', (t) => {
@@ -3268,6 +5838,7 @@ test('protected export records an authorization-required plan then verifies auth
   const workspacePath = path.join(temporary, 'creation');
   const output = path.join(temporary, 'dist', 'protected.kdna');
   const engine = creationEngineForTest();
+  const protectedPassword = '  test-password-12345  ';
   prepareAcceptedWorkspace(temporary, workspacePath, {
     access: 'licensed',
   });
@@ -3290,8 +5861,8 @@ test('protected export records an authorization-required plan then verifies auth
   result = run([
     'export-agent',
     workspacePath,
-    '--out',
-    output,
+    '--operation-id',
+    'candidate:protected',
     '--json',
   ], { temporary });
   assert.equal(result.status, 4);
@@ -3308,17 +5879,22 @@ test('protected export records an authorization-required plan then verifies auth
   result = run([
     'export-agent',
     workspacePath,
-    '--out',
-    output,
+    '--operation-id',
+    'candidate:protected',
     '--password-stdin',
     '--json',
   ], {
     temporary,
-    input: 'test-password-12345\n',
+    input: `${protectedPassword}\r\n`,
   });
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
 
   const restored = engine.loadWorkspace(workspacePath);
+  const candidatePath = path.join(
+    workspacePath,
+    'managed-candidate',
+    'managed-candidate.kdna',
+  );
   const loadPlan = restored.buildReceipt.results.plan_load;
   assert.equal(loadPlan.status, 'pass');
   assert.equal(loadPlan.outcome, 'authorization_required_then_verified');
@@ -3345,7 +5921,7 @@ test('protected export records an authorization-required plan then verifies auth
           workspacePath,
           {
           id: 'protected-application-plan',
-          verification_contract: 'adoption-fidelity',
+          verification_contract: 'application-adoption-fidelity',
           evidence_set: 'fresh-hidden-holdout',
           response_mode: 'free-response',
           frozen_by: {
@@ -3363,30 +5939,40 @@ test('protected export records an authorization-required plan then verifies auth
           build_receipt_digest:
             engine.canonicalBuildReceiptDigest(restored.buildReceipt),
           asset_digest: restored.buildReceipt.asset_digest,
+          repetition_policy: {
+            claim: 'stability',
+            repetitions: 3,
+            task_ids: ['protected-task-2'],
+          },
+          risk_profile: {
+            classification: 'low',
+            external_actions: false,
+            permission_sensitive: false,
+            rationale_digest: sha256Digest(
+              'low-risk-protected-editorial-profile',
+            ),
+          },
           tasks: taskInputs.map((input, index) => ({
             id: `protected-task-${index + 1}`,
             input_digest: sha256Digest(input),
-            risk_level: index === 0 ? 'critical' : 'high',
+            risk_level: 'normal',
             unit_ids: ['unit-evidence'],
-            boundary_ids: [],
+            boundary_ids:
+              index % 2 === 1 ? ['boundary-no-invention'] : [],
             semantic_test_id: null,
             perturbation_group: 'protected-stable-pair',
-            fork_id: index === 0
-              ? 'protected-authorization-fork'
-              : 'protected-direction-fork',
-            verification_dimensions: index === 0
-              ? [
-                'scope',
-                'boundary',
-                'exception',
-                'priority',
-                'authority-precedence',
-                'safety',
-                'permission',
-                'external-action',
-                'exit',
-              ]
-              : ['direction', 'stability'],
+            execution_mode: 'with-only',
+            fork_id: index % 2 === 0
+              ? 'protected-direction-fork'
+              : 'protected-boundary-fork',
+            verification_dimensions:
+              index % 2 === 0
+                ? ['direction', 'scope']
+                : (
+                    index === 1
+                      ? ['boundary', 'exit', 'stability']
+                      : ['boundary', 'exit']
+                  ),
           })),
           thresholds: {
             stability_rate_min: 0.9,
@@ -3401,7 +5987,7 @@ test('protected export records an authorization-required plan then verifies auth
             priority_failures_max: 0,
             authority_precedence_failures_max: 0,
             exit_failures_max: 0,
-            adoption_failures_max: 0,
+            fidelity_failures_max: 0,
           },
           },
           creationKeys,
@@ -3426,7 +6012,7 @@ test('protected export records an authorization-required plan then verifies auth
       'try',
       workspacePath,
       '--asset',
-      output,
+      candidatePath,
       '--input-stdin',
       '--json',
     ],
@@ -3444,7 +6030,7 @@ test('protected export records an authorization-required plan then verifies auth
       'try',
       workspacePath,
       '--asset',
-      output,
+      candidatePath,
       '--input-file',
       attemptFile,
       '--password-stdin',
@@ -3462,13 +6048,13 @@ test('protected export records an authorization-required plan then verifies auth
       'try',
       workspacePath,
       '--asset',
-      output,
+      candidatePath,
       '--input-file',
       attemptFile,
       '--password-stdin',
       '--json',
     ],
-    { temporary, input: 'test-password-12345\n' },
+    { temporary, input: `${protectedPassword}\r\n` },
   );
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
   let protectedStatus = JSON.parse(result.stdout);
@@ -3508,13 +6094,13 @@ test('protected export records an authorization-required plan then verifies auth
       'try',
       workspacePath,
       '--asset',
-      output,
+      candidatePath,
       '--input-file',
       observationFile,
       '--password-stdin',
       '--json',
     ],
-    { temporary, input: 'test-password-12345\n' },
+    { temporary, input: `${protectedPassword}\r\n` },
   );
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
   protectedWorkspace = engine.loadWorkspace(workspacePath);
@@ -3528,46 +6114,69 @@ test('protected export records an authorization-required plan then verifies auth
   const taskResults = frozenPlan.tasks.map((task) => ({
     task_id: task.id,
     input_digest: task.input_digest,
-    with_kdna: {
-      direction: 'apply',
-      reason_codes: ['DECLARED_JUDGMENT_APPLIED'],
-      reason_digest: sha256Digest(`${task.id}:protected:reason`),
-      boundary_ids: [],
-      exception_ids: [],
-      exit: 'completed',
-      over_applied: false,
-      authorization_outcome: 'authorized',
-      output_digest: sha256Digest(`${task.id}:protected:output`),
-      asset_digest: assetDigest,
-    },
-    without_kdna: {
-      direction: 'defer',
-      reason_codes: ['NO_PERSONA_AUTHORITY'],
-      reason_digest: sha256Digest(`${task.id}:baseline:reason`),
-      boundary_ids: [],
-      exception_ids: [],
-      exit: 'completed',
-      over_applied: false,
-      authorization_outcome: 'not-required',
-      output_digest: sha256Digest(`${task.id}:baseline:output`),
-      asset_digest: null,
-    },
+    with_kdna: scenarioTaskLane(task, {
+      password: true,
+      assetDigest,
+      label: 'protected',
+    }),
+    without_kdna: null,
     evaluation: {
       faithful: true,
-      direction_correct: true,
-      scope_correct: true,
-      boundary_correct: true,
-      exception_correct: true,
-      priority_correct: true,
-      authority_precedence_correct: true,
-      exit_correct: true,
-      stable: true,
-      critical_safety_error: false,
-      permission_violation: false,
-      external_action_violation: false,
+      direction_correct:
+        task.verification_dimensions.includes('direction') ? true : null,
+      scope_correct:
+        task.verification_dimensions.includes('scope') ? true : null,
+      boundary_correct:
+        task.verification_dimensions.includes('boundary') ? true : null,
+      exception_correct: null,
+      priority_correct: null,
+      authority_precedence_correct: null,
+      exit_correct:
+        task.verification_dimensions.includes('exit') ? true : null,
+      critical_safety_error: null,
+      permission_violation: null,
+      external_action_violation: null,
+      over_application_error: false,
+      causal_difference: 'not-evaluated',
+      faithful_reason_digest:
+        sha256Digest(`${task.id}:protected:faithful`),
+      dimension_reason_digests: Object.fromEntries(
+        task.verification_dimensions
+          .filter((dimension) => dimension !== 'stability')
+          .map((dimension) => [
+          dimension,
+          sha256Digest(`${task.id}:protected:${dimension}`),
+        ]),
+      ),
       reason_codes: ['ORACLE_MATCH'],
     },
   }));
+  const repetitions = Array.from({ length: 3 }, (_, offset) => {
+    const index = offset + 1;
+    const currentTaskResults = applicationTaskResultsForRepetition(
+      frozenPlan,
+      taskResults,
+      index,
+    );
+    return {
+      index,
+      consumer_run_digest: index === 1
+        ? consumerRunDigest
+        : sha256Digest(`protected-consumer-run-${index}`),
+      consumer_runner_digest: index === 1
+        ? consumerRunnerDigest
+        : sha256Digest(`protected-consumer-runner-${index}`),
+      evaluator_run_digest:
+        sha256Digest(`protected-evaluator-run-${index}`),
+      evaluator_runner_digest:
+        sha256Digest(`protected-evaluator-runner-${index}`),
+      consumer_output_digest:
+        applicationConsumerOutputDigest(currentTaskResults),
+      evaluator_output_digest:
+        applicationEvaluatorOutputDigest(currentTaskResults),
+      task_results: currentTaskResults,
+    };
+  });
   const receiptBase = {
     id: 'protected-application-receipt',
     attempt_id: attempt.id,
@@ -3590,23 +6199,31 @@ test('protected export records an authorization-required plan then verifies auth
       observation.asset_load_receipt_digest,
     consumer: { type: 'agent', id: consumerKeys.identity.id },
     evaluated_by: { type: 'agent', id: evaluatorKeys.identity.id },
-    consumer_run_digest: consumerRunDigest,
-    runner_digest: consumerRunnerDigest,
-    evaluator_run_digest: sha256Digest('protected-evaluator-run'),
-    evaluator_runner_digest:
-      sha256Digest('protected-evaluator-runner'),
-    task_results: taskResults,
+    repetitions,
   };
+  const contradictoryRepetitions = repetitions.map((repetition) => {
+    const contradictoryTaskResults = repetition.task_results.map(
+      (taskResult) => ({
+        ...taskResult,
+        with_kdna: {
+          ...taskResult.with_kdna,
+          authorization_outcome: 'not-required',
+        },
+      }),
+    );
+    return {
+      ...repetition,
+      consumer_output_digest:
+        applicationConsumerOutputDigest(contradictoryTaskResults),
+      evaluator_output_digest:
+        applicationEvaluatorOutputDigest(contradictoryTaskResults),
+      task_results: contradictoryTaskResults,
+    };
+  });
   const contradictoryProtectedBase = {
     ...receiptBase,
     id: 'protected-application-receipt-contradictory-auth',
-    task_results: taskResults.map((taskResult) => ({
-      ...taskResult,
-      with_kdna: {
-        ...taskResult.with_kdna,
-        authorization_outcome: 'not-required',
-      },
-    })),
+    repetitions: contradictoryRepetitions,
   };
   const contradictoryConsumerPayload =
     engine.applicationConsumerSigningPayload(contradictoryProtectedBase);
@@ -3671,35 +6288,97 @@ test('protected export records an authorization-required plan then verifies auth
       .includes('test-password-12345'),
     false,
   );
+  const unusedSecretOutput = path.join(
+    temporary,
+    'dist',
+    'unused-secret.kdna',
+  );
+  result = run(
+    [
+      'finalize-agent',
+      workspacePath,
+      '--out',
+      unusedSecretOutput,
+      '--operation-id',
+      'finalize:protected-unused-secret',
+      '--password-stdin',
+      '--json',
+    ],
+    {
+      temporary,
+      input: 'wrong-password-that-must-not-be-read\n',
+    },
+  );
+  assert.equal(result.status, 2);
+  assert.equal(
+    JSON.parse(result.stdout).error.code,
+    'finalize_secret_not_used',
+  );
+  assert.equal(fs.existsSync(unusedSecretOutput), false);
+  result = run(
+    [
+      'finalize-agent',
+      workspacePath,
+      '--out',
+      output,
+      '--operation-id',
+      'finalize:protected',
+      '--json',
+    ],
+    { temporary },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  assert.deepEqual(
+    fs.readFileSync(output),
+    fs.readFileSync(candidatePath),
+  );
 
   const derivedPath = path.join(temporary, 'derived-protected');
   createDerivationWorkspace(temporary, derivedPath, 'agent:protected-derived');
+  const materialPolicyInput = path.join(
+    temporary,
+    'derived-material-policy.json',
+  );
+  fs.writeFileSync(
+    materialPolicyInput,
+    JSON.stringify({
+      material_processing_policy: LOCAL_PROCESSING_POLICY,
+    }),
+    { mode: 0o600 },
+  );
   let derived = run([
     'resume',
     derivedPath,
     '--material',
     output,
+    '--input-file',
+    materialPolicyInput,
     '--json',
   ], { temporary });
-  assert.equal(derived.status, 4);
+  assert.equal(derived.status, 0, `${derived.stderr}\n${derived.stdout}`);
+  let derivedStatus = JSON.parse(derived.stdout);
   assert.equal(
-    JSON.parse(derived.stdout).error.code,
+    derivedStatus.material_inventories.at(-1).entries[0].reason_code,
     'material_authorization_required',
   );
+  assert.equal(derivedStatus.materials.length, 0);
+  assert.equal(derivedStatus.judgments.length, 0);
 
   derived = run([
     'resume',
     derivedPath,
     '--material',
     output,
+    '--input-file',
+    materialPolicyInput,
     '--password-stdin',
     '--json',
   ], {
     temporary,
-    input: 'test-password-12345\n',
+    input: `${protectedPassword}\r\n`,
   });
   assert.equal(derived.status, 0, `${derived.stderr}\n${derived.stdout}`);
-  const derivedStatus = JSON.parse(derived.stdout);
+  derivedStatus = JSON.parse(derived.stdout);
   assert.equal(derivedStatus.materials[0].kind, 'kdna');
   assert.equal(derivedStatus.judgments[0].review_state, 'proposed');
   assert.equal(
@@ -3714,11 +6393,11 @@ test('completed export replay cannot report a stale asset after semantic correct
   const workspacePath = path.join(temporary, 'creation');
   const output = path.join(temporary, 'dist', 'agent.kdna');
   const engine = creationEngineForTest();
-  prepareAcceptedWorkspace(temporary, workspacePath);
+  prepareApplicationVerifiedWorkspace(temporary, workspacePath);
 
-  const operationId = 'export:stale-replay-hostile';
+  const operationId = 'finalize:stale-replay-hostile';
   let result = run([
-    'export-agent',
+    'finalize-agent',
     workspacePath,
     '--out',
     output,
@@ -3736,12 +6415,12 @@ test('completed export replay cannot report a stale asset after semantic correct
   });
   engine.saveWorkspace(workspacePath, changed);
   assert.equal(
-    engine.assessReadiness(engine.loadWorkspace(workspacePath)).creation_accepted,
+    engine.assessReadiness(engine.loadWorkspace(workspacePath)).judgment_accepted,
     false,
   );
 
   result = run([
-    'export-agent',
+    'finalize-agent',
     workspacePath,
     '--out',
     output,
@@ -3761,10 +6440,10 @@ test('verified and completed export operations cannot replay after export-plan a
 
   const verifiedWorkspace = path.join(temporary, 'verified-creation');
   const verifiedOutput = path.join(temporary, 'dist', 'verified-old.kdna');
-  prepareAcceptedWorkspace(temporary, verifiedWorkspace);
-  const verifiedOperationId = 'export:verified-before-replan';
+  prepareApplicationVerifiedWorkspace(temporary, verifiedWorkspace);
+  const verifiedOperationId = 'finalize:verified-before-replan';
   const verifiedArgs = [
-    'export-agent',
+    'finalize-agent',
     verifiedWorkspace,
     '--out',
     verifiedOutput,
@@ -3788,7 +6467,7 @@ test('verified and completed export operations cannot replay after export-plan a
     ).status,
     'verified',
   );
-  assert.equal(workspace.buildReceipt, null);
+  assert.equal(workspace.buildReceipt.status, 'verified');
   assert.equal(fs.existsSync(verifiedOutput), false);
 
   result = run(
@@ -3807,7 +6486,7 @@ test('verified and completed export operations cannot replay after export-plan a
   assert.equal(result.status, 4, `${result.stderr}\n${result.stdout}`);
   assert.equal(JSON.parse(result.stdout).error.code, 'operation_id_conflict');
   workspace = engine.loadWorkspace(verifiedWorkspace);
-  assert.equal(workspace.buildReceipt, null);
+  assert.equal(workspace.buildReceipt.status, 'verified');
   assert.equal(
     engine.assessReadiness(workspace).completion_gates.format_valid,
     false,
@@ -3816,10 +6495,10 @@ test('verified and completed export operations cannot replay after export-plan a
 
   const completedWorkspace = path.join(temporary, 'completed-creation');
   const completedOutput = path.join(temporary, 'dist', 'completed-old.kdna');
-  prepareAcceptedWorkspace(temporary, completedWorkspace);
-  const completedOperationId = 'export:completed-before-replan';
+  prepareApplicationVerifiedWorkspace(temporary, completedWorkspace);
+  const completedOperationId = 'finalize:completed-before-replan';
   const completedArgs = [
-    'export-agent',
+    'finalize-agent',
     completedWorkspace,
     '--out',
     completedOutput,
@@ -3859,31 +6538,32 @@ test('verified and completed export operations cannot replay after export-plan a
   assert.equal(gates.creation_complete, false);
 });
 
-test('protected force export resumes exact encrypted bytes after SIGKILL at publish', (t) => {
+test('force finalize resumes exact encrypted bytes after SIGKILL at publish', (t) => {
   const temporary = temporaryDirectory();
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
   const workspacePath = path.join(temporary, 'creation');
   const output = path.join(temporary, 'dist', 'protected-crash.kdna');
   const engine = creationEngineForTest();
-  prepareAcceptedWorkspace(temporary, workspacePath);
+  prepareApplicationVerifiedWorkspace(temporary, workspacePath, {
+    access: 'licensed',
+    password: 'test-password-12345',
+  });
   fs.mkdirSync(path.dirname(output), { recursive: true });
   fs.writeFileSync(output, 'prior caller asset');
 
-  const operationId = 'export:protected-sigkill';
+  const operationId = 'finalize:protected-sigkill';
   const args = [
-    'export-agent',
+    'finalize-agent',
     workspacePath,
     '--out',
     output,
     '--force',
-    '--password-stdin',
     '--operation-id',
     operationId,
     '--json',
   ];
   let result = run(args, {
     temporary,
-    input: 'test-password-12345\n',
     env: {
       NODE_ENV: 'test',
       KDNA_TEST_EXPORT_SIGKILL_PHASE: 'after-publish',
@@ -3903,7 +6583,7 @@ test('protected force export resumes exact encrypted bytes after SIGKILL at publ
     .createHash('sha256')
     .update(publishedBytes)
     .digest('hex')}`);
-  assert.equal(interrupted.buildReceipt, null);
+  assert.equal(interrupted.buildReceipt.status, 'verified');
 
   result = run(['status', workspacePath, '--json'], { temporary });
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
@@ -3911,7 +6591,7 @@ test('protected force export resumes exact encrypted bytes after SIGKILL at publ
   assert.equal(recoveryStatus.incomplete_operations.length, 1);
   const recovery = recoveryStatus.incomplete_operations[0];
   assert.equal(recovery.operation_id, operationId);
-  assert.equal(recovery.command, 'export-agent');
+  assert.equal(recovery.command, 'finalize-agent');
   assert.equal(recovery.status, 'verified');
   assert.equal(recovery.recovery_target.base, 'workspace-parent');
   assert.equal(
@@ -3919,15 +6599,12 @@ test('protected force export resumes exact encrypted bytes after SIGKILL at publ
       path.dirname(recoveryStatus.workspace.path),
       recovery.recovery_target.relative_path,
     ),
-    output,
+    fs.realpathSync(output),
   );
   assert.equal(recovery.recovery_target.output_filename, path.basename(output));
   assert.match(recovery.asset_digest, /^sha256:[0-9a-f]{64}$/);
 
-  result = run(args, {
-    temporary,
-    input: 'test-password-12345\n',
-  });
+  result = run(args, { temporary });
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
   assert.deepEqual(fs.readFileSync(output), publishedBytes);
   interrupted = engine.loadWorkspace(workspacePath);
@@ -3950,13 +6627,13 @@ test('completed export replay removes only its exact backup after SIGKILL', (t) 
   const workspacePath = path.join(temporary, 'creation');
   const output = path.join(temporary, 'dist', 'completion-crash.kdna');
   const engine = creationEngineForTest();
-  prepareAcceptedWorkspace(temporary, workspacePath);
+  prepareApplicationVerifiedWorkspace(temporary, workspacePath);
   fs.mkdirSync(path.dirname(output), { recursive: true });
   fs.writeFileSync(output, 'prior caller asset');
 
-  const operationId = 'export:completion-sigkill';
+  const operationId = 'finalize:completion-sigkill';
   const args = [
-    'export-agent',
+    'finalize-agent',
     workspacePath,
     '--out',
     output,

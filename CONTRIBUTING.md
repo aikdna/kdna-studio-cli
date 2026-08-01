@@ -6,7 +6,7 @@ Key points:
 - Submit changes via pull request to `main`.
 - Sign off commits: `git commit -s`.
 - Do NOT restore legacy commands, registry, retired support.
-- Studio CLI changes must be verified with `npm test` (21 tests).
+- Studio CLI changes must be verified with the current full `npm test` suite.
 - Include verification commands in PR description.
 
 ## Repository-specific notes

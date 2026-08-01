@@ -927,13 +927,13 @@ test('export --password-stdin encrypts payload and round-trips (Argon2id profile
   assert.ok(kdnaCore, '@aikdna/kdna-core is required for B2 round-trip');
   const { tmp, projectDir } = createLockedProject(t);
   const outFile = path.join(tmp, 'project-encrypted.kdna');
-  const password = 'test-password-12345';
+  const password = '  test-password-12345  ';
 
   // 1. Export with password over stdin → exit 0, file created
   const result = run([
     'export', projectDir,
     '--out', outFile, '--password-stdin',
-  ], { tmp, input: `${password}\n` });
+  ], { tmp, input: `${password}\r\n` });
   assert.equal(result.status, 0, `export exit code: ${result.status}\nstderr: ${result.stderr}`);
   assert.ok(fs.existsSync(outFile), 'encrypted .kdna should exist');
 

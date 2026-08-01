@@ -4,168 +4,6 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
-function bootstrapCanonical(value) {
-  if (value === undefined) return 'null';
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) {
-    return `[${value.map(bootstrapCanonical).join(',')}]`;
-  }
-  return `{${Object.keys(value)
-    .filter((key) => value[key] !== undefined)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${bootstrapCanonical(value[key])}`)
-    .join(',')}}`;
-}
-
-function bootstrapSha256(bytes) {
-  return `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
-}
-
-function bootstrapRuntimeTree(runtimeRoot) {
-  const entries = [];
-  const visit = (relative = '') => {
-    const target = relative ? path.join(runtimeRoot, relative) : runtimeRoot;
-    const before = fs.lstatSync(target, { bigint: true });
-    if (before.isSymbolicLink()) {
-      throw new Error('The WP0 candidate runtime contains a symbolic link.');
-    }
-    if ((before.mode & 0o222n) !== 0n) {
-      throw new Error('The WP0 candidate runtime contains a writable entry.');
-    }
-    if (before.isDirectory()) {
-      entries.push({
-        path: relative || '.',
-        type: 'directory',
-        mode: Number(before.mode & 0o777n),
-      });
-      for (const name of fs.readdirSync(target).sort()) {
-        visit(path.join(relative, name));
-      }
-      const after = fs.lstatSync(target, { bigint: true });
-      if (
-        !after.isDirectory() ||
-        after.dev !== before.dev ||
-        after.ino !== before.ino ||
-        after.mtimeNs !== before.mtimeNs ||
-        after.ctimeNs !== before.ctimeNs
-      ) {
-        throw new Error(
-          'The WP0 candidate runtime changed during bootstrap verification.',
-        );
-      }
-      return;
-    }
-    if (!before.isFile()) {
-      throw new Error('The WP0 candidate runtime contains a special file.');
-    }
-    const bytes = fs.readFileSync(target);
-    const after = fs.lstatSync(target, { bigint: true });
-    if (
-      !after.isFile() ||
-      after.dev !== before.dev ||
-      after.ino !== before.ino ||
-      after.size !== before.size ||
-      after.mtimeNs !== before.mtimeNs ||
-      after.ctimeNs !== before.ctimeNs
-    ) {
-      throw new Error(
-        'The WP0 candidate runtime changed during bootstrap verification.',
-      );
-    }
-    entries.push({
-      path: relative,
-      type: 'file',
-      mode: Number(before.mode & 0o777n),
-      size: bytes.length,
-      sha256: bootstrapSha256(bytes),
-    });
-  };
-  visit();
-  return bootstrapSha256(
-    Buffer.from(
-      bootstrapCanonical(
-        entries.filter(
-          (entry) => entry.path !== 'wp0-runtime-receipt.json',
-        ),
-      ),
-      'utf8',
-    ),
-  );
-}
-
-function candidateRuntimeBootstrap(packageRoot) {
-  const absolutePackageRoot = path.resolve(packageRoot);
-  if (path.basename(absolutePackageRoot) !== 'package') return null;
-  const runtimeRoot = path.dirname(absolutePackageRoot);
-  const receiptPath = path.join(runtimeRoot, 'wp0-runtime-receipt.json');
-  let receiptBytes;
-  try {
-    const stat = fs.lstatSync(receiptPath);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) {
-      throw new Error('invalid receipt');
-    }
-    receiptBytes = fs.readFileSync(receiptPath);
-  } catch (error) {
-    if (error?.code === 'ENOENT') return null;
-    throw new Error('The adjacent WP0 candidate runtime receipt is invalid.');
-  }
-  let receipt;
-  try {
-    receipt = JSON.parse(receiptBytes.toString('utf8'));
-  } catch {
-    throw new Error('The adjacent WP0 candidate runtime receipt is invalid JSON.');
-  }
-  const unsigned = { ...receipt };
-  delete unsigned.receipt_sha256;
-  const baseline = receipt.development_baseline;
-  if (
-    receipt.schema !== 'aikdna.creation-engine.wp0-candidate-runtime/1.0' ||
-    receipt.evidence_class !==
-      'IMMUTABLE_WP0_CANDIDATE_ARTIFACT_RUNTIME' ||
-    receipt.release_authorized !== false ||
-    receipt.receipt_sha256 !==
-      bootstrapSha256(Buffer.from(bootstrapCanonical(unsigned), 'utf8')) ||
-    !/^sha256:[0-9a-f]{64}$/.test(
-      String(receipt.runtime_tree_sha256 || ''),
-    ) ||
-    !/^sha256:[0-9a-f]{64}$/.test(
-      String(baseline?.bom_semantic_digest || ''),
-    ) ||
-    !/^sha256:[0-9a-f]{64}$/.test(
-      String(baseline?.bom_file_digest || ''),
-    )
-  ) {
-    throw new Error(
-      'The adjacent WP0 candidate runtime receipt failed self-validation.',
-    );
-  }
-  if (bootstrapRuntimeTree(runtimeRoot) !== receipt.runtime_tree_sha256) {
-    throw new Error(
-      'The adjacent WP0 candidate runtime tree failed exact bootstrap verification.',
-    );
-  }
-  return {
-    developmentRuntime: {
-      schema: 'aikdna.creation-build-runtime/0.1.0',
-      evidence_class: receipt.evidence_class,
-      candidate_runtime_receipt_sha256: receipt.receipt_sha256,
-      candidate_runtime_tree_sha256: receipt.runtime_tree_sha256,
-      cli_entrypoint_sha256: bootstrapSha256(fs.readFileSync(__filename)),
-      bom_semantic_digest: baseline.bom_semantic_digest,
-      bom_file_digest: baseline.bom_file_digest,
-    },
-    developmentBaseline: JSON.parse(JSON.stringify(baseline)),
-  };
-}
-
-const BOOTSTRAP_PACKAGE_ROOT = path.resolve(__dirname, '..');
-const BOOTSTRAP_DEVELOPMENT_AUTHORITY =
-  candidateRuntimeBootstrap(BOOTSTRAP_PACKAGE_ROOT);
-const BOOTSTRAP_DEVELOPMENT_RUNTIME =
-  BOOTSTRAP_DEVELOPMENT_AUTHORITY?.developmentRuntime || null;
-const BOOTSTRAP_DEVELOPMENT_BASELINE =
-  BOOTSTRAP_DEVELOPMENT_AUTHORITY?.developmentBaseline || null;
-
 const zlib = require('zlib');
 const cbor = require('cbor-x');
 const { execFileSync } = require('child_process');
@@ -207,7 +45,9 @@ function loadStudioCore() {
   if (
     publishedCore.exportRuntime &&
     publishedCore.protocolContract &&
-    publishedCore.creationEngine
+    publishedCore.creationEngine &&
+    publishedCore.creationEngine.SCHEMA_VERSION === '0.2.0' &&
+    typeof publishedCore.creationEngine.readManagedCandidate === 'function'
   ) {
     return {
       ...publishedCore,
@@ -256,7 +96,13 @@ function loadStudioCore() {
         },
       };
     }
-  } catch (_) {
+  } catch (error) {
+    if (
+      error?.code !== 'MODULE_NOT_FOUND' &&
+      error?.code !== 'ENOENT'
+    ) {
+      throw error;
+    }
     // Installed packages do not have a sibling source checkout.
   }
   return publishedCore;
@@ -281,23 +127,55 @@ const llm = require('../src/llm');
 const ai = require('../src/ai');
 const {
   CREATION_COMMANDS,
+  decodeSecretTransport,
   executeCreationCommand,
 } = require('../src/creation-cli');
 
 const EXIT = { OK: 0, INPUT_ERROR: 2, HUMAN_LOCK_REQUIRED: 4, TRUST_FAILED: 5 };
+const SECRET_STDIN_LIMIT_BYTES = 64 * 1024;
+
+function readBoundedSecretStdin(label) {
+  const storage = Buffer.alloc(SECRET_STDIN_LIMIT_BYTES + 1);
+  let length = 0;
+  try {
+    while (length < storage.length) {
+      const count = fs.readSync(
+        0,
+        storage,
+        length,
+        storage.length - length,
+        null,
+      );
+      if (count === 0) break;
+      length += count;
+    }
+    if (length > SECRET_STDIN_LIMIT_BYTES) {
+      throw new Error(`${label} exceeds the bounded secret input limit`);
+    }
+    return decodeSecretTransport(storage.subarray(0, length));
+  } finally {
+    storage.fill(0);
+  }
+}
 
 function usage() {
   console.log(`kdna-studio — Agent-guided KDNA Creation Engine
 
 Create without schema editing:
+  kdna-studio guide-agent --action create|inventory --json
+  kdna-studio guide-agent <workspace> --json
   kdna-studio create-agent <workspace> [--input-file <json> | --input-stdin] [--material <path>] [--password-stdin] [--operation-id <id>] [--json]
+  kdna-studio inventory-agent <material-file-or-directory> [--material <path>] [--workspace <existing-creation-workspace>] [--json]
+  kdna-studio deliver-material <workspace> (--private-output-fd 3 | --private-output-file <mode-0600-system-temp-file>) [--input-file <json> | --input-stdin] [--material <reauthorized-path>] [--json]
   kdna-studio resume <workspace> [--input-file <json> | --input-stdin] [--material <path>] [--password-stdin] [--operation-id <id>] [--json]
   kdna-studio status <workspace> [--json]
   kdna-studio answer <workspace> [--input-file <json> | --input-stdin] [--operation-id <id>] [--json]
   kdna-studio review <workspace> [--input-file <json> | --input-stdin] [--operation-id <id>] [--json]
   kdna-studio try <workspace> [--input-file <json> | --input-stdin] [--operation-id <id>] [--json]
+  kdna-studio verify-application-agent <workspace> [--password-stdin] [--json]
   kdna-studio repair <workspace> [--input-file <json> | --input-stdin] [--operation-id <id>] [--json]
-  kdna-studio export-agent <workspace> --out <file.kdna> [--password-stdin] [--operation-id <id>] [--json]
+  kdna-studio export-agent <workspace> [--password-stdin] [--operation-id <id>] [--json]
+  kdna-studio finalize-agent <workspace> --out <file.kdna> [--operation-id <id>] [--json]
 
 The default Creation Engine speaks in purpose, material, judgment, boundary,
 example, confirmation, and export terms. Natural-language answers belong in
@@ -412,11 +290,11 @@ function resolvePassphrase(args) {
     if (process.stdin.isTTY) {
       fail(
         '--passphrase-stdin requires the passphrase to be piped in on stdin.\n' +
-        'Example:  read -s PW && echo "$PW" | kdna-studio export ... --sign --passphrase-stdin'
+        'Example:  read -r -s PW && printf "%s\\n" "$PW" | kdna-studio export ... --sign --passphrase-stdin'
       );
     }
     try {
-      return fs.readFileSync(0, 'utf8').trim();
+      return readBoundedSecretStdin('Passphrase');
     } catch (e) {
       fail(`Could not read passphrase from stdin: ${e.message}`);
     }
@@ -439,7 +317,7 @@ function resolveApiKey(args) {
       return null;
     }
     try {
-      return fs.readFileSync(0, 'utf8').trim();
+      return readBoundedSecretStdin('API key');
     } catch (e) {
       console.error('Error reading API key from stdin:', e.message);
       return null;
@@ -2430,12 +2308,12 @@ function cmdExport(args) {
       if (process.stdin.isTTY) {
         fail(
           '--password-stdin requires the password to be piped in on stdin.\n' +
-          'Example:  echo "$KDNA_PASSWORD" | kdna-studio export <project> --out <file.kdna> --password-stdin\n' +
+          'Example:  printf "%s\\n" "$KDNA_PASSWORD" | kdna-studio export <project> --out <file.kdna> --password-stdin\n' +
           'If you are running interactively, omit --password-stdin and you will be prompted.'
         );
       }
       try {
-        password = fs.readFileSync(0, 'utf8').trim();
+        password = readBoundedSecretStdin('Password');
       } catch (e) {
         fail(`Could not read password from stdin: ${e.message}`);
       }
@@ -3100,19 +2978,7 @@ try {
         `@aikdna/kdna-studio-core@${require('@aikdna/kdna-studio-core/package.json').version}`,
       runtimeCoreVersion:
         `@aikdna/kdna-core@${require('@aikdna/kdna-core/package.json').version}`,
-      developmentRuntime: BOOTSTRAP_DEVELOPMENT_RUNTIME,
-      developmentBaseline: BOOTSTRAP_DEVELOPMENT_BASELINE,
     });
-    const authorityAfterCommand =
-      candidateRuntimeBootstrap(BOOTSTRAP_PACKAGE_ROOT);
-    if (
-      bootstrapCanonical(authorityAfterCommand) !==
-      bootstrapCanonical(BOOTSTRAP_DEVELOPMENT_AUTHORITY)
-    ) {
-      throw new Error(
-        'The WP0 candidate runtime changed during Creation command execution.',
-      );
-    }
   }
   else if (cmd === 'create') cmdCreate(args.slice(1));
   else if (cmd === 'migrate') cmdMigrate(args.slice(1));

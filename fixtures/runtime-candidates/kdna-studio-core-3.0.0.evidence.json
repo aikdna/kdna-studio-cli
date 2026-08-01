@@ -2,7 +2,7 @@
   "evidence_kind": "candidate_source_pack",
   "package": "@aikdna/kdna-studio-core",
   "version": "3.0.0",
-  "git_head": "176e0264f30a0b62f5680b56db84bd90dff83dfe",
+  "git_head": "26595f1d72d4f49d1bb88f3c2f32c2d72ad34a37",
   "source_authority": "exact_git_commit_tree",
   "source_worktree_clean": true,
   "pack": {

@@ -2,7 +2,7 @@
   "evidence_kind": "candidate_source_pack",
   "package": "@aikdna/kdna-core",
   "version": "0.21.0",
-  "git_head": "bdde6987b5b4afc44ae73e8266132934fcea2dac",
+  "git_head": "e6d1b27299eda46da58adca84def7c2b782ac883",
   "source_authority": "exact_git_commit_tree",
   "source_worktree_clean": true,
   "pack": {

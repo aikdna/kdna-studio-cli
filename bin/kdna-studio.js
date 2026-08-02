@@ -960,9 +960,11 @@ function importFromRuntimeContent(manifest, payload) {
       .map((boundary) => boundary?.scope)
       .filter((scope) => typeof scope === 'string' && scope.trim().length > 0),
   ));
-  const excludedAreas = runtimeBoundaries
-    .map((boundary) => boundary?.out_of_scope)
-    .filter((area) => typeof area === 'string' && area.trim().length > 0);
+  const excludedAreas = Array.from(new Set(
+    runtimeBoundaries
+      .map((boundary) => boundary?.out_of_scope)
+      .filter((area) => typeof area === 'string' && area.trim().length > 0),
+  ));
   return {
     cards,
     judgment_core: judgmentCoreFromRuntimePayload(payload),

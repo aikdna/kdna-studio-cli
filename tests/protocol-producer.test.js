@@ -132,7 +132,7 @@ test('Studio CLI emits the current manifest, payload, digest, and Runtime contra
   assert.equal(capsule.contract_version, '0.1.0');
 });
 
-test('Studio CLI binds exact unpublished Runtime candidates and keeps the release gate closed', () => {
+test('Studio CLI binds the published Runtime candidates and the release gate accepts them', () => {
   const root = path.resolve(__dirname, '..');
   const evidence = verifyCandidateBinding(root);
   assert.deepEqual(
@@ -141,19 +141,16 @@ test('Studio CLI binds exact unpublished Runtime candidates and keeps the releas
       [
         '@aikdna/kdna-core',
         '0.21.0',
-        'e6d1b27299eda46da58adca84def7c2b782ac883',
+        '32aa3ff8e633291d4bb9e01de5a70181c8415d93',
       ],
       [
         '@aikdna/kdna-studio-core',
         '3.0.0',
-        '26595f1d72d4f49d1bb88f3c2f32c2d72ad34a37',
+        '05c1ce7c3708e188547473d1bf91d029e0525927',
       ],
     ],
   );
-  assert.throws(
-    () => assertRegistryReleaseReady(root),
-    /still candidate-bound/,
-  );
+  assert.doesNotThrow(() => assertRegistryReleaseReady(root));
 });
 
 test('create --from-kdna preserves the declared judgment core without axiom synthesis', (t) => {

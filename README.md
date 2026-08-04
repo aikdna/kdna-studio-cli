@@ -1,8 +1,9 @@
 # @aikdna/kdna-studio-cli
 
-> **Status:** Pre-release authoring toolchain. This repository contains the
-> unreleased `0.11.0` corrective candidate; the published incumbent remains
-> `0.10.2`. Candidate behavior must not be described as already published.
+> **Status:** Pre-release authoring toolchain. This repository carries the
+> published `0.11.0` release; the `0.11.0` source candidate is now on npm
+> `latest`, superseding the historical `0.10.2` incumbent after the
+> 2026-08-02 publication.
 
 Official terminal entry for KDNA judgment asset creation. The default Creation
 Engine guides a user or terminal Agent from purpose and source material through
@@ -32,11 +33,11 @@ It is intentionally separate from `@aikdna/kdna-cli`:
 ## Install
 
 ```bash
-npm install -g @aikdna/kdna-studio-cli@0.10.2
+npm install -g @aikdna/kdna-studio-cli
 ```
 
-That command installs the published incumbent. To assess the unreleased
-`0.11.0` candidate, use this source repository and its exact candidate
+That command installs the published `0.11.0` from npm `latest`. To assess a
+future candidate, use this source repository and its exact candidate
 dependency coordinates; do not mix candidate documentation with npm `latest`.
 
 ## Usage
@@ -208,9 +209,9 @@ The Creation Engine `try` command records semantic examples and their reviewed
 results; it is separate from the retired Test Lab UI. Test Lab and Feynman
 workshop implementations remain in the source repository
 for research and regression coverage. Published releases up to and including
-0.10.2 shipped them as CLI commands in the npm tarball; the current
-development line removes them from the default CLI and from the npm release
-tarball, effective with the next release after 0.10.2. The public CLI
+0.10.2 shipped them as CLI commands in the npm tarball; the published `0.11.0`
+line removes them from the default CLI and from the npm release
+tarball. The public CLI
 contract remains the create, review, compile, and export path shown above.
 
 ## Runtime Export Contract

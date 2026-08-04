@@ -1,8 +1,8 @@
 # Terminal Agent Creation
 
-Status: unreleased source-candidate guide. The published package does not yet
-promise this flow, and a checked-in Skill is not proof that a particular Host
-can complete it.
+Status: shipped in the published `0.11.0` Studio CLI as the default Creation
+Engine entry. A checked-in Skill is not proof that a particular Host can
+complete the flow, and this guide is not an ordinary-user questionnaire.
 
 ## Start with the user's words
 

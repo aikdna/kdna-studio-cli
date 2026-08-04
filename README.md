@@ -1,8 +1,7 @@
 # @aikdna/kdna-studio-cli
 
-> **Status:** Pre-release authoring toolchain. This repository carries the
-> published `0.11.0` release; the `0.11.0` source candidate is now on npm
-> `latest`, superseding the historical `0.10.2` incumbent after the
+> **Status:** Pre-release authoring toolchain. The published `0.11.0` is on
+> npm `latest`, superseding the historical `0.10.2` incumbent after the
 > 2026-08-02 publication.
 
 Official terminal entry for KDNA judgment asset creation. The default Creation
@@ -36,8 +35,9 @@ It is intentionally separate from `@aikdna/kdna-cli`:
 npm install -g @aikdna/kdna-studio-cli
 ```
 
-That command installs the published `0.11.0` from npm `latest`. To assess a
-future candidate, use this source repository and its exact candidate
+That command installs the published `0.11.0` from npm `latest`. Requires
+Node.js 18 or later. To assess a future candidate, use this source repository
+and its exact candidate
 dependency coordinates; do not mix candidate documentation with npm `latest`.
 
 ## Usage

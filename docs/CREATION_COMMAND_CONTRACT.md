@@ -1,8 +1,9 @@
 # Creation command contract
 
-Status: unreleased source-candidate machine contract. It is for Host adapter
-implementers, not an ordinary-user questionnaire and not a published npm
-compatibility promise.
+Status: machine contract for the Creation Engine commands shipped in the
+published `0.11.0` Studio CLI. It is for Host adapter implementers, not an
+ordinary-user questionnaire and not a promise that every Host exposes the
+full surface.
 
 ## Command set
 

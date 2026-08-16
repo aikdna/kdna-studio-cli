@@ -45,8 +45,7 @@
 - Update protocol naming gate, frozen-history name allowlist, and third-party
   name allowlist to reflect the current responsibility naming closure.
 
-This is an unpublished Development Preview candidate. No existing registry
-version or package bytes are changed.
+Published to npm `latest` on 2026-08-02.
 
 ## 0.10.2 (2026-07-18)
 

@@ -206,13 +206,12 @@ API keys or authoring material, and provider response bodies are not copied
 into CLI errors.
 
 The Creation Engine `try` command records semantic examples and their reviewed
-results; it is separate from the retired Test Lab UI. Test Lab and Feynman
-workshop implementations remain in the source repository
-for research and regression coverage. Published releases up to and including
-0.10.2 shipped them as CLI commands in the npm tarball; the published `0.11.0`
-line removes them from the default CLI and from the npm release
-tarball. The public CLI
-contract remains the create, review, compile, and export path shown above.
+results; it is separate from the retired Test Lab UI. The Test Lab and Feynman
+workshop implementations were removed from the repository. Published releases
+up to and including 0.10.2 shipped them as CLI commands in the npm tarball; the
+published `0.11.0` line removes them from the default CLI and from the npm
+release tarball. The public CLI contract remains the create, review, compile,
+and export path shown above.
 
 ## Runtime Export Contract
 

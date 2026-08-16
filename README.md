@@ -121,6 +121,7 @@ kdna-studio source my_domain
 kdna-studio distill my_domain --candidates candidates.json
 kdna-studio candidate list my_domain
 kdna-studio candidate accept my_domain <candidate-id>
+kdna-studio candidate override my_domain <candidate-id>   # only if the candidate is shown [OUT_OF_SCOPE]
 kdna-studio candidate promote my_domain
 kdna-studio card add my_domain axiom \
   --field one_sentence="Prefer specific evidence over broad claims" \
@@ -136,7 +137,14 @@ kdna-studio card approve my_domain --all --by expert --statement "I confirm this
 kdna-studio export my_domain --out dist/my_domain.kdna
 ```
 
-Candidate promotion is scope-gated: only candidates with `status == accepted` and `scope_fit == true` are promoted to cards by default. Use `kdna-studio candidate override <project> <candidate-id>` only when a human intentionally overrides the scope gate.
+Candidate promotion is scope-gated: only candidates with `status == accepted`
+and `scope_fit == true` are promoted to cards by default. The gate marks a
+candidate `[OUT_OF_SCOPE]` when its `one_sentence`/`full_statement` text does
+not contain the declared domain category or one of the `--include` areas, or
+when it matches an `--exclude` area; the `--task` wording is not part of the
+match. `OUT_OF_SCOPE` is a review signal, not a dead end: run
+`kdna-studio candidate override <project> <candidate-id>` only when a human
+intentionally keeps a candidate outside the declared areas, then promote.
 
 The Studio CLI exports complete, non-deprecated cards. Human Lock and other
 provenance records are optional review evidence, not creation permission or

@@ -301,6 +301,14 @@ pattern subtypes, scenario and case metadata, extended reasoning fields, and
 source-authored evolution. Studio-only card state and lock audit records remain
 authoring provenance and are not rewritten as Runtime judgment evolution.
 
+
+## Official packages
+
+Official KDNA packages are published under the `@aikdna` npm scope and the
+`aikdna` name on PyPI. The unscoped npm package `kdna` is not affiliated with
+the KDNA project. Install only from the official coordinates shown in this
+README.
+
 ## Related
 
 - [KDNA Core](https://github.com/aikdna/kdna) — Official format specification

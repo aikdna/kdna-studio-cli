@@ -221,7 +221,7 @@ Authoring:
 AI Authoring (requires LLM config: kdna-studio llm config):
   kdna-studio distill <project> --ai                             # AI-driven candidate extraction from evidence
   kdna-studio distill <project> --candidates <file.json>          # load pre-generated AI candidates
-  kdna-studio interview <project> [--stage <name>]               # 4-stage guided AI interview
+  kdna-studio interview <project> [--stage <name>]               # conversational AI preview (LLM-required; does not produce or export assets)
 
 Distillation:
   kdna-studio target declare <project>                           # declare distillation target interactively
@@ -325,6 +325,22 @@ function resolveApiKey(args) {
   }
 
   return null;
+}
+
+const llmConfigModule = require('../src/llm/config');
+
+function requireLlmConfigured() {
+  const validation = llmConfigModule.validateConfig(llm.config());
+  if (!validation.valid) {
+    fail(
+      'AI-assisted authoring requires a configured LLM provider.\n' +
+      validation.errors.map((e) => `  - ${e}`).join('\n') + '\n' +
+      'Configure it first:\n' +
+      '  kdna-studio llm config --provider <name> --model <name> --key-pipe\n' +
+      'See the "AI-assisted authoring" section of the README for details.\n' +
+      'The no-LLM expert paths (manual `card add`, material-first `distill --candidates`) do not require a provider.',
+    );
+  }
 }
 
 function optionsAll(args, name) {
@@ -2913,6 +2929,7 @@ async function cmdInterview(args) {
   const projectInput = args[0];
   const stage = option(args, '--stage');
   if (!projectInput) fail('Usage: kdna-studio interview <project> [--stage distill|clarify|correct|replay]');
+  requireLlmConfigured();
   const { projectPath, project } = readProject(projectInput);
   let results;
 
@@ -2961,6 +2978,10 @@ if (!cmd || cmd === '--help' || cmd === '-h') {
 }
 if (cmd === '--version' || cmd === '-v') {
   console.log(require('../package.json').version);
+  process.exit(EXIT.OK);
+}
+if (args.slice(1).includes('--help') || args.slice(1).includes('-h')) {
+  usage();
   process.exit(EXIT.OK);
 }
 

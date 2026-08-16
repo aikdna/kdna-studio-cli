@@ -117,6 +117,42 @@ test('prints help', () => {
   assert.match(result.stdout, /export <project>/);
 });
 
+test('subcommand --help prints the top-level help instead of an error (#117)', () => {
+  for (const command of ['interview', 'card', 'distill', 'candidate', 'target']) {
+    const result = run([command, '--help']);
+    assert.equal(result.status, 0, `${command} --help: ${result.stderr}`);
+    assert.match(result.stdout, /kdna-studio/);
+    assert.doesNotMatch(result.stderr, /Project not found/);
+  }
+  const shortFlag = run(['interview', '-h']);
+  assert.equal(shortFlag.status, 0, shortFlag.stderr);
+  assert.match(shortFlag.stdout, /kdna-studio/);
+});
+
+test('interview without an LLM provider fails with a clear configuration error (#115)', (t) => {
+  const tmp = tmpDir();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const projectDir = path.join(tmp, 'project');
+  const created = run(['create', projectDir, '--name', '@test/example'], { tmp });
+  assert.equal(created.status, 0, created.stderr);
+  const home = path.join(tmp, 'home');
+  fs.mkdirSync(home, { recursive: true });
+
+  const result = run(['interview', projectDir], {
+    tmp,
+    env: {
+      HOME: home,
+      KDNA_LLM_PROVIDER: '',
+      KDNA_LLM_API_KEY: '',
+      KDNA_LLM_MODEL: '',
+      KDNA_LLM_BASE_URL: '',
+    },
+  });
+  assert.equal(result.status, 2, result.stdout);
+  assert.match(result.stderr, /requires a configured LLM provider/);
+  assert.doesNotMatch(result.stderr, /Project not found/);
+});
+
 test('rejects unknown commands with input error', () => {
   const result = run(['unknown']);
   assert.equal(result.status, 2);

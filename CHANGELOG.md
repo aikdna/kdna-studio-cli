@@ -22,6 +22,10 @@
   extraction-limited material explicitly instead of silently treating a
   directory as fully analyzed.
 - Keep source bodies, credentials, local paths, and internal development evidence out of workspaces, receipts, and Runtime output.
+- Document that `--no-llm` and the Test Lab / Feynman workshop commands were
+  removed from the published CLI: `distill --ai` and `interview` now require a
+  configured provider, and `interview` is a conversational preview surface that
+  does not produce or export cards or assets.
 
 ## 0.11.0 (2026-07-27)
 

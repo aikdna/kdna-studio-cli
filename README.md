@@ -189,14 +189,21 @@ source assets use `--password-stdin`. Directory shape alone does not declare
 material historical, current, migrated, owned, or authoritative; every source
 starts with an honest unknown/review state.
 
-The expert `distill --ai` and `interview` commands can use a configured model
-provider:
+The expert `distill --ai` command extracts candidate judgments from imported
+evidence using a configured model provider. The `interview` command is a
+conversational, LLM-required preview surface: it records a session for
+reference but does not produce, promote, or export cards or assets, and it is
+not part of the creation-to-export path.
 
 ```bash
 printf '%s\n' "$KDNA_LLM_API_KEY" | \
   kdna-studio llm config --provider openai --model gpt-4 --key-pipe
 # Provider/model/key environment variables can also configure a one-shot run.
 ```
+
+AI commands (`distill --ai`, `interview`) have no `--no-llm` fallback; that flag
+was removed from the published CLI in 0.11.0. The no-LLM expert paths are manual
+`card add` and material-first `distill --candidates`.
 
 External AI providers must use a canonical HTTPS base URL. Plain HTTP is
 accepted only for local development at the exact numeric loopback hosts

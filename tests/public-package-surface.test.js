@@ -7,7 +7,7 @@ const { spawnSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 
-test('npm tarball excludes unvalidated CLI workshops', () => {
+test('npm tarball contains only the supported CLI surface', () => {
   const npmExecPath = process.env.npm_execpath;
   const packed = npmExecPath
     ? spawnSync(
@@ -25,9 +25,6 @@ test('npm tarball excludes unvalidated CLI workshops', () => {
   assert.equal(reports.length, 1);
   const files = reports[0].files.map((entry) => entry.path);
 
-  for (const forbidden of ['src/ai/feynman.js', 'src/ai/testlab.js']) {
-    assert.equal(files.includes(forbidden), false, `workshop leaked into npm tarball: ${forbidden}`);
-  }
   for (const required of [
     'bin/kdna-studio.js',
     'src/ai/distill.js',

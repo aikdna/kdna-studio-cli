@@ -239,7 +239,7 @@ test('publish workflow is release-only, serialized, pinned, and publishes one ve
   assert.match(workflow, /release:\n\s+types: \[published\]/);
   assert.match(workflow, /github\.workflow.*github\.event\.release\.tag_name/);
   assert.match(workflow, /cancel-in-progress: false/);
-  assert.match(workflow, /actions\/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0/);
+  assert.match(workflow, /actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1/);
   assert.match(workflow, /actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38/);
   assert.doesNotMatch(workflow, /npm install --global|npm_execpath/);
   assert.match(workflow, /acquire-trusted-npm-release\.js --out/);

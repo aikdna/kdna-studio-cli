@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['18.20.8', '22.23.1']
+        node: ['22.23.1', '24.18.0']
     env:
       KDNA_CORE_CANDIDATE_REPOSITORY: aikdna/kdna
       KDNA_CORE_CANDIDATE_COMMIT: 32aa3ff8e633291d4bb9e01de5a70181c8415d93
@@ -77,14 +77,6 @@ jobs:
           node-version: '${{ matrix.node }}'
           check-latest: false
       - name: Run the complete release-hardening and product suite
-        if: matrix.node == '22.23.1'
         run: node scripts/run-trusted-npm.js run test:all
-      - name: Run product and Runtime tests without the Node-22-only trusted npm client
-        if: matrix.node == '18.20.8'
-        run: node scripts/run-product-tests.js
-      - name: Verify the installed Runtime candidate chain from an empty cache under Node 22
-        if: matrix.node == '22.23.1'
+      - name: Verify the installed Runtime candidate chain from an empty cache
         run: node scripts/run-trusted-npm.js run test:candidate-chain
-      - name: Verify the installed Runtime candidate chain from an empty cache under Node 18
-        if: matrix.node == '18.20.8'
-        run: npm run test:candidate-chain

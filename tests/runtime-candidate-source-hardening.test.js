@@ -121,18 +121,17 @@ test('candidate source equivalence rejects install-byte drift', () => {
   );
 });
 
-test('CI binds both exact candidate sources and separates trusted tooling from Node 18', () => {
+test('CI binds both exact candidate sources and runs trusted tooling across active LTS runtimes', () => {
   const pinned = readPinnedCandidateCommits(ROOT);
   assert.deepEqual([...pinned.keys()].sort(), CANDIDATE_AUTHORITIES.map(({ name }) => name).sort());
   const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/ci.yml'), 'utf8');
-  assert.match(workflow, /node: \['18\.20\.8', '22\.23\.1'\]/);
+  assert.match(workflow, /node: \['22\.23\.1', '24\.18\.0'\]/);
   assert.match(workflow, /node-version: '22\.23\.1'/);
   assert.match(workflow, /node-version: '\$\{\{ matrix\.node \}\}'/);
   assert.match(workflow, /KDNA_CORE_CANDIDATE_SOURCE/);
   assert.match(workflow, /KDNA_STUDIO_CORE_CANDIDATE_SOURCE/);
-  assert.match(workflow, /run-product-tests\.js/);
-  assert.match(workflow, /if: matrix\.node == '18\.20\.8'\n\s+run: npm run test:candidate-chain/);
-  assert.doesNotMatch(workflow, /if: matrix\.node == '18\.20\.8'\n\s+run: node scripts\/run-trusted-npm/);
+  assert.doesNotMatch(workflow, /run-product-tests\.js/);
+  assert.doesNotMatch(workflow, /if: matrix\.node == '18\.20\.8'/);
   const verifier = fs.readFileSync(
     path.join(ROOT, 'scripts/verify-runtime-candidate-sources.js'),
     'utf8',

@@ -35,8 +35,9 @@ It is intentionally separate from `@aikdna/kdna-cli`:
 npm install -g @aikdna/kdna-studio-cli
 ```
 
-That command installs the published `0.11.0` from npm `latest`. Requires
-Node.js 18 or later. To assess a future candidate, use this source repository
+That command installs the published `0.11.0` from npm `latest` (the last
+Node 18-compatible release). The current source requires Node.js 22 or
+later. To assess a future candidate, use this source repository
 and its exact candidate
 dependency coordinates; do not mix candidate documentation with npm `latest`.
 

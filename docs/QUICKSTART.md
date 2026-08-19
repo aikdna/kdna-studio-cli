@@ -14,7 +14,7 @@ you put into your judgment.
 npm install -g @aikdna/kdna-cli @aikdna/kdna-studio-cli
 ```
 
-Requires Node.js 18 or later.
+Requires Node.js 22 or later.
 
 ## Path 1 — Manual card authoring (interview-first, no LLM)
 

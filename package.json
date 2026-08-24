@@ -56,7 +56,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@aikdna/kdna-core": "0.21.0",
+    "@aikdna/kdna-core": "0.22.0",
     "@aikdna/kdna-studio-core": "3.0.0",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",

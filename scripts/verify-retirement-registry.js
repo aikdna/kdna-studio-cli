@@ -12,19 +12,39 @@
 //      which is evaluated against the committed bytes. A token probe only
 //      counts when the token also occurs in the retired file itself, so a probe
 //      cannot be satisfied by an arbitrary string;
-//   3. executability: **a file may only be retired while it is red on the
-//      committed graph.** The gate runs every registered file and requires a
-//      non-zero exit status. A test that still passes was retired while it
-//      still had coverage, which silently shrinks the verification surface.
+//   3. executability: **a file may only be retired while it is red where it
+//      lived, or while its failure output names the retired object.**
+//
+// Rule 3 is the part that has to refuse evidence the judged object produced
+// about itself. Its previous form was "the file is red under tests/legacy/",
+// and a *passing* test satisfies that for free: `git mv tests/x.test.js
+// tests/legacy/` breaks the file's relative `require`, so the file turns red
+// with nothing retired at all, and the gate waved the retirement through. The
+// red has to be attached to the retired object rather than to the move:
+//
+//   (a) the retired bytes are red when run from the path they were retired
+//       from (`tests/<...>`), where their relative requires still resolve, so
+//       the move cannot be the reason for the red - and the committed graph is
+//       missing the object the entry's `object_absence` probes declare absent,
+//       which is what explains the red; or
+//   (b) the failure output explicitly names one of the identifiers those
+//       probes declare.
+//
+// A red that is only red because of the move - green at the original path, and
+// a failure that never names the declared object - is a finding
+// (`retirement_red_only_because_of_the_move`), not a retirement.
 //
 // usage: node scripts/verify-retirement-registry.js [--root <tree>]
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 
 const TEST_FILE_RE = /\.test\.(?:js|cjs|mjs)$/u;
 const CONCURRENCY = 4;
+const LEGACY_PREFIX = 'tests/legacy/';
+const MODULE_RESOLUTION_RE = /Cannot find module|ERR_MODULE_NOT_FOUND|ERR_UNSUPPORTED_DIR_IMPORT|MODULE_NOT_FOUND/u;
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -128,25 +148,112 @@ function probeFindings(root, entry, probe) {
 }
 
 // `spawnSync` would block the event loop and serialise the pool, which is why
-// this uses an asynchronous child process.
-function runRetiredFile(root, file) {
+// this uses an asynchronous child process. NODE_TEST_CONTEXT would make the
+// grandchild behave as part of the calling test runner instead of printing its
+// own summary, so it is dropped.
+function runTestFile(cwd, file) {
   return new Promise((resolve, reject) => {
-    // NODE_TEST_CONTEXT would make the grandchild behave as part of the calling
-    // test runner instead of printing its own summary, so it is dropped.
     const environment = { ...process.env, NODE_TEST_CONTEXT: undefined };
-    const child = spawn(process.execPath, ['--test', path.relative(root, file)], { cwd: root, env: environment });
-    let stdout = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', () => {});
+    const child = spawn(process.execPath, ['--test', file], { cwd, env: environment });
+    let output = '';
+    child.stdout.on('data', (chunk) => { output += chunk; });
+    child.stderr.on('data', (chunk) => { output += chunk; });
     child.on('error', reject);
     child.on('close', (status) => {
       const count = (label) => {
-        const match = stdout.match(new RegExp(`^# ${label} (\\d+)$`, 'm')) ?? stdout.match(new RegExp(`^ℹ ${label} (\\d+)$`, 'm'));
+        const match = output.match(new RegExp(`^# ${label} (\\d+)$`, 'm')) ?? output.match(new RegExp(`^ℹ ${label} (\\d+)$`, 'm'));
         return match ? Number(match[1]) : null;
       };
-      resolve({ file, status, passed: count('pass'), failed: count('fail') });
+      resolve({ file, cwd, status, output, passed: count('pass'), failed: count('fail') });
     });
   });
+}
+
+// The identifiers an entry declares absent: the tokens a probe names, plus the
+// token/path/module the probe itself names. These are what the failure output
+// has to spell out for leg (b) of the retirement criterion to hold.
+function declaredIdentifiers(entry) {
+  const identifiers = new Set();
+  for (const probe of entry.object_absence ?? []) {
+    for (const token of probe.tokens ?? []) if (typeof token === 'string' && token) identifiers.add(token);
+    for (const key of ['token', 'path', 'module']) {
+      if (typeof probe[key] === 'string' && probe[key]) identifiers.add(probe[key]);
+    }
+  }
+  return [...identifiers];
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+function identifierMatch(line, identifier) {
+  if (/^\w+$/u.test(identifier)) return new RegExp(`\\b${escapeRegExp(identifier)}\\b`, 'u').test(line);
+  return line.includes(identifier);
+}
+
+// Leg (b): does the failure explicitly name the retired object? A match inside
+// the specifier of a module-resolution failure does not count. That specifier is
+// what the move broke, and treating it as the object's identity would let the
+// relocation artifact certify itself again.
+function namesRetiredObject(output, identifiers) {
+  for (const line of output.split('\n')) {
+    for (const identifier of identifiers) {
+      if (!identifierMatch(line, identifier)) continue;
+      if (MODULE_RESOLUTION_RE.test(line)) {
+        const specifiers = [
+          ...[...line.matchAll(/'([^']*)'/gu)].map((match) => match[1]),
+          ...[...line.matchAll(/"([^"]*)"/gu)].map((match) => match[1]),
+        ];
+        if (specifiers.some((specifier) => identifierMatch(specifier, identifier))) continue;
+      }
+      return identifier;
+    }
+  }
+  return null;
+}
+
+// Leg (a): run the retired bytes from the path they were retired from. The
+// original path is reconstructed in an overlay whose top level and whose
+// tests/ siblings are symlinked back to the committed tree, so every relative
+// require resolves exactly as it did before the move while the committed bytes
+// stay untouched.
+function originalPathOf(entry) {
+  if (typeof entry.file !== 'string' || !entry.file.startsWith(LEGACY_PREFIX)) return null;
+  return `tests/${entry.file.slice(LEGACY_PREFIX.length)}`;
+}
+
+function linkTestsTree(sourceDir, targetDir, root, relative, source) {
+  fs.mkdirSync(targetDir, { recursive: true });
+  for (const item of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+    const from = path.join(sourceDir, item.name);
+    const to = path.join(targetDir, item.name);
+    const itemRelative = path.relative(root, from);
+    if (itemRelative === relative) {
+      fs.copyFileSync(source, to);
+      continue;
+    }
+    if (item.isDirectory() && relative.startsWith(`${itemRelative}${path.sep}`)) {
+      linkTestsTree(from, to, root, relative, source);
+      continue;
+    }
+    fs.symlinkSync(from, to);
+  }
+}
+
+function overlayAtOriginalPath(root, relative, source) {
+  const overlay = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'kdna-retirement-original-'));
+  for (const item of fs.readdirSync(root, { withFileTypes: true })) {
+    if (item.name === 'tests') continue;
+    fs.symlinkSync(path.join(root, item.name), path.join(overlay, item.name));
+  }
+  linkTestsTree(path.join(root, 'tests'), path.join(overlay, 'tests'), root, relative, source);
+  const target = path.join(overlay, relative);
+  if (!fs.existsSync(target)) {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(source, target);
+  }
+  return overlay;
 }
 
 function runWithConcurrency(items, worker, limit) {
@@ -208,18 +315,58 @@ async function verify(root) {
 
   const runs = await runWithConcurrency(
     entries.filter((entry) => fs.existsSync(path.join(root, entry.file))),
-    (entry) => runRetiredFile(root, path.join(root, entry.file)),
+    async (entry) => {
+      const registered = await runTestFile(root, entry.file);
+      const original = originalPathOf(entry);
+      let atOriginal = null;
+      if (original) {
+        const overlay = overlayAtOriginalPath(root, original, path.join(root, entry.file));
+        try {
+          atOriginal = await runTestFile(overlay, original);
+        } finally {
+          fs.rmSync(overlay, { recursive: true, force: true });
+        }
+      }
+      const identifiers = declaredIdentifiers(entry);
+      return {
+        entry,
+        identifiers,
+        registered,
+        atOriginal,
+        namedObject: namesRetiredObject(registered.output, identifiers),
+      };
+    },
     CONCURRENCY,
   );
   for (const run of runs) {
+    const { entry, registered, atOriginal } = run;
+    // (a) red where it lived: the move cannot be the reason for the red, and the
+    // object_absence probes (checked above) are what explains it.
+    const redWhereItLived = atOriginal !== null && atOriginal.status !== 0;
+    // (b) the failure output explicitly names the declared object.
+    const namedObject = run.namedObject;
     console.log(
-      `KDNA-RETIRED-FILE: ${run.file} rc=${run.status} pass=${run.passed ?? 'UNKNOWN'} fail=${run.failed ?? 'UNKNOWN'}`,
+      `KDNA-RETIRED-FILE: ${entry.file} registered_rc=${registered.status} ` +
+        `pass=${registered.passed ?? 'UNKNOWN'} fail=${registered.failed ?? 'UNKNOWN'} ` +
+        `original_path=${atOriginal ? atOriginal.file : 'UNKNOWN'} original_rc=${atOriginal ? atOriginal.status : 'UNKNOWN'} ` +
+        `named_object=${namedObject === null ? 'no' : JSON.stringify(namedObject)} ` +
+        `criterion=${redWhereItLived ? 'a:red-where-it-lived' : namedObject === null ? 'none' : 'b:failure-names-the-object'}`,
     );
-    if (run.status === 0) {
+    if (registered.status === 0) {
       findings.push({
-        file: run.file,
+        file: entry.file,
         check: 'retired_file_still_passes',
-        detail: 'a file may only be retired while it is red on the committed graph',
+        detail: 'the retired file still passes where it is registered, so nothing was retired',
+      });
+      continue;
+    }
+    if (!redWhereItLived && namedObject === null) {
+      findings.push({
+        file: entry.file,
+        check: 'retirement_red_only_because_of_the_move',
+        detail: atOriginal
+          ? `the file passes when it is run from ${atOriginal.file}, so the red comes from the move rather than from the retired object`
+          : 'the original path could not be reconstructed and the failure never names the declared object',
       });
     }
   }
@@ -237,9 +384,11 @@ async function main(argv) {
     );
     return 1;
   }
+  const redWhereItLived = runs.filter((run) => run.atOriginal !== null && run.atOriginal.status !== 0).length;
+  const namedObject = runs.filter((run) => run.namedObject !== null).length;
   console.log(
     `KDNA-RETIREMENT-REGISTRY: ok root=${root} entries=${entries} legacy=${legacy} ` +
-      `red=${runs.filter((run) => run.status !== 0).length}`,
+      `red_where_retired=${redWhereItLived} named_object=${namedObject}`,
   );
   return 0;
 }
@@ -248,4 +397,4 @@ if (require.main === module) {
   main(process.argv.slice(2)).then((code) => { process.exitCode = code; });
 }
 
-module.exports = { probeFindings, verify, walk };
+module.exports = { declaredIdentifiers, namesRetiredObject, originalPathOf, probeFindings, verify, walk };

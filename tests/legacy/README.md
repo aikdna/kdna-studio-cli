@@ -17,5 +17,12 @@ The machine-readable retirement registry is `tests/retired.json`; the gate print
 one `KDNA-CI-NOT-RUN:` receipt line per registered entry. Any re-activation must
 start by re-pointing these files at current objects, not by deleting the receipt.
 
+Being red is not by itself a reason to be here. The gate only accepts an entry
+while the red belongs to the retired object rather than to the move: (a) the
+retired bytes are red when they are re-run from the path they were retired from,
+where their relative requires still resolve, or (b) the failure output
+explicitly names an object the entry declares absent. A file that is red only
+because `git mv` broke its relative `require` satisfies neither and is refused.
+
 The current verification surface lives in `tests/current-components/` (driven by
 `npm test`) and `tests/current/dependency-binding.test.js`.

@@ -1,7 +1,7 @@
 {
   "schema": "kdna.retired-test-registry",
   "schema_version": "1.0.0",
-  "note": "Every entry is retired from the current verification surface. scripts/verify-retirement-registry.js checks in both directions that the registry and tests/legacy/ agree, evaluates each object_absence probe against the committed bytes (a token probe only counts when the token also occurs in the retired file), and runs every registered file: a retired file must be red on the committed graph, so a test that still passes cannot be retired silently.",
+  "note": "Every entry is retired from the current verification surface. scripts/verify-retirement-registry.js checks in both directions that the registry and tests/legacy/ agree, evaluates each object_absence probe against the committed bytes (a token probe only counts when the token also occurs in the retired file), and then requires the red to belong to the retired object rather than to the move: (a) the retired bytes are red when they are run from the path they were retired from, where their relative requires still resolve, or (b) the failure output explicitly names an object this entry declares absent. A file that is only red because the move broke its relative require satisfies neither, so a test that still passes cannot be retired silently.",
   "entries": [
     {
       "file": "tests/legacy/cli.test.js",

@@ -13,8 +13,11 @@ const root = path.resolve(__dirname, '..');
 // silent; see tests/retired.json and tests/legacy/README.md. The registry is
 // checked against reality by scripts/verify-retirement-registry.js below: it
 // requires every legacy file to be registered, evaluates each declared
-// absence probe, and runs every registered file (a retired file must be red on
-// the committed graph, so a test that still passes cannot be retired).
+// absence probe, and requires each retirement to be justified by the retired
+// object rather than by the move: the file must be red when it is run from the
+// path it was retired from, or its failure must name an object the entry
+// declares absent. A file that is only red because `git mv` broke its relative
+// require is refused, so a test that still passes cannot be retired).
 const retired = JSON.parse(
   fs.readFileSync(path.join(root, 'tests', 'retired.json'), 'utf8'),
 ).entries;

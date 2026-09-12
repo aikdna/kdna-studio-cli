@@ -5,43 +5,49 @@ themselves live under `tests/legacy/`. None of it runs in `npm test`,
 `npm run test:all`, `.github/workflows/ci.yml`, or
 `.github/workflows/publish.yml`.
 
-Exactly one suite is registered: `tests/legacy/pd275/terminal.test.js`. Eight
-other suites were registered here before criterion (e) existed and are current
-tests again, byte for byte:
+**Every registered copy is the pre-retirement file, byte for byte.** Criterion
+(e) below checks that against the object store, and it is the point of a
+retirement: the repository keeps *that* test, not a version of it that was
+adapted to its new home. Nothing under `tests/legacy/` is ever run, so a retired
+copy does not need its relative requires, or the paths it resolves from
+`__dirname`, to work from the new depth - and a retirement that rewrites them to
+make the new location loadable is refused, because the bytes it preserved are
+then no longer the bytes the original path carried. A file that would only fit
+`tests/legacy/` after being adapted is not retired at all.
 
-- `tests/cli.test.js`
-- `tests/creation-agent-cli.test.js`
-- `tests/current/shared-evidence.test.js`
-- `tests/e2e-export-completeness.test.js`
-- `tests/pd275/session-harness.js` (the helper module the pd275 suites require)
-- `tests/pd275/session-termination.test.js`
-- `tests/protocol-producer.test.js`
-- `tests/public-package-surface.test.js`
+Nine files are registered:
 
-They exercise objects the committed graph no longer ships - the
+- `tests/legacy/cli.test.js`
+- `tests/legacy/creation-agent-cli.test.js`
+- `tests/legacy/current/shared-evidence.test.js`
+- `tests/legacy/e2e-export-completeness.test.js`
+- `tests/legacy/pd275/session-harness.js` (the helper module the pd275 suites
+  require as `./session-harness`)
+- `tests/legacy/pd275/session-termination.test.js`
+- `tests/legacy/pd275/terminal.test.js`
+- `tests/legacy/protocol-producer.test.js`
+- `tests/legacy/public-package-surface.test.js`
+
+They exercise objects the committed graph no longer ships: the
 pre-component-semantics Studio CLI command surface (`project`, `card`,
 `identity`, `create-agent`, `answer`, `review`, `resume`, `export`, ...) that
 `bin/kdna-studio.js` replaced with the `session` / `verify` / `read` surface, the
 retired creation-CLI implementation behind it, the retired CLI session harness
-protocol, and the retired runtime-candidate authority binding for the 3.0.0 /
-0.21.0 graph (whose verifier now stops on `unbound file lock package:
-node_modules/@aikdna/kdna-read`) - but "this suite is red" is not what retires a
-suite. A retirement is a byte-preserving move, and every one of these eight was
-rewritten on the way into `tests/legacy/` (relative requires and `__dirname`
-paths re-pointed to the new depth, which is what made the retired copy loadable
-from its new location). Criterion (e) below refuses exactly that, so those
-retirements do not hold: the files go back to the paths they were retired from,
-unchanged, as current files. A file that only fits the retired directory after
-being adapted is not retired at all.
+protocol, the retired protocol producer transport, and the retired
+runtime-candidate authority binding for the 3.0.0 / 0.21.0 graph (whose verifier
+now stops on `unbound file lock package: node_modules/@aikdna/kdna-read`). They
+are therefore red against the committed graph. That redness is the reason the
+retirement exists; the gate records it as an observation and never reads it -
+see the delivery report's section on why these suites are red, which is an
+observation rather than a verdict.
 
-`tests/legacy/pd275/terminal.test.js` is the one move that rewrote nothing. Its
-only relative specifier, `./session-harness`, is one directory down from
-`tests/pd275/` and from `tests/legacy/pd275/` alike, so the registered sha256 is
-the sha256 the original path carried in `1f5049b`. Its (d) receipt fails, so the
-entry is not stale and stays retired.
+`pd275/session-harness.js` is a helper module rather than a test, so its (d)
+receipt reports a pass because running a module with no test in it executes
+nothing. Its reason records that; it stays retired with the suites that require
+it.
 
-The completeness suite that was once here is **not** retired either: it was
-re-pointed at the committed candidate fixture and moved back to
+The completeness suite that was once here is **not** retired: it was re-pointed
+at the committed candidate fixture and moved back to
 `tests/runtime-candidate-binding-completeness.test.js`, because the coverage it
 carried (the binding rejects hostile lock graphs) still applies to the current
 script.
@@ -80,12 +86,11 @@ the object store:
   file carried at `original_path` in `retired_from_commit`, read out of the
   object store (`git rev-parse <commit>:<path>`, `git cat-file blob`, sha256 of
   those bytes) rather than out of the working tree, so editing the copy under
-  `tests/legacy/` after the fact cannot make the claim true. A move that rewrote
-  the file registers bytes that are not the test that was there, and the record
-  would describe a test that never ran. An entry that fails (e) is refused and
-  the file goes back to its original path, unchanged, as a current file. The
-  commit has to be an ancestor of `HEAD`, so an entry cannot name bytes that no
-  tree under `HEAD` ever carried.
+  `tests/legacy/` - or rewriting it while moving it - cannot make the claim
+  true. An entry that fails (e) is refused and the file goes back to its original
+  path, unchanged, as a current file; a file that would only retire after
+  adaptation is not retired at all. The commit has to be an ancestor of `HEAD`,
+  so an entry cannot name bytes that no tree under `HEAD` ever carried.
 
 The exit code is about (a)-(c) and (e). (e) reads git history, so the checkout
 that runs the gate has to carry it: `.github/workflows/ci.yml` fetches the full

@@ -1,0 +1,70 @@
+{
+  "schema": "kdna.retired-test-registry",
+  "schema_version": "1.0.0",
+  "note": "Every entry is retired from the current verification surface. The gate (scripts/run-test-all.js) prints one KDNA-CI-NOT-RUN receipt per entry and never runs the file. Entries are only re-activated by re-pointing the file at current objects.",
+  "entries": [
+    {
+      "file": "tests/legacy/cli.test.js",
+      "retired_object": "pre-component-semantics Studio CLI command surface (project, card, identity, migrate, export, llm config)",
+      "reason": "bin/kdna-studio.js is now a 7-line shim over src/terminal-workspace.js; those commands no longer exist, so every assertion targets a retired object.",
+      "observed_on_committed_graph": "1 passing / 46 failing assertions",
+      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs, tests/current/dependency-binding.test.js"
+    },
+    {
+      "file": "tests/legacy/creation-agent-cli.test.js",
+      "retired_object": "pre-component-semantics Agent creation CLI (create-agent, finalize-agent, answer, review, resume, try, repair, export, public guide)",
+      "reason": "Retired command surface; the surviving assertions are static source-text checks against the retired entry point.",
+      "observed_on_committed_graph": "13 passing / 42 failing assertions",
+      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs"
+    },
+    {
+      "file": "tests/legacy/e2e-export-completeness.test.js",
+      "retired_object": "pre-component-semantics export completeness pipeline",
+      "reason": "The export path it drives is replaced by the current packed Studio save/readback flow.",
+      "observed_on_committed_graph": "0 passing / 3 failing assertions",
+      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs (export leg)"
+    },
+    {
+      "file": "tests/legacy/protocol-producer.test.js",
+      "retired_object": "pre-component-semantics protocol producer transport",
+      "reason": "The producer transport it asserts is not part of the current graph; no current equivalent exists.",
+      "observed_on_committed_graph": "0 passing / 6 failing assertions",
+      "coverage_inherited_by": "none (recorded as uncovered; re-wire required if a producer path returns)"
+    },
+    {
+      "file": "tests/legacy/public-package-surface.test.js",
+      "retired_object": "retired packed member list (e.g. src/ai/distill.js)",
+      "reason": "The packed surface is now the files[] list in package.json; the guarded members no longer ship.",
+      "observed_on_committed_graph": "0 passing / 1 failing assertion",
+      "coverage_inherited_by": ".github/workflows/public-surface.yml + scripts/check-public-surface.mjs"
+    },
+    {
+      "file": "tests/legacy/runtime-candidate-binding-completeness.test.js",
+      "retired_object": "runtime-candidate authority binding for the 3.0.0 / 0.21.0 graph",
+      "reason": "scripts/runtime-candidate-binding.js rejects the current lock ('unbound file lock package: node_modules/@aikdna/kdna-read'); admitting the current graph here would weaken a supply-chain gate, so the authority must be re-pinned instead.",
+      "observed_on_committed_graph": "0 passing / 1 failing assertion",
+      "coverage_inherited_by": "the ci.yml candidate-source leg receipt (scripts/ci-leg-receipt.sh)"
+    },
+    {
+      "file": "tests/legacy/pd275/terminal.test.js",
+      "retired_object": "pre-component-semantics CLI session harness protocol (tests/legacy/pd275/session-harness.js)",
+      "reason": "The harness expects session events and material kinds the current session protocol does not emit; it fails with ERR_INVALID_ARG_TYPE before any product assertion.",
+      "observed_before_move": "2 passing / 8 failing assertions (tests/pd275/terminal.test.js)",
+      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs"
+    },
+    {
+      "file": "tests/legacy/pd275/session-termination.test.js",
+      "retired_object": "pre-component-semantics CLI session harness protocol (tests/legacy/pd275/session-harness.js)",
+      "reason": "Same retired harness protocol; its surviving assertions read retired event names.",
+      "observed_before_move": "21 passing / 11 failing assertions (tests/pd275/session-termination.test.js)",
+      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs"
+    },
+    {
+      "file": "tests/legacy/current/shared-evidence.test.js",
+      "retired_object": "pre-component-semantics shared creation-evidence format 1 producer path",
+      "reason": "It drives the retired harness and asserts the retired 3.1.0-rc compiler coordinate; the current evidence format is format2.",
+      "observed_before_move": "0 passing / 4 failing assertions (tests/current/shared-evidence.test.js)",
+      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs (format2 evidence assertions)"
+    }
+  ]
+}

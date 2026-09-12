@@ -12,9 +12,9 @@ const studio = require('@aikdna/kdna-studio-core');
 const {
   assertRegistryReleaseReady,
   verifyCandidateBinding,
-} = require('../scripts/runtime-candidate-binding');
+} = require('../../scripts/runtime-candidate-binding');
 
-const BIN = path.resolve(__dirname, '..', 'bin', 'kdna-studio.js');
+const BIN = path.resolve(__dirname, '../..', 'bin', 'kdna-studio.js');
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-cli-producer-'));
@@ -133,7 +133,7 @@ test('Studio CLI emits the current manifest, payload, digest, and Runtime contra
 });
 
 test('Studio CLI binds the published Runtime candidates and the release gate accepts them', () => {
-  const root = path.resolve(__dirname, '..');
+  const root = path.resolve(__dirname, '../..');
   const evidence = verifyCandidateBinding(root);
   assert.deepEqual(
     evidence.packages.map((entry) => [entry.name, entry.version, entry.commit]),

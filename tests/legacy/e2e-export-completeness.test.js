@@ -12,7 +12,7 @@ const os = require('node:os');
 const cbor = require('cbor-x');
 const { unpack } = require('@aikdna/kdna-core');
 
-const studioBin = path.join(__dirname, '..', 'bin', 'kdna-studio.js');
+const studioBin = path.join(__dirname, '../..', 'bin', 'kdna-studio.js');
 
 function run(args, opts = {}) {
   return spawnSync(process.execPath, [studioBin, ...args], {

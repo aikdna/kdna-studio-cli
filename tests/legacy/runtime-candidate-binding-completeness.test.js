@@ -5,9 +5,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { verifyCandidateBinding } = require('../scripts/runtime-candidate-binding');
+const { verifyCandidateBinding } = require('../../scripts/runtime-candidate-binding');
 
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = path.resolve(__dirname, '../..');
 
 function copyFixtureRoot(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-cli-binding-completeness-'));

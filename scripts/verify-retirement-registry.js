@@ -30,15 +30,27 @@
 //       receipt, never an acceptance condition: the exit code is about (a)-(c)
 //       and (e).
 //   (e) zero rewrite: the registered sha256 is the sha256 of the bytes the file
-//       carried at its original path in the commit before the retirement
-//       (`retired_from_commit`). The bytes are read from the object store, not
-//       from the working tree, so a later edit to the copy under tests/legacy/
-//       cannot make the claim true. A move that rewrote even one of the file's
-//       own requires - to the new depth, say - registers bytes that are not the
-//       test that was there, and the record would then describe a test that
-//       never ran. Such an entry is refused: the file goes back to its original
-//       path as a current test. A file that only retires after adaptation is not
+//       carried at its original path in the commit before the retirement, read
+//       from the object store rather than from the working tree, so a later edit
+//       to the copy under tests/legacy/ cannot make the claim true. A move that
+//       rewrote even one of the file's own requires - to the new depth, say -
+//       registers bytes that are not the test that was there, and the record
+//       would then describe a test that never ran. Such an entry is refused, and
+//       the disposition is to put the pre-retirement bytes back under
+//       tests/legacy/: a file that would only retire after being adapted is not
 //       retired at all.
+//
+//       "The commit before the retirement" is pinned by the gate, not by the
+//       entry. The retirement commit is derived: it is the newest commit on
+//       HEAD's history that removes the path from its original location
+//       (`--no-renames --diff-filter=D`) *while its parent carries exactly the
+//       registered bytes*. The entry has to name that commit's parent verbatim,
+//       so a commit cannot be picked by hand - older, newer, or from another
+//       branch - to make rewritten bytes look original. And the named commit
+//       must not itself be the commit that wrote those bytes: a rewrite in the
+//       commit immediately before the move ("rewrite one byte, then move it")
+//       is refused, because the bytes the retirement keeps were written while
+//       the file was still a current test.
 //
 // Every entry carries the seven registration fields: the retired path (`file`),
 // the `original_path` it was retired from, the `sha256` of the preserved bytes
@@ -109,6 +121,37 @@ function historicalSha256(root, commit, originalPath) {
     .toString('utf8')
     .trim();
   return crypto.createHash('sha256').update(gitBytes(root, ['cat-file', 'blob', blob])).digest('hex');
+}
+
+// The object name a path carries in a tree, or null when the tree does not have
+// it. `rev-parse --verify --quiet` exits non-zero for a missing path, which is
+// the answer rather than an error here.
+function blobAt(root, commit, relative) {
+  const result = spawnSync('git', ['-C', root, 'rev-parse', '--verify', '--quiet', `${commit}:${relative}`], {
+    maxBuffer: 1 << 20,
+  });
+  if (result.status !== 0) return null;
+  return result.stdout.toString('utf8').trim();
+}
+
+function sha256OfBlob(root, blob) {
+  return crypto.createHash('sha256').update(gitBytes(root, ['cat-file', 'blob', blob])).digest('hex');
+}
+
+function parentOf(root, commit) {
+  const result = spawnSync('git', ['-C', root, 'rev-parse', '--verify', '--quiet', `${commit}^`], { maxBuffer: 1 << 20 });
+  if (result.status !== 0) return null;
+  return result.stdout.toString('utf8').trim();
+}
+
+// Every commit on HEAD's history that removed the path from its original
+// location, newest first. `--no-renames` makes a `git mv` count as a removal of
+// the old path rather than as a rename.
+function removalCandidates(root, originalPath) {
+  const output = gitBytes(root, ['log', '--no-renames', '--diff-filter=D', '--format=%H', '--', originalPath])
+    .toString('utf8')
+    .trim();
+  return output === '' ? [] : output.split('\n');
 }
 
 // A commit that is not on the history of HEAD cannot describe the tree being
@@ -271,11 +314,64 @@ async function verify(root) {
       if (commitIsUsable && pathIsUsable) {
         try {
           row.historicalSha256 = historicalSha256(root, row.retiredFromCommit, entry.original_path);
-          row.zeroRewrite = SHA256_RE.test(entry.sha256 ?? '') && row.historicalSha256 === entry.sha256;
         } catch (error) {
           row.historicalError = error.message;
         }
         row.ancestorOfHead = ancestorOfHead(root, row.retiredFromCommit);
+      }
+      // (e) pinned: the entry has to name the parent of a retirement that took
+      // exactly these bytes out of the original path. The retirement commits are
+      // derived from history, so a commit cannot be picked by hand; and the named
+      // commit must not itself be the commit that wrote the bytes.
+      row.retirementCommit = null;
+      row.retirementParent = null;
+      row.derivedHistoricalSha256 = null;
+      row.derivedHistoricalError = null;
+      row.derivedHistoricalErrorKind = null;
+      row.writtenImmediatelyBefore = null;
+      if (pathIsUsable && SHA256_RE.test(entry.sha256 ?? '')) {
+        try {
+          const removals = removalCandidates(root, entry.original_path);
+          if (removals.length === 0) {
+            row.derivedHistoricalError = `no commit on the history of HEAD removes ${entry.original_path}`;
+            row.derivedHistoricalErrorKind = 'no-removal';
+          }
+          let namedCommitIsARetirementParent = false;
+          for (const removal of removals) {
+            if (parentOf(root, removal) !== row.retiredFromCommit) continue;
+            namedCommitIsARetirementParent = true;
+            const parentBlob = blobAt(root, `${removal}^`, entry.original_path);
+            if (parentBlob === null) continue;
+            const parentSha256 = sha256OfBlob(root, parentBlob);
+            if (parentSha256 !== entry.sha256) {
+              row.namedCommitSha256 = parentSha256;
+              continue;
+            }
+            row.retirementCommit = removal;
+            row.retirementParent = row.retiredFromCommit;
+            row.derivedHistoricalSha256 = parentSha256;
+            const earlierBlob = blobAt(root, `${removal}^^`, entry.original_path);
+            row.writtenImmediatelyBefore = earlierBlob !== null && earlierBlob !== parentBlob;
+            break;
+          }
+          if (row.retirementCommit === null && row.derivedHistoricalError === null) {
+            if (namedCommitIsARetirementParent) {
+              row.derivedHistoricalError =
+                `the retirement changed the file: ${entry.retired_from_commit}:${entry.original_path} carries ` +
+                `${row.namedCommitSha256 ?? '(absent)'}, not the registered bytes`;
+              row.derivedHistoricalErrorKind = 'rewritten';
+            } else {
+              row.derivedHistoricalError =
+                `${entry.retired_from_commit} is not the parent of a commit on HEAD that removed ` +
+                `${entry.original_path} (removals: ${removals.map((commit) => commit.slice(0, 12)).join(', ')})`;
+              row.derivedHistoricalErrorKind = 'not-a-retirement-parent';
+            }
+          }
+          row.zeroRewrite = row.derivedHistoricalSha256 !== null && row.writtenImmediatelyBefore !== true;
+        } catch (error) {
+          row.derivedHistoricalError = error.message;
+          row.derivedHistoricalErrorKind = 'unreadable';
+        }
       }
       // (d) re-evaluable receipt.
       row.reeval = 'skipped';
@@ -316,20 +412,35 @@ async function verify(root) {
         check: 'retired_from_commit_unreadable',
         detail: `${entry.retired_from_commit}:${entry.original_path ?? 'MISSING'}: ${row.historicalError}`,
       });
-    } else if (row.zeroRewrite === false) {
-      findings.push({
-        file: entry.file,
-        check: 'retired_bytes_were_rewritten',
-        detail:
-          `registered sha256 ${entry.sha256} but ${entry.retired_from_commit}:${entry.original_path} ` +
-          `is ${row.historicalSha256}, so the retirement changed the file`,
-      });
     }
     if (row.ancestorOfHead === false) {
       findings.push({
         file: entry.file,
         check: 'retired_from_commit_not_an_ancestor_of_head',
         detail: entry.retired_from_commit,
+      });
+    }
+    if (row.derivedHistoricalError !== null) {
+      const check =
+        row.derivedHistoricalErrorKind === 'rewritten'
+          ? 'retired_bytes_were_rewritten'
+          : row.derivedHistoricalErrorKind === 'unreadable'
+            ? 'retirement_history_unreadable'
+            : 'retired_from_commit_is_not_the_retirement_parent';
+      findings.push({
+        file: entry.file,
+        check,
+        detail: `registered sha256 ${entry.sha256}: ${row.derivedHistoricalError}`,
+      });
+    }
+    if (row.writtenImmediatelyBefore === true) {
+      findings.push({
+        file: entry.file,
+        check: 'retired_bytes_written_immediately_before_the_move',
+        detail:
+          `the bytes come from ${row.retirementParent}, a commit that wrote them: the parent of that commit ` +
+          `carried different bytes at ${entry.original_path}, so the file was still a current test when they ` +
+          `were written, and the move followed a write`,
       });
     }
     console.log(
@@ -340,7 +451,10 @@ async function verify(root) {
         `reeval=${row.reeval}${row.reevalRc === undefined ? '' : ` rc=${row.reevalRc}`} ` +
         `retired_from_commit=${row.retiredFromCommit === null ? 'MISSING' : row.retiredFromCommit.slice(0, 12)} ` +
         `historical_sha256=${row.historicalSha256 === null ? 'MISSING' : row.historicalSha256.slice(0, 12)} ` +
-        `zero_rewrite=${row.zeroRewrite === null ? 'unchecked' : row.zeroRewrite}`,
+        `zero_rewrite=${row.zeroRewrite === null ? 'unchecked' : row.zeroRewrite} ` +
+        `retirement_commit=${row.retirementCommit === null ? 'MISSING' : row.retirementCommit.slice(0, 12)} ` +
+        `retirement_parent=${row.retirementParent === null ? 'MISSING' : row.retirementParent.slice(0, 12)} ` +
+        `written_immediately_before_the_move=${row.writtenImmediatelyBefore === null ? 'unknown' : row.writtenImmediatelyBefore}`,
     );
     if (row.reeval === 'passes') {
       console.log(
@@ -382,11 +496,15 @@ if (require.main === module) {
 
 module.exports = {
   ancestorOfHead,
+  blobAt,
   fieldFindings,
   historicalSha256,
   overlayAtOriginalPath,
+  parentOf,
+  removalCandidates,
   runTestFile,
   sha256,
+  sha256OfBlob,
   verify,
   walk,
 };

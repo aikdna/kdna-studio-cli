@@ -82,15 +82,30 @@ the object store:
   and run. A passing run is printed as `KDNA-RETIREMENT-RESTORABLE: <file>`: the
   entry is not stale, so restore it or record why it stays retired. (d) is a
   receipt, never an acceptance condition;
-- **(e) zero rewrite** - the registered `sha256` is the `sha256` of the bytes the
-  file carried at `original_path` in `retired_from_commit`, read out of the
-  object store (`git rev-parse <commit>:<path>`, `git cat-file blob`, sha256 of
-  those bytes) rather than out of the working tree, so editing the copy under
-  `tests/legacy/` - or rewriting it while moving it - cannot make the claim
-  true. An entry that fails (e) is refused and the file goes back to its original
-  path, unchanged, as a current file; a file that would only retire after
-  adaptation is not retired at all. The commit has to be an ancestor of `HEAD`,
-  so an entry cannot name bytes that no tree under `HEAD` ever carried.
+- **(e) zero rewrite** - the copy under `tests/legacy/` has to be the file that
+  was at the original path, byte for byte. *Which* commit that means is pinned by
+  the gate rather than trusted to the entry: the retirement commit is derived
+  from history as the newest commit that removes the file from its original
+  location (`--no-renames --diff-filter=D`) **while its parent carries exactly
+  the registered bytes**, and `retired_from_commit` has to be that commit's
+  parent verbatim - so a commit cannot be picked by hand, older or newer, to make
+  rewritten bytes look original. The registered `sha256` must equal the `sha256`
+  of that parent's blob at `original_path`, read out of the object store (`git
+  rev-parse <commit>:<path>`, `git cat-file blob`, sha256 of those bytes) rather
+  than out of the working tree, so neither editing the copy under `tests/legacy/`
+  nor rewriting it while moving it can make the claim true. The named commit must
+  also be one in which the file was **not written**: a rewrite in the commit
+  immediately before the move ("rewrite one byte, then move it") is refused,
+  because the bytes a retirement would preserve were written while the file was
+  still a current test. An entry that fails (e) is refused, and the disposition
+  is to put the pre-retirement bytes back under `tests/legacy/`; a file that
+  would only retire after being adapted is not retired at all.
+
+The last clause is as far as history goes. A write that is separated from the
+move by another commit cannot be told apart from a file that was legitimately
+edited earlier and retired later, so the gate does not pretend to; it prints the
+derived retirement commit and its parent in the receipt, which makes the write
+that produced the preserved bytes visible for review.
 
 The exit code is about (a)-(c) and (e). (e) reads git history, so the checkout
 that runs the gate has to carry it: `.github/workflows/ci.yml` fetches the full

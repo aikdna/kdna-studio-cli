@@ -25,13 +25,20 @@ const { spawnSync } = require('node:child_process');
 //   7. rewrite one byte while moving the file and register the rewritten bytes
 //                                                      -> refused (zero rewrite:
 //      the registered bytes are not the bytes the original path carried);
-//   8. name a pre-retirement commit that HEAD cannot reach -> refused.
+//   8. rewrite one byte in a commit of its own and move the file in the next
+//      commit                                      -> refused (the retirement
+//      would preserve bytes written while the file was still a current test);
+//   9. name a commit that is not the parent of the retirement
+//                                                      -> refused;
+//  10. name a pre-retirement commit that HEAD cannot reach -> refused.
 //
-// Every shape is built on a real two-commit history, because (e) reads the
-// retired bytes out of the object store rather than out of the working tree.
-// The last two cases also carry the entry guard: a clean copy of the gate runs
-// and prints its success line, and so does an invocation through an absolute
-// symlink - neither may be a silent no-op that exits 0.
+// Every shape is built on a real commit history, because (e) derives the
+// retirement commit from it: it is the newest commit that removed the path from
+// its original location while its parent carried exactly the registered bytes,
+// and the entry has to name that commit's parent. The last two cases also carry
+// the entry guard: a clean copy of the gate runs and prints its success line,
+// and so does an invocation through an absolute symlink - neither may be a
+// silent no-op that exits 0.
 
 const root = path.resolve(__dirname, '..');
 const verifier = path.join(root, 'scripts', 'verify-retirement-registry.js');
@@ -102,7 +109,16 @@ function git(dir, args) {
   return result.stdout.trim();
 }
 
-function sandbox({ registry, files, history = null, withGate = false, fillCommit = true }) {
+function sandbox({
+  registry,
+  files,
+  earlier = null,
+  history = null,
+  rewrite = null,
+  withGate = false,
+  fillCommit = true,
+  fillCommitFrom = 'pre',
+}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-retirement-registry-'));
   fs.mkdirSync(path.join(dir, 'tests', 'legacy'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
@@ -122,13 +138,27 @@ function sandbox({ registry, files, history = null, withGate = false, fillCommit
       }
     }
   }
+  if (earlier !== null) {
+    for (const [relative, contents] of Object.entries(earlier)) writeFile(dir, relative, contents);
+    git(dir, ['init', '--quiet']);
+    git(dir, ['add', '--all']);
+    git(dir, ['commit', '--quiet', '--message', 'probe: an earlier state of the file']);
+  }
   for (const [relative, contents] of Object.entries(before)) writeFile(dir, relative, contents);
-  git(dir, ['init', '--quiet']);
+  if (earlier === null) git(dir, ['init', '--quiet']);
   git(dir, ['add', '--all']);
   git(dir, ['commit', '--quiet', '--message', 'probe: the file at the path it was retired from']);
   const preRetire = git(dir, ['rev-parse', 'HEAD']);
+  if (rewrite !== null) {
+    for (const [relative, contents] of Object.entries(rewrite)) writeFile(dir, relative, contents);
+    git(dir, ['add', '--all']);
+    git(dir, ['commit', '--quiet', '--message', 'probe: rewrite one byte, then move']);
+  }
+  const rewritten = git(dir, ['rev-parse', 'HEAD']);
   const entries = registry.map((entry) =>
-    fillCommit && entry.retired_from_commit === undefined ? { ...entry, retired_from_commit: preRetire } : entry,
+    fillCommit && entry.retired_from_commit === undefined
+      ? { ...entry, retired_from_commit: fillCommitFrom === 'rewrite' ? rewritten : preRetire }
+      : entry,
   );
   // The move itself: a path the retirement did not leave at its original place
   // is gone from the working tree, exactly as `git mv` would leave it.
@@ -328,6 +358,63 @@ test('a retirement that rewrote one byte on the way into tests/legacy/ is refuse
   );
 });
 
+test('a byte rewritten in the commit before the move is refused', () => {
+  // The rewrite is its own commit, and the registry names it truthfully: the
+  // move that follows changes nothing. The gate still refuses, because the
+  // bytes it would preserve were written while the file was a current test.
+  const rewritten = RED_TEST.replace('assert.equal(1, 2)', 'assert.equal(1, 3)');
+  const entry = entryFor('tests/legacy/probe.test.js', rewritten);
+  withSandbox(
+    {
+      registry: [entry],
+      history: { 'tests/probe.test.js': RED_TEST },
+      rewrite: { 'tests/probe.test.js': rewritten },
+      files: { 'tests/legacy/probe.test.js': rewritten },
+      fillCommitFrom: 'rewrite',
+    },
+    (dir) => {
+      const result = runVerifier(dir);
+      assert.equal(result.status, 1, result.output);
+      assert.match(result.output, /retired_bytes_written_immediately_before_the_move/);
+      assert.match(result.output, /written_immediately_before_the_move=true/);
+      assert.match(result.output, /zero_rewrite=false/);
+      assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
+    },
+  );
+});
+
+test('a retired_from_commit that is not the parent of the retirement is refused', () => {
+  // An older commit that exists and carries the original path: readable, but not
+  // the commit the registered bytes were taken out of the original path by.
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
+  withSandbox(
+    {
+      registry: [entry],
+      earlier: { 'tests/probe.test.js': RED_TEST.replace('retired behaviour', 'an earlier state') },
+      history: { 'tests/probe.test.js': RED_TEST },
+      files: { 'tests/legacy/probe.test.js': RED_TEST },
+      fillCommit: false,
+    },
+    (dir) => {
+      const earlierCommit = git(dir, ['rev-list', '--max-parents=0', 'HEAD']);
+      assert.notEqual(earlierCommit, git(dir, ['rev-parse', 'HEAD^']));
+      // Re-write the registry to name the oldest commit instead of the parent of
+      // the retirement, then run the gate over that tree.
+      const registryPath = path.join(dir, 'tests', 'retired.json');
+      const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
+      registry.entries[0].retired_from_commit = earlierCommit;
+      fs.writeFileSync(registryPath, `${JSON.stringify(registry, null, 2)}\n`);
+      git(dir, ['add', '--all']);
+      git(dir, ['commit', '--quiet', '--message', 'probe: name the wrong commit']);
+      const result = runVerifier(dir);
+      assert.equal(result.status, 1, result.output);
+      assert.match(result.output, /retired_from_commit_is_not_the_retirement_parent/);
+      assert.match(result.output, /zero_rewrite=false/);
+      assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
+    },
+  );
+});
+
 test('a pre-retirement commit that the head history cannot reach is refused', () => {
   const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
   withSandbox({ registry: [entry], files: { 'tests/legacy/probe.test.js': RED_TEST } }, (dir) => {
@@ -339,7 +426,9 @@ test('a pre-retirement commit that the head history cannot reach is refused', ()
     const result = runVerifier(dir);
     assert.equal(result.status, 1, result.output);
     assert.match(result.output, /retired_from_commit_not_an_ancestor_of_head/);
-    assert.match(result.output, /zero_rewrite=true/);
+    // The bytes are unchanged and readable, but no removal on the history of
+    // HEAD ever took them out of the original path, so (e) cannot hold.
+    assert.match(result.output, /zero_rewrite=false/);
     assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
   });
 });

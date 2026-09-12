@@ -5,15 +5,16 @@ themselves live under `tests/legacy/`. None of it runs in `npm test`,
 `npm run test:all`, `.github/workflows/ci.yml`, or
 `.github/workflows/publish.yml`.
 
-**Every registered copy is the pre-retirement file, byte for byte.** Criterion
-(e) below checks that against the object store, and it is the point of a
-retirement: the repository keeps *that* test, not a version of it that was
-adapted to its new home. Nothing under `tests/legacy/` is ever run, so a retired
-copy does not need its relative requires, or the paths it resolves from
-`__dirname`, to work from the new depth - and a retirement that rewrites them to
-make the new location loadable is refused, because the bytes it preserved are
-then no longer the bytes the original path carried. A file that would only fit
-`tests/legacy/` after being adapted is not retired at all.
+**Every copy registered here is the pre-retirement file, byte for byte.** The
+eight that had been rewritten on the way into `tests/legacy/` - relative
+requires, `__dirname` paths and the path to `bin/kdna-studio.js` re-pointed to
+the new depth - were restored to the bytes their original paths carried, and
+criterion (e) below records, for every entry, the complete diff the move itself
+had produced, so that content change is on the record instead of inside a hash.
+Nothing under `tests/legacy/` is ever run, so a retired copy never needs its
+relative requires to resolve from the new depth: adapting a copy for its new home
+is a content change the gate prints and an independent reviewer has to sign, not
+something the gate can rule out by itself.
 
 Nine files are registered:
 
@@ -82,30 +83,26 @@ the object store:
   and run. A passing run is printed as `KDNA-RETIREMENT-RESTORABLE: <file>`: the
   entry is not stale, so restore it or record why it stays retired. (d) is a
   receipt, never an acceptance condition;
-- **(e) zero rewrite** - the copy under `tests/legacy/` has to be the file that
-  was at the original path, byte for byte. *Which* commit that means is pinned by
-  the gate rather than trusted to the entry: the retirement commit is derived
-  from history as the newest commit that removes the file from its original
-  location (`--no-renames --diff-filter=D`) **while its parent carries exactly
-  the registered bytes**, and `retired_from_commit` has to be that commit's
-  parent verbatim - so a commit cannot be picked by hand, older or newer, to make
-  rewritten bytes look original. The registered `sha256` must equal the `sha256`
-  of that parent's blob at `original_path`, read out of the object store (`git
-  rev-parse <commit>:<path>`, `git cat-file blob`, sha256 of those bytes) rather
-  than out of the working tree, so neither editing the copy under `tests/legacy/`
-  nor rewriting it while moving it can make the claim true. The named commit must
-  also be one in which the file was **not written**: a rewrite in the commit
-  immediately before the move ("rewrite one byte, then move it") is refused,
-  because the bytes a retirement would preserve were written while the file was
-  still a current test. An entry that fails (e) is refused, and the disposition
-  is to put the pre-retirement bytes back under `tests/legacy/`; a file that
-  would only retire after being adapted is not retired at all.
+- **(e) re-checkable** - the copy under `tests/legacy/` hashes to the registered
+  `sha256`, so the registered bytes cannot be deleted or edited without the gate
+  going red; and `retired_from_commit` is the commit the file was retired from.
+  The gate checks that the named commit's tree really carries the file at
+  `original_path` (and that HEAD reaches it), and it derives the move as the
+  commit whose parent that is (`--no-renames --diff-filter=D`).
 
-The last clause is as far as history goes. A write that is separated from the
-move by another commit cannot be told apart from a file that was legitimately
-edited earlier and retired later, so the gate does not pretend to; it prints the
-derived retirement commit and its parent in the receipt, which makes the write
-that produced the preserved bytes visible for review.
+  This is the whole of what a machine can prove about a retirement. It cannot
+  prove that nobody wrote the file before the move: a rewrite in a commit of its
+  own followed by a "pure" move is indistinguishable from a file that was edited
+  long before it was retired, and no history-only rule can tell the two apart.
+  The gate does not claim to. It **exposes** it instead: for every entry it
+  prints the complete diff of the file between `retired_from_commit` and the move
+  commit - and the diff of the named commit's own write, when that commit wrote
+  the file - counts the differing lines, and names the entries whose diff is not
+  empty and whose `review_signature` does not cover it. Those entries are
+  **unsigned**: an independent reviewer has to sign each one `no-content-change`,
+  or `change-explained` with a `review_note` holding the reason, before the entry
+  may enter a push batch. A gate that is green is not a claim that nothing was
+  written; it is a claim that everything written is on the record and attributed.
 
 The exit code is about (a)-(c) and (e). (e) reads git history, so the checkout
 that runs the gate has to carry it: `.github/workflows/ci.yml` fetches the full

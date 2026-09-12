@@ -15,15 +15,17 @@ const root = path.resolve(__dirname, '..');
 // reads no test output: a retirement is a preservation claim, and the gate
 // checks that the registered bytes are still there (sha256), that every file
 // under tests/legacy/ is registered, that the original path does not still carry
-// the registered bytes, that the registered bytes are the bytes the file carried
-// at its original path in the commit before the retirement - that commit is
-// derived from history, and it has to be one in which the file was not written,
-// so "rewrite one byte, then move it" is refused (read from the object store, so
-// the move cannot have rewritten the file) - and - as a receipt rather
-// than a verdict - that the registered bytes do not pass when they are put back
-// where the file used to run. A receipt that passes is printed as
-// KDNA-RETIREMENT-RESTORABLE. The registry check reads git history, so the
-// checkout has to carry it (fetch-depth: 0 in .github/workflows/ci.yml).
+// the registered bytes, that retired_from_commit is the commit the file was
+// retired from (its tree really carries the file at the original path) - and, as
+// a receipt rather than a verdict, that the registered bytes do not pass when
+// they are put back where the file used to run. A receipt that passes is printed
+// as KDNA-RETIREMENT-RESTORABLE. What a machine cannot prove is that nobody wrote
+// the file before the move: the gate prints the complete diff the move produced
+// (and the diff of the named commit's own write), counts it, and names the
+// entries whose diff is not empty and unsigned, which an independent reviewer has
+// to sign before they may enter a push batch. The registry check reads git
+// history, so the checkout has to carry it (fetch-depth: 0 in
+// .github/workflows/ci.yml).
 const retired = JSON.parse(
   fs.readFileSync(path.join(root, 'tests', 'retired.json'), 'utf8'),
 ).entries;

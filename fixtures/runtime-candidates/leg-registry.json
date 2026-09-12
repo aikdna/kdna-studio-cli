@@ -1,0 +1,27 @@
+{
+  "schema": "kdna.ci-leg-registry",
+  "schema_version": "1.0.0",
+  "note": "A leg may only report not_run when it is registered here AND the recomputed condition still holds on the committed graph. Deleting an entry re-runs the leg; the registration can never make a leg permanently not_run. review_by is an expiry: scripts/verify-ci-leg-receipts.js fails once it has passed.",
+  "entries": [
+    {
+      "leg": "candidate-sources",
+      "class": "not_run",
+      "reason": "retired_runtime_candidate_authority",
+      "object": "runtime candidate authority that matches the shipped dependency graph",
+      "condition": "authority_coordinates != shipped_coordinates",
+      "trigger": "the runtime candidate authority is re-pinned to the shipped graph (then the leg runs and must reproduce both checked candidate artifacts)",
+      "owner": "kdna-open",
+      "review_by": "2027-03-31"
+    },
+    {
+      "leg": "candidate-chain",
+      "class": "not_run",
+      "reason": "retired_runtime_candidate_authority",
+      "object": "runtime candidate authority that matches the shipped dependency graph",
+      "condition": "authority_coordinates != shipped_coordinates",
+      "trigger": "the runtime candidate authority is re-pinned to the shipped graph (then the leg runs and must verify the installed Runtime candidate chain)",
+      "owner": "kdna-open",
+      "review_by": "2027-03-31"
+    }
+  ]
+}

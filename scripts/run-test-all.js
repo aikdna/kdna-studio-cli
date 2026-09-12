@@ -37,6 +37,11 @@ for (const entry of retired) {
 node(['scripts/acquire-trusted-npm-release.js'], 'trusted npm release acquisition');
 node(['scripts/run-lint.js'], 'syntax checks');
 node(['scripts/check-current-protocol-names.js'], 'protocol naming gate');
+// The receipt generator is never trusted about its own verdict: this step
+// recomputes every leg outcome from the committed bytes and refuses a receipt
+// that does not agree, is not digest-bound, is not registered, or has outlived
+// its expiry.
+node(['scripts/verify-ci-leg-receipts.js'], 'CI leg receipt verification');
 const retiredFiles = new Set(retired.map((entry) => entry.file));
 const tests = fs.readdirSync(path.join(root, 'tests'))
   .filter((name) => name.endsWith('.test.js'))

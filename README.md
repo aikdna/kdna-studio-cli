@@ -35,4 +35,10 @@ npm pack --offline --ignore-scripts
 
 An embedding that requires offline processing must independently deny network access; npm `--offline` alone is not a network boundary. No package lifecycle scripts or native optional packages are needed for this graph.
 
+## Dependency coordinates and publication
+
+A direct declaration is either an exact SemVer or an integrity-locked `file:` coordinate. Placement follows what the documented entry needs: these `file:` coordinates belong in `dependencies`, because `npm ci --omit=dev --omit=optional` followed by `npm test` still works with the development graph omitted, whereas a `devDependencies` placement would not survive `--omit=dev`. Peers declared by vendored members are bound to this repository's own coordinates through `overrides`, so an unreadable vendor archive fails locally instead of sending npm to the registry.
+
+Before publishing a release from this repository every `file:` coordinate must be replaced by the **exact registry version**, because a consumer that installs the packed artifact from a registry has no `vendor/` directory next to it. `npm run check:publish-coordinates` reports the coordinates that are still local; the publish workflow runs that gate before a package can be pushed.
+
 See [command contract](docs/CREATION_COMMAND_CONTRACT.md) and [Agent integration](docs/TERMINAL_AGENT_CREATION.md). Their JSONL is private transport, not a KDNA asset format. Historical project/card commands and runtime adapters stay outside the packed and default surface.

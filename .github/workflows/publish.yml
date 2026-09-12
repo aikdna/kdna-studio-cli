@@ -40,6 +40,12 @@ jobs:
           node scripts/acquire-trusted-npm-release.js --out "$RUNNER_TEMP/npm-11.17.0.tgz"
           echo "KDNA_TRUSTED_NPM_TARBALL=$RUNNER_TEMP/npm-11.17.0.tgz" >> "$GITHUB_ENV"
       - run: node scripts/run-trusted-npm.js ci --ignore-scripts --omit=optional --no-audit --no-fund --registry=https://registry.npmjs.org/ --@aikdna:registry=https://registry.npmjs.org/
+      # C01: this repository is not `private`, so a `file:` coordinate cannot
+      # survive into a published artifact - a registry consumer has no vendor/
+      # next to it. The gate is expected to be red until the publish
+      # coordinates are switched to exact registry versions.
+      - name: Refuse to publish a file: coordinate from a non-private package
+        run: node scripts/check-publish-coordinates.js
       - name: Verify release event, tag, commit, package, and changelog
         run: node scripts/run-trusted-npm.js run release:check
       - name: Run the complete release test suite

@@ -68,9 +68,13 @@ jobs:
         run: |
           node scripts/acquire-trusted-npm-release.js --out "$RUNNER_TEMP/npm-11.17.0.tgz"
           echo "KDNA_TRUSTED_NPM_TARBALL=$RUNNER_TEMP/npm-11.17.0.tgz" >> "$GITHUB_ENV"
-      - run: node scripts/run-trusted-npm.js ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/ --@aikdna:registry=https://registry.npmjs.org/
-      - name: Reproduce both checked candidate artifacts from their exact clean sources
-        run: node scripts/run-trusted-npm.js run verify:candidate-sources
+      # --omit=optional keeps the installed graph equal to the audited graph:
+      # the CLI refuses to load with unbound optional addons
+      # (src/terminal-workspace.js:157-162), and the vendored lock resolves every
+      # non-optional package to file:vendor/*.tgz.
+      - run: node scripts/run-trusted-npm.js ci --ignore-scripts --omit=optional --no-audit --no-fund --registry=https://registry.npmjs.org/ --@aikdna:registry=https://registry.npmjs.org/
+      - name: Reproduce both checked candidate artifacts from their exact clean sources (gated legacy candidate leg)
+        run: node scripts/ci-leg-receipt.js candidate-sources
       - name: Select the declared product runtime
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
@@ -78,5 +82,5 @@ jobs:
           check-latest: false
       - name: Run the complete release-hardening and product suite
         run: node scripts/run-trusted-npm.js run test:all
-      - name: Verify the installed Runtime candidate chain from an empty cache
-        run: node scripts/run-trusted-npm.js run test:candidate-chain
+      - name: Verify the installed Runtime candidate chain from an empty cache (gated legacy candidate leg)
+        run: node scripts/ci-leg-receipt.js candidate-chain

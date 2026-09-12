@@ -19,7 +19,15 @@
   ],
   "scripts": {
     "lint": "node --check bin/kdna-studio.js && node --check src/terminal-workspace.js && node --check src/component-operations.js",
-    "test": "node --test tests/current-components/*.test.cjs"
+    "test": "node --test tests/current-components/*.test.cjs tests/current/*.test.js",
+    "test:all": "node scripts/run-test-all.js",
+    "test:candidate-chain": "node scripts/verify-runtime-candidate-chain.js",
+    "verify:candidate-sources": "node scripts/verify-runtime-candidate-sources.js",
+    "check:protocol-names": "node scripts/check-current-protocol-names.js",
+    "release:check": "node scripts/release-check.js",
+    "release:generate-evidence": "node scripts/generate-release-evidence.js",
+    "release:publish-verified": "node scripts/publish-verified-artifact.js",
+    "prepublishOnly": "node scripts/run-test-all.js && node scripts/verify-runtime-candidate-chain.js && node scripts/release-check.js"
   },
   "keywords": [
     "kdna",

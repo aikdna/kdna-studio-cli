@@ -8,7 +8,13 @@ the committed graph no longer ships:
 
 - the pre-component-semantics Studio CLI command surface (`project`, `card`,
   `identity`, `create-agent`, `answer`, `review`, `resume`, `export`, ...), which
-  `bin/kdna-studio.js` replaced with the `session` / `verify` / `read` surface;
+  `bin/kdna-studio.js` replaced with the `session` / `verify` / `read` surface.
+  The four suites that exercised it (`tests/cli.test.js`,
+  `tests/creation-agent-cli.test.js`, `tests/e2e-export-completeness.test.js`
+  and `tests/current/shared-evidence.test.js`) are **not** retired: they were
+  restored as current tests that assert the current surface and the retired one's
+  absence, because their retirements rested on failing test titles and a
+  diagnostic line rather than on a statement about the retired objects;
 - the retired CLI session harness protocol (`tests/legacy/pd275/session-harness.js`
   expects session events and material kinds that the current session protocol
   does not emit);
@@ -25,14 +31,32 @@ one `KDNA-CI-NOT-RUN:` receipt line per registered entry. Any re-activation must
 start by re-pointing these files at current objects, not by deleting the receipt.
 
 Being red is not by itself a reason to be here. The gate accepts an entry only
-while its failure output explicitly names an object the entry declares absent.
-That is the criterion's only sufficient leg, and it is checked against the run
-in the file's registered location. A match counts only when the run printed it
-about the failure: not on a passing test's line, not inside the specifier of a
-`Cannot find module` failure, and not inside a file path - a path is the judged
-artifact naming itself (`at .../tests/legacy/pd275/session-harness.js:69:10`
-used to certify the retired session harness this way, and a stack frame naming
-the suite used to certify `shared-evidence`).
+while the run says, about the failure, that an object the entry declares absent
+is missing - an error or assertion message, or one half of an assertion diff.
+That statement is checked against the run in the file's registered location. A
+match counts only when the run printed it about the failure: never on a failing
+test's own title (a title is static text that can name any object at all - the
+titles `card approve --all locks every unlocked card`,
+`create-agent saves an eleven-artifact workspace and status resumes it` and
+`e2e: pattern -> approve -> export -> patterns in payload` used to certify three
+suites this way), never on a passing test's line, never inside the specifier of
+a `Cannot find module` failure, and never inside a file path - a path is the
+judged artifact naming itself (`at
+.../tests/legacy/pd275/session-harness.js:69:10` used to certify the retired
+session harness this way, and a stack frame naming the suite used to certify
+`shared-evidence`).
+
+A **diagnostic line** - output the judged artifact printed rather than a
+statement the run makes about the failure - is a reason only together with its
+**differential contrast**, and the gate re-runs the contrast rather than
+trusting a recorded one: with the declared object made present, the file must
+not be red and the diagnostic must not appear. The generation-1 producer note
+that used to certify `current/shared-evidence` does not survive that test - with
+`legacy_origin` written back into `src/terminal-workspace.js` the suite is still
+red and the same note still appears - so that suite was not retired at all: it
+was restored as `tests/current/shared-evidence.test.js`, and the same goes for
+`tests/cli.test.js`, `tests/creation-agent-cli.test.js` and
+`tests/e2e-export-completeness.test.js`.
 
 Re-running the retired bytes from the path they were retired from is still
 reported, but only as an **auxiliary** observation that never accepts an entry
@@ -47,4 +71,7 @@ every require untouched, or with one of them rewritten to the new depth - names
 nothing it declares absent and is refused.
 
 The current verification surface lives in `tests/current-components/` (driven by
-`npm test`) and `tests/current/dependency-binding.test.js`.
+`npm test`), `tests/current/`, and the top-level suites `tests/cli.test.js`,
+`tests/creation-agent-cli.test.js`, `tests/e2e-export-completeness.test.js` and
+`tests/runtime-candidate-binding-completeness.test.js` (driven by
+`npm run test:all`).

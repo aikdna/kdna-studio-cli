@@ -1,77 +1,8 @@
 {
   "schema": "kdna.retired-test-registry",
   "schema_version": "1.0.0",
-  "note": "Every entry is retired from the current verification surface. scripts/verify-retirement-registry.js checks in both directions that the registry and tests/legacy/ agree, evaluates each object_absence probe against the committed bytes (a token probe only counts when the token also occurs in the retired file), and then requires the red to belong to the retired object rather than to the move: (a) the retired bytes are red when they are run from the path they were retired from, where their relative requires still resolve, or (b) the failure output explicitly names an object this entry declares absent. A file that is only red because the move broke its relative require satisfies neither, so a test that still passes cannot be retired silently.",
+  "note": "Every entry is retired from the current verification surface. scripts/verify-retirement-registry.js checks in both directions that the registry and tests/legacy/ agree, evaluates each object_absence probe against the committed bytes (a token probe only counts when the token also occurs in the retired file), and then requires the red to belong to the retired object rather than to the move. The criterion has one sufficient leg and one conditional leg: (b) the failure output states the failure - an error or assertion message, or one half of an assertion diff - and explicitly names an object this entry declares absent; (c) the failure output names such an object only in a diagnostic line (output the judged artifact printed rather than a statement about the failure), in which case the entry must also carry a diagnostic_evidence differential contrast that the gate re-runs: with the declared object made present the retired file must not be red and the diagnostic must not appear. A failing test's title is static text and never counts as the run naming the object. Re-running the retired bytes from the path they were retired from is reported as an auxiliary observation only and never accepts an entry. A file that is only red because the move broke its relative require satisfies nothing, so a test that still passes cannot be retired silently.",
   "entries": [
-    {
-      "file": "tests/legacy/cli.test.js",
-      "retired_object": "pre-component-semantics Studio CLI command surface (project, card, identity, migrate, export, llm config)",
-      "reason": "bin/kdna-studio.js is now a 7-line shim over src/terminal-workspace.js; those commands no longer exist, so every assertion targets a retired object.",
-      "observed_on_committed_graph": "1 passing / 46 failing assertions",
-      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs, tests/current/dependency-binding.test.js",
-      "object_absence": [
-        {
-          "kind": "help_excludes",
-          "command": [
-            "node",
-            "bin/kdna-studio.js",
-            "--help"
-          ],
-          "tokens": [
-            "card",
-            "migrate",
-            "distill"
-          ]
-        }
-      ]
-    },
-    {
-      "file": "tests/legacy/creation-agent-cli.test.js",
-      "retired_object": "pre-component-semantics Agent creation CLI (create-agent, finalize-agent, answer, review, resume, try, repair, export, public guide)",
-      "reason": "Retired command surface; the surviving assertions are static source-text checks against the retired entry point.",
-      "observed_on_committed_graph": "13 passing / 42 failing assertions",
-      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs",
-      "object_absence": [
-        {
-          "kind": "help_excludes",
-          "command": [
-            "node",
-            "bin/kdna-studio.js",
-            "--help"
-          ],
-          "tokens": [
-            "create-agent",
-            "finalize-agent"
-          ]
-        },
-        {
-          "kind": "token_absent",
-          "path": "src/terminal-workspace.js",
-          "token": "application-host"
-        }
-      ]
-    },
-    {
-      "file": "tests/legacy/e2e-export-completeness.test.js",
-      "retired_object": "pre-component-semantics export completeness pipeline",
-      "reason": "The export path it drives is replaced by the current packed Studio save/readback flow.",
-      "observed_on_committed_graph": "0 passing / 3 failing assertions",
-      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs (export leg)",
-      "object_absence": [
-        {
-          "kind": "help_excludes",
-          "command": [
-            "node",
-            "bin/kdna-studio.js",
-            "--help"
-          ],
-          "tokens": [
-            "export",
-            "card"
-          ]
-        }
-      ]
-    },
     {
       "file": "tests/legacy/protocol-producer.test.js",
       "retired_object": "pre-component-semantics protocol producer transport",
@@ -156,25 +87,6 @@
           "kind": "token_absent",
           "path": "src/terminal-workspace.js",
           "token": "human_reply"
-        }
-      ]
-    },
-    {
-      "file": "tests/legacy/current/shared-evidence.test.js",
-      "retired_object": "pre-component-semantics shared creation-evidence format 1 producer path",
-      "reason": "It drives the retired harness and asserts the retired 3.1.0-rc compiler coordinate; the current evidence format is format2, and the generation-1 producer marker legacy_origin is gone from the session source - which is the fact the run prints as its generation-1 producer note before the cases fail.",
-      "observed_before_move": "0 passing / 4 failing assertions (tests/current/shared-evidence.test.js)",
-      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs (format2 evidence assertions)",
-      "object_absence": [
-        {
-          "kind": "token_absent",
-          "path": "src/terminal-workspace.js",
-          "token": "shared-evidence"
-        },
-        {
-          "kind": "token_absent",
-          "path": "src/terminal-workspace.js",
-          "token": "legacy_origin"
         }
       ]
     }

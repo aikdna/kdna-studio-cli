@@ -347,3 +347,118 @@ test('a failure that names the retired object is accepted even where the origina
     },
   );
 });
+
+// Round-4 tightening. Two kinds of naming used to be accepted as the reason for
+// a retirement and are not reasons:
+//
+//   * a *failing test's title* - static text that can name any object at all, so
+//     it cannot show that the named object is why the run is red;
+//   * a *diagnostic line* - output the judged artifact printed rather than a
+//     statement about the failure - which counts only together with the
+//     differential contrast that shows it appears because the object is absent.
+//
+// The last three cases are the diagnostic contract in both directions: the same
+// entry with and without the contrast, and a contrast that does not hold.
+
+const TITLE_ONLY_TEST = [
+  "'use strict';",
+  "const test = require('node:test');",
+  "const assert = require('node:assert/strict');",
+  "test('c2TitleOnlyProbe is gone', () => { assert.equal(1, 2); });",
+  '',
+].join('\n');
+const DIAGNOSTIC_TEST = [
+  "'use strict';",
+  "const fs = require('node:fs');",
+  "const path = require('node:path');",
+  "const test = require('node:test');",
+  "const assert = require('node:assert/strict');",
+  "const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'live.js'), 'utf8');",
+  "if (!source.includes('c2DiagnosticProbe')) {",
+  "  process.stdout.write(JSON.stringify({ c2DiagnosticProbe: 'the retired object is absent from the live source' }) + '\\n');",
+  "}",
+  "test('retired behaviour', () => { assert.equal(source.includes('c2DiagnosticProbe'), true); });",
+  '',
+].join('\n');
+const UNCONDITIONAL_DIAGNOSTIC_TEST = [
+  "'use strict';",
+  "const test = require('node:test');",
+  "const assert = require('node:assert/strict');",
+  "process.stdout.write(JSON.stringify({ c2DiagnosticProbe: 'the retired object is absent from the live source' }) + '\\n');",
+  "test('retired behaviour', () => { assert.equal(1, 2); });",
+  '',
+].join('\n');
+
+function diagnosticEntry() {
+  const entry = baseEntry();
+  entry.object_absence = [{ kind: 'token_absent', path: 'src/live.js', token: 'c2DiagnosticProbe' }];
+  return entry;
+}
+
+const DIAGNOSTIC_CONTRAST = {
+  identifier: 'c2DiagnosticProbe',
+  diagnostic: 'the retired object is absent from the live source',
+  present: { kind: 'append_token', path: 'src/live.js', token: 'c2DiagnosticProbe' },
+};
+
+test('a reason that only comes from a failing test title is refused', () => {
+  const entry = baseEntry();
+  entry.object_absence = [{ kind: 'token_absent', path: 'src/live.js', token: 'c2TitleOnlyProbe' }];
+  withSandbox(
+    { registry: [entry], files: { 'tests/legacy/probe.test.js': TITLE_ONLY_TEST } },
+    (dir) => {
+      const result = runVerifier(dir);
+      assert.equal(result.status, 1, result.output);
+      assert.match(result.output, /named_object=no/);
+      assert.match(result.output, /criterion=none/);
+      assert.match(result.output, /retirement_red_not_attributed_to_the_declared_object/);
+      assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
+    },
+  );
+});
+
+test('a diagnostic reason without a differential contrast is refused', () => {
+  const entry = diagnosticEntry();
+  withSandbox(
+    { registry: [entry], files: { 'tests/legacy/probe.test.js': DIAGNOSTIC_TEST } },
+    (dir) => {
+      const result = runVerifier(dir);
+      assert.equal(result.status, 1, result.output);
+      assert.match(result.output, /criterion=c:diagnostic-names-the-object/);
+      assert.match(result.output, /diagnostic_reason_without_contrast/);
+      assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
+    },
+  );
+});
+
+test('a diagnostic reason with a differential contrast that holds is accepted', () => {
+  const entry = diagnosticEntry();
+  entry.diagnostic_evidence = DIAGNOSTIC_CONTRAST;
+  withSandbox(
+    { registry: [entry], files: { 'tests/legacy/probe.test.js': DIAGNOSTIC_TEST } },
+    (dir) => {
+      const result = runVerifier(dir);
+      assert.equal(result.status, 0, result.output);
+      assert.match(result.output, /criterion=c:diagnostic-names-the-object/);
+      assert.match(result.output, /absent_rc=1 absent_diagnostic=true/);
+      assert.match(result.output, /present_rc=0 present_diagnostic=false/);
+      assert.match(result.output, /verdict=holds/);
+      assert.match(result.output, /diagnostic_contrast=1/);
+    },
+  );
+});
+
+test('a diagnostic reason whose contrast does not hold is refused', () => {
+  const entry = diagnosticEntry();
+  entry.diagnostic_evidence = DIAGNOSTIC_CONTRAST;
+  withSandbox(
+    { registry: [entry], files: { 'tests/legacy/probe.test.js': UNCONDITIONAL_DIAGNOSTIC_TEST } },
+    (dir) => {
+      const result = runVerifier(dir);
+      assert.equal(result.status, 1, result.output);
+      assert.match(result.output, /diagnostic_contrast_failed/);
+      assert.match(result.output, /verdict=fails/);
+      assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
+    },
+  );
+});

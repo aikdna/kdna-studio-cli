@@ -13,13 +13,18 @@ const root = path.resolve(__dirname, '..');
 // silent; see tests/retired.json and tests/legacy/README.md. The registry is
 // checked against reality by scripts/verify-retirement-registry.js below: it
 // requires every legacy file to be registered, evaluates each declared absence
-// probe, and requires the file's own failure output to name an object the entry
-// declares absent. That is the only leg that accepts an entry; re-running the
-// bytes from their old path is reported as an auxiliary observation only, and
-// a match inside a `Cannot find module` specifier or inside a file path does not
-// count. A test that still passes cannot be retired silently: whether the move
-// left its requires untouched or rewrote one of them, the file names nothing it
-// declares absent and is refused).
+// probe, and requires the run to say, about the failure, that an object the
+// entry declares absent is missing. That means an error or assertion message, or
+// one half of an assertion diff. A failing test's title never counts: it is
+// static text that can name any object at all. Neither does a match inside a
+// `Cannot find module` specifier or inside a file path. A diagnostic line - the
+// judged artifact's own output rather than a statement about the failure -
+// counts only together with the differential contrast the entry declares: with
+// the object made present the file must not be red and the diagnostic must not
+// appear. Re-running the bytes from their old path is reported as an auxiliary
+// observation only. A test that still passes cannot be retired silently: whether
+// the move left its requires untouched or rewrote one of them, the file says
+// nothing about an object it declares absent and is refused.
 const retired = JSON.parse(
   fs.readFileSync(path.join(root, 'tests', 'retired.json'), 'utf8'),
 ).entries;

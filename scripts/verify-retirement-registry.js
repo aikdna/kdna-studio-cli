@@ -12,8 +12,8 @@
 //      which is evaluated against the committed bytes. A token probe only
 //      counts when the token also occurs in the retired file itself, so a probe
 //      cannot be satisfied by an arbitrary string;
-//   3. attributability: **a file may only be retired while its failure output
-//      names an object the entry declares absent.**
+//   3. attributability: **a file may only be retired while its run says, about
+//      the failure, that an object the entry declares absent is missing.**
 //
 // Rule 3 is the part that has to refuse evidence the judged object produced
 // about itself. Its previous form was "the file is red under tests/legacy/",
@@ -22,10 +22,21 @@
 // with nothing retired at all, and the gate waved the retirement through. The
 // red has to be attached to the declared object rather than to the move.
 //
-// The criterion has exactly one sufficient leg:
+// The criterion has exactly one sufficient leg and one conditional leg:
 //
-//   (b) the failure output explicitly names one of the identifiers the entry's
-//       `object_absence` probes declare absent.
+//   (b) the failure output states the failure and explicitly names one of the
+//       identifiers the entry's `object_absence` probes declare absent - an
+//       error or assertion message, or one half of an assertion diff.
+//
+//   (c) the failure output *names* one of those identifiers but only in a
+//       diagnostic line - output the artifact printed rather than a statement
+//       about the failure. (c) is conditional: the entry must also carry a
+//       `diagnostic_evidence` contract, and the gate re-runs the retired file
+//       with the declared object made present. The legacy retirement only holds
+//       while that differential holds: with the object present the file must not
+//       be red and the diagnostic must not appear; the diagnostic appearing only
+//       when the object is absent is what makes it a statement about the object.
+//       A diagnostic line without that differential is a finding, not a reason.
 //
 // An earlier revision also accepted (a) "the bytes are red when they are run
 // from the path they were retired from". That leg is not sufficient: the
@@ -40,16 +51,19 @@
 // rewritten (`scripts/retirement-resolution.js` reports that independently).
 //
 // An entry whose failure names nothing it declares absent - including a file
-// that is only red because the move broke a relative require - is a finding,
-// not a retirement.
+// that is only red because the move broke a relative require, and including one
+// whose only naming comes from a *failing test's title* - is a finding, not a
+// retirement. A test title is static text that can name any object at all, so it
+// cannot show that the named object is why the run is red.
 //
 // A match only counts as "naming the object" when it appears in the passage the
-// run reports about the failure: not on a line that reports a *passing* test,
-// not inside the specifier of a module-resolution failure, and not inside a
-// file path. A path is the judged artifact naming itself - `at ... (/repo/
-// tests/legacy/pd275/session-harness.js:69:10)` is not the failure naming the
-// retired session harness, and `✖ tests/legacy/x.test.js (12ms)` is the runner
-// reporting a file that would not load.
+// run reports about the failure: not on a line that reports a test by name
+// (`✖ some test title (12ms)`, `not ok 1 - some test title`), not inside the
+// specifier of a module-resolution failure, and not inside a file path. A path
+// is the judged artifact naming itself - `at ... (/repo/tests/legacy/pd275/
+// session-harness.js:69:10)` is not the failure naming the retired session
+// harness, and `✖ tests/legacy/x.test.js (12ms)` is the runner reporting a file
+// that would not load.
 //
 // usage: node scripts/verify-retirement-registry.js [--root <tree>]
 
@@ -64,12 +78,22 @@ const LEGACY_PREFIX = 'tests/legacy/';
 const MODULE_RESOLUTION_RE = /Cannot find module|ERR_MODULE_NOT_FOUND|ERR_UNSUPPORTED_DIR_IMPORT|MODULE_NOT_FOUND/u;
 // Lines that carry a location rather than a statement about the failure.
 const LOCATION_LINE_RE = /^\s*(?:at\s|test at\s|Require stack:|-\s+\/|\+\s+\/|node:internal\/|\.\.\.)/u;
-// A `✖`/`✔` line whose subject is a file path is the runner reporting the file
-// itself (`✖ tests/legacy/x.test.js (12ms)`), not a test naming an object.
-const FILE_LEVEL_LINE_RE = /^\s*[✖✔]\s+(?:\.{0,2}\/|\/|tests\/)\S*\s+\(/u;
+// A `✖`/`✔` line is the runner reporting a test (or a file) *by name*:
+// `✖ tests/legacy/x.test.js (12ms)` names a file that would not load, and
+// `✖ card approve --all locks every unlocked card (59ms)` names the failing
+// test's own title. Both are static text, so neither can count as the failure
+// naming the retired object; the same goes for the TAP forms.
+const TEST_TITLE_LINE_RE = /^\s*[✖✔]/u;
+const TAP_RESULT_LINE_RE = /^\s*(?:not )?ok\b|\s+# (?:SKIP|TODO)\b/u;
 // A `▶` line opens a suite and states nothing about a failure.
 const SUITE_HEADING_RE = /^\s*▶/u;
+// A statement the run makes *about* the failure: an error or assertion message,
+// or one half of an assertion diff. Anything else the run printed is a
+// diagnostic line - output the judged artifact produced - which the criterion
+// accepts only together with the differential contrast described above.
+const FAILURE_STATEMENT_RE = /\b(?:AssertionError|TypeError|RangeError|SyntaxError|ReferenceError|EvalError|URIError|Error)\b|^\s*[+-]\s/u;
 const RELATIVE_SPECIFIER_RE = /(?:require\(\s*|from\s+|import\(\s*)(['"])(\.[^'"]*)\1/gu;
+const PRESENT_MUTATION_KINDS = new Set(['append_token', 'add_json_key']);
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -219,9 +243,10 @@ function identifierMatch(line, identifier) {
 
 function isEvidence(line) {
   return !LOCATION_LINE_RE.test(line)
-    && !FILE_LEVEL_LINE_RE.test(line)
+    && !TEST_TITLE_LINE_RE.test(line)
+    && !TAP_RESULT_LINE_RE.test(line)
     && !SUITE_HEADING_RE.test(line)
-    && !/^\s*✔/u.test(line);
+    && !/^\s*$/u.test(line);
 }
 
 // The lines of a run that can carry a statement about its failure. Passing-test
@@ -231,13 +256,18 @@ function evidenceLines(output) {
   return output.split('\n').filter(isEvidence);
 }
 
-// Leg (b): does the failure explicitly name the retired object? Two exclusions
-// keep the judged artifact from certifying itself:
+// Leg (b)/(c): what is the strongest statement this run makes that names the
+// retired object? Two exclusions keep the judged artifact from certifying
+// itself:
 //   - a match inside the specifier of a module-resolution failure is what the
 //     move broke, so it cannot count as the object's identity;
 //   - a match inside a file path is the artifact naming its own file, which the
 //     location filters above already remove for stack frames and file-level
 //     report lines.
+// A match on a failing test's title line never counts (the title filters above
+// remove it). The result records whether the match is a statement about the
+// failure (`failureStatement`) or a diagnostic line, because the diagnostic
+// form is only admissible together with `diagnostic_evidence`.
 function namesRetiredObject(output, identifiers) {
   const matches = [];
   for (const [index, line] of output.split('\n').entries()) {
@@ -251,14 +281,18 @@ function namesRetiredObject(output, identifiers) {
         ];
         if (specifiers.some((specifier) => identifierMatch(specifier, identifier))) continue;
       }
-      matches.push({ identifier, line: index + 1, text: line.trim() });
+      matches.push({
+        identifier,
+        line: index + 1,
+        text: line.trim(),
+        failureStatement: FAILURE_STATEMENT_RE.test(line),
+      });
     }
   }
   if (matches.length === 0) return null;
   // Report the strongest available evidence: a message the run printed about
-  // the failure rather than a failing test's own title.
-  return matches.find((match) => /\b(?:AssertionError|TypeError|RangeError|SyntaxError|ReferenceError|Error)\b|^\s*[+-]\s|not ok/u.test(match.text))
-    ?? matches[0];
+  // the failure before a diagnostic line the artifact printed itself.
+  return matches.find((match) => match.failureStatement) ?? matches[0];
 }
 
 // Auxiliary leg (a), which never accepts an entry on its own. It is admissible
@@ -335,6 +369,193 @@ function overlayAtOriginalPath(root, relative, source) {
     fs.copyFileSync(source, target);
   }
   return overlay;
+}
+
+// The differential side of a diagnostic reason: the same tree, the same retired
+// file at the same registered path, with one declared-absent object made
+// present. Every other part of the tree is the committed bytes, so the only
+// difference between the two sides is the mutated object.
+//
+// `tests/` is copied rather than symlinked because a test that reads a sibling
+// path through `__dirname` would otherwise be realpathed back out of the overlay
+// and read the committed bytes - the mutation would be invisible exactly to the
+// tests that inspect a source file. Generated run artifacts are not copied.
+function overlayWithPresentObject(root, relative, present) {
+  const overlay = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'kdna-retirement-contrast-'));
+  const segments = relative.split(path.sep);
+  const top = segments[0];
+  for (const item of fs.readdirSync(root, { withFileTypes: true })) {
+    if (item.name === top || item.name === 'tests') continue;
+    fs.symlinkSync(path.join(root, item.name), path.join(overlay, item.name));
+  }
+  const testsSource = path.join(root, 'tests');
+  if (fs.existsSync(testsSource)) {
+    fs.cpSync(testsSource, path.join(overlay, 'tests'), {
+      recursive: true,
+      dereference: false,
+      filter: (candidate) => path.basename(candidate) !== '.artifacts',
+    });
+  }
+  const source = path.join(root, relative);
+  const mutated = mutatePresentObject(fs.readFileSync(source, 'utf8'), present);
+  if (segments.length === 1) {
+    fs.writeFileSync(path.join(overlay, top), mutated);
+    return overlay;
+  }
+  let sourceDir = root;
+  let targetDir = overlay;
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    const name = segments[index];
+    const from = path.join(sourceDir, name);
+    const to = path.join(targetDir, name);
+    fs.mkdirSync(to, { recursive: true });
+    for (const item of fs.readdirSync(from, { withFileTypes: true })) {
+      if (item.name === segments[index + 1]) continue;
+      fs.symlinkSync(path.join(from, item.name), path.join(to, item.name));
+    }
+    sourceDir = from;
+    targetDir = to;
+  }
+  fs.writeFileSync(path.join(targetDir, segments[segments.length - 1]), mutated);
+  return overlay;
+}
+
+// How a `diagnostic_evidence.present` contract makes the declared-absent object
+// present. Every kind is additive: it can only add the declared token, never
+// remove anything the committed bytes say.
+function mutatePresentObject(source, present) {
+  switch (present.kind) {
+    case 'append_token':
+      return `${source.replace(/\n*$/u, '\n')}// ${present.token}\n`;
+    case 'add_json_key': {
+      const parsed = JSON.parse(source);
+      parsed[present.token] = null;
+      return `${JSON.stringify(parsed, null, 2)}\n`;
+    }
+    default:
+      return null;
+  }
+}
+
+// Leg (c): a diagnostic line may name the retired object only together with the
+// differential contrast that makes it a statement about the object - present =>
+// not red and no diagnostic, absent => the diagnostic. The gate re-runs the
+// present side itself; a recorded contrast is never trusted on its own word.
+function diagnosticContrast(root, entry, named, registered) {
+  const findings = [];
+  const contract = entry.diagnostic_evidence;
+  if (contract === undefined || contract === null || typeof contract !== 'object') {
+    findings.push({
+      file: entry.file,
+      check: 'diagnostic_reason_without_contrast',
+      detail:
+        `${entry.file} is retired on a diagnostic line (${JSON.stringify(named.text.slice(0, 120))}) ` +
+        'and carries no diagnostic_evidence differential contrast',
+    });
+    return { findings, observation: null };
+  }
+  if (contract.identifier !== named.identifier) {
+    findings.push({
+      file: entry.file,
+      check: 'diagnostic_contrast_identifier_mismatch',
+      detail: `the diagnostic named ${JSON.stringify(named.identifier)} but the contrast declares ${JSON.stringify(contract.identifier)}`,
+    });
+    return { findings, observation: null };
+  }
+  if (!declaredIdentifiers(entry).includes(contract.identifier)) {
+    findings.push({
+      file: entry.file,
+      check: 'diagnostic_contrast_identifier_undeclared',
+      detail: `${JSON.stringify(contract.identifier)} is not declared absent by any probe of this entry`,
+    });
+    return { findings, observation: null };
+  }
+  if (typeof contract.diagnostic !== 'string' || !contract.diagnostic) {
+    findings.push({ file: entry.file, check: 'diagnostic_contrast_diagnostic_missing', detail: 'contrast declares no diagnostic text to look for' });
+    return { findings, observation: null };
+  }
+  if (!registered.output.includes(contract.diagnostic) || !named.text.includes(contract.diagnostic)) {
+    findings.push({
+      file: entry.file,
+      check: 'diagnostic_contrast_diagnostic_not_observed',
+      detail: `the registered run does not print the declared diagnostic ${JSON.stringify(contract.diagnostic)}`,
+    });
+    return { findings, observation: null };
+  }
+  const present = contract.present;
+  if (!present || !PRESENT_MUTATION_KINDS.has(present.kind) || typeof present.path !== 'string' || typeof present.token !== 'string') {
+    findings.push({
+      file: entry.file,
+      check: 'diagnostic_contrast_present_contract_invalid',
+      detail: `contrast declares no supported present contract (${JSON.stringify(present ?? null)})`,
+    });
+    return { findings, observation: null };
+  }
+  if (present.token !== contract.identifier) {
+    findings.push({
+      file: entry.file,
+      check: 'diagnostic_contrast_present_token_mismatch',
+      detail: `the present contract adds ${JSON.stringify(present.token)} but the diagnostic is about ${JSON.stringify(contract.identifier)}`,
+    });
+    return { findings, observation: null };
+  }
+  const target = path.join(root, present.path);
+  if (!fs.existsSync(target)) {
+    findings.push({ file: entry.file, check: 'diagnostic_contrast_present_target_missing', detail: present.path });
+    return { findings, observation: null };
+  }
+  const mutated = mutatePresentObject(fs.readFileSync(target, 'utf8'), present);
+  if (mutated === null) {
+    findings.push({ file: entry.file, check: 'diagnostic_contrast_present_contract_invalid', detail: String(present.kind) });
+    return { findings, observation: null };
+  }
+  const overlay = overlayWithPresentObject(root, present.path, present);
+  let withObject;
+  try {
+    withObject = runTestFileSync(overlay, entry.file);
+  } finally {
+    fs.rmSync(overlay, { recursive: true, force: true });
+  }
+  const observation = {
+    identifier: contract.identifier,
+    diagnostic: contract.diagnostic,
+    absent_rc: registered.status,
+    absent_diagnostic: true,
+    present_path: present.path,
+    present_rc: withObject.status,
+    present_diagnostic: withObject.output.includes(contract.diagnostic),
+  };
+  if (withObject.status !== 0) {
+    findings.push({
+      file: entry.file,
+      check: 'diagnostic_contrast_failed',
+      detail:
+        `with ${JSON.stringify(contract.identifier)} made present in ${present.path} the retired file is still red ` +
+        `(rc=${withObject.status}), so the diagnostic does not identify this object as the cause`,
+    });
+    return { findings, observation };
+  }
+  if (observation.present_diagnostic) {
+    findings.push({
+      file: entry.file,
+      check: 'diagnostic_contrast_failed',
+      detail: `with ${JSON.stringify(contract.identifier)} made present the diagnostic ${JSON.stringify(contract.diagnostic)} still appears`,
+    });
+    return { findings, observation };
+  }
+  return { findings, observation };
+}
+
+// The contrast sides are small and run one at a time; the async pool is for the
+// per-entry registered runs.
+function runTestFileSync(cwd, file) {
+  const result = spawnSync(process.execPath, ['--test', file], {
+    cwd,
+    encoding: 'utf8',
+    env: { ...process.env, NODE_TEST_CONTEXT: undefined },
+  });
+  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+  return { file, cwd, status: result.status, output, passed: null, failed: null };
 }
 
 function runWithConcurrency(items, worker, limit) {
@@ -434,6 +655,11 @@ async function verify(root) {
     // Leg (b): the failure output explicitly names the declared object. This is
     // the criterion's only sufficient condition.
     const named = run.namedObject;
+    const criterion = named === null
+      ? 'none'
+      : named.failureStatement
+        ? 'b:failure-names-the-object'
+        : 'c:diagnostic-names-the-object';
     console.log(
       `KDNA-RETIRED-FILE: ${entry.file} registered_rc=${registered.status} ` +
         `pass=${registered.passed ?? 'UNKNOWN'} fail=${registered.failed ?? 'UNKNOWN'} ` +
@@ -441,7 +667,7 @@ async function verify(root) {
         `named_object=${named === null ? 'no' : JSON.stringify(named.identifier)} ` +
         `named_line=${named === null ? '-' : named.line} ` +
         `aux_leg_a=${atOriginal === null ? 'not-applicable' : auxLegA ? 'admissible' : 'inadmissible'} ` +
-        `criterion=${named === null ? 'none' : 'b:failure-names-the-object'}`,
+        `criterion=${criterion}`,
     );
     if (named !== null) {
       console.log(`KDNA-RETIRED-EVIDENCE: ${entry.file} ${JSON.stringify(named.text.slice(0, 200))}`);
@@ -452,6 +678,22 @@ async function verify(root) {
         check: 'retired_file_still_passes',
         detail: 'the retired file still passes where it is registered, so nothing was retired',
       });
+      continue;
+    }
+    // Leg (c): a diagnostic line is admissible only with its differential.
+    if (named !== null && !named.failureStatement) {
+      const contrast = diagnosticContrast(root, entry, named, registered);
+      run.contrast = contrast.observation;
+      findings.push(...contrast.findings);
+      if (contrast.observation !== null) {
+        const o = contrast.observation;
+        console.log(
+          `KDNA-RETIRED-CONTRAST: ${entry.file} identifier=${JSON.stringify(o.identifier)} ` +
+            `absent_rc=${o.absent_rc} absent_diagnostic=${o.absent_diagnostic} ` +
+            `present_path=${o.present_path} present_rc=${o.present_rc} present_diagnostic=${o.present_diagnostic} ` +
+            `verdict=${contrast.findings.length === 0 ? 'holds' : 'fails'}`,
+        );
+      }
       continue;
     }
     if (named === null) {
@@ -484,6 +726,7 @@ async function main(argv) {
     return 1;
   }
   const namedObject = runs.filter((run) => run.namedObject !== null).length;
+  const diagnosticContrasts = runs.filter((run) => run.contrast !== undefined && run.contrast !== null).length;
   const auxLegA = runs.filter((run) => {
     if (run.atOriginal === null || run.atOriginal.status === 0) return false;
     if (MODULE_RESOLUTION_RE.test(run.atOriginal.output)) return false;
@@ -491,7 +734,7 @@ async function main(argv) {
   }).length;
   console.log(
     `KDNA-RETIREMENT-REGISTRY: ok root=${root} entries=${entries} legacy=${legacy} ` +
-      `named_object=${namedObject} aux_leg_a=${auxLegA}`,
+      `named_object=${namedObject} aux_leg_a=${auxLegA} diagnostic_contrast=${diagnosticContrasts}`,
   );
   return 0;
 }
@@ -500,4 +743,18 @@ if (require.main === module) {
   main(process.argv.slice(2)).then((code) => { process.exitCode = code; });
 }
 
-module.exports = { declaredIdentifiers, evidenceLines, namesRetiredObject, originalPathOf, probeFindings, requireResolution, verify, walk };
+module.exports = {
+  declaredIdentifiers,
+  diagnosticContrast,
+  evidenceLines,
+  mutatePresentObject,
+  namesRetiredObject,
+  originalPathOf,
+  overlayWithPresentObject,
+  probeFindings,
+  requireResolution,
+  runTestFile,
+  runTestFileSync,
+  verify,
+  walk,
+};

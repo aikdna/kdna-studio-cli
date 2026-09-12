@@ -10,7 +10,11 @@ const root = path.resolve(__dirname, '..');
 
 // Retired test material stays in the repository but out of this gate. Each
 // entry is announced with one explicit receipt line so the shrinkage is never
-// silent; see tests/retired.json and tests/legacy/README.md.
+// silent; see tests/retired.json and tests/legacy/README.md. The registry is
+// checked against reality by scripts/verify-retirement-registry.js below: it
+// requires every legacy file to be registered, evaluates each declared
+// absence probe, and runs every registered file (a retired file must be red on
+// the committed graph, so a test that still passes cannot be retired).
 const retired = JSON.parse(
   fs.readFileSync(path.join(root, 'tests', 'retired.json'), 'utf8'),
 ).entries;
@@ -42,6 +46,7 @@ node(['scripts/check-current-protocol-names.js'], 'protocol naming gate');
 // that does not agree, is not digest-bound, is not registered, or has outlived
 // its expiry.
 node(['scripts/verify-ci-leg-receipts.js'], 'CI leg receipt verification');
+node(['scripts/verify-retirement-registry.js'], 'retirement registry verification');
 const retiredFiles = new Set(retired.map((entry) => entry.file));
 const tests = fs.readdirSync(path.join(root, 'tests'))
   .filter((name) => name.endsWith('.test.js'))

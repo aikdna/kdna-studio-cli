@@ -57,7 +57,10 @@
   },
   "author": "",
   "overrides": {
-    "fast-uri": "3.1.7"
+    "fast-uri": "3.1.7",
+    "@aikdna/kdna-core": "$@aikdna/kdna-core",
+    "@aikdna/kdna-read": "$@aikdna/kdna-read",
+    "@aikdna/kdna-studio-core": "$@aikdna/kdna-studio-core"
   },
   "exports": {
     "./package.json": "./package.json"

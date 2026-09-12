@@ -15,9 +15,13 @@ const root = path.resolve(__dirname, '..');
 // reads no test output: a retirement is a preservation claim, and the gate
 // checks that the registered bytes are still there (sha256), that every file
 // under tests/legacy/ is registered, that the original path does not still carry
-// the registered bytes, and - as a receipt rather than a verdict - that the
-// registered bytes do not pass when they are put back where the file used to
-// run. A receipt that passes is printed as KDNA-RETIREMENT-RESTORABLE.
+// the registered bytes, that the registered bytes are the bytes the file carried
+// at its original path in the commit before the retirement (read from the object
+// store, so the move cannot have rewritten the file), and - as a receipt rather
+// than a verdict - that the registered bytes do not pass when they are put back
+// where the file used to run. A receipt that passes is printed as
+// KDNA-RETIREMENT-RESTORABLE. The registry check reads git history, so the
+// checkout has to carry it (fetch-depth: 0 in .github/workflows/ci.yml).
 const retired = JSON.parse(
   fs.readFileSync(path.join(root, 'tests', 'retired.json'), 'utf8'),
 ).entries;

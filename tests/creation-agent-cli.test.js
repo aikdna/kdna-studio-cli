@@ -19,13 +19,13 @@ const {
   semanticProjectProjection,
   verifyRuntimeSnapshot,
   workspaceSummary,
-} = require('../../src/creation-cli');
+} = require('../src/creation-cli');
 const {
   normalizeInterviewStage,
-} = require('../../src/ai/interview');
-const { SYSTEM: DISTILL_SYSTEM } = require('../../src/ai/distill');
+} = require('../src/ai/interview');
+const { SYSTEM: DISTILL_SYSTEM } = require('../src/ai/distill');
 
-const ROOT = path.resolve(__dirname, '../..');
+const ROOT = path.resolve(__dirname, '..');
 const CLI = path.join(ROOT, 'bin', 'kdna-studio.js');
 const LOCAL_PROCESSING_POLICY = Object.freeze({
   destination: 'local-only',
@@ -424,7 +424,7 @@ function boundedCounterexampleSearch() {
 function currentCorePreload(temporary) {
   const adjacentSource = path.resolve(
     ROOT,
-    '../../kdna/packages/kdna-core',
+    '../kdna/packages/kdna-core',
   );
   const packageRoot = fs.existsSync(
     path.join(adjacentSource, 'src', 'index.js'),
@@ -470,7 +470,7 @@ function currentCorePreload(temporary) {
 function creationEngineForTest() {
   const sibling = path.resolve(
     ROOT,
-    '../../kdna-studio-core/src/creation-engine',
+    '../kdna-studio-core/src/creation-engine',
   );
   if (fs.existsSync(`${sibling}.js`) || fs.existsSync(sibling)) {
     return require(sibling);

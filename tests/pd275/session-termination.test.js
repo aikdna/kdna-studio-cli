@@ -7,7 +7,7 @@ const os = require('node:os');
 const { spawn } = require('node:child_process');
 const readline = require('node:readline');
 const ROOT = fs.mkdtempSync(path.join(process.env.KDNA_CLI_TEST_ROOT || os.tmpdir(), 'pd308-termination-'));
-const BIN = process.env.KDNA_CLI_TEST_BIN || path.resolve(__dirname, '../../../bin/kdna-studio.js');
+const BIN = process.env.KDNA_CLI_TEST_BIN || path.resolve(__dirname, '../../bin/kdna-studio.js');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const PRELOAD = path.join(ROOT, 'observe.cjs');
 fs.writeFileSync(PRELOAD, `

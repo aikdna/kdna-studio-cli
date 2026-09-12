@@ -20,6 +20,12 @@ jobs:
       KDNA_STUDIO_CORE_CANDIDATE_COMMIT: 05c1ce7c3708e188547473d1bf91d029e0525927
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # The retirement-registry gate reads the object store: criterion (e)
+          # compares the registered bytes with the bytes the file carried at its
+          # original path in the commit before the retirement, so the checkout
+          # cannot be shallow.
+          fetch-depth: 0
       - name: Check out the exact Runtime candidates outside the Studio CLI workspace
         run: |
           set -euo pipefail

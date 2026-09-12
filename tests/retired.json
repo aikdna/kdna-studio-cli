@@ -1,97 +1,18 @@
 {
   "schema": "kdna.retired-test-registry",
-  "schema_version": "2.0.0",
-  "note": "A retirement is a preservation claim, not a story about a red run. Every entry registers the retired path (file), the original path it was retired from (original_path), the sha256 of the preserved bytes (sha256), a free-text reason, the registration date (retired_on) and the review that accepted the retirement (review_reference). scripts/verify-retirement-registry.js reads no test output. It checks four things from files and hashes: (a) preserved - the file at the registered path hashes to the registered sha256; (b) complete - every file under tests/legacy/ is registered, including the session harness the retired pd275 suites require; (c) not a fake retirement - the original path does not still carry the registered bytes; (d) re-evaluable - the registered bytes are put back at the original path and run, and a passing run is named as a receipt (KDNA-RETIREMENT-RESTORABLE) because the entry is not stale. Only (a)-(c) decide the exit code.",
+  "schema_version": "3.0.0",
+  "note": "A retirement is a preservation claim, not a story about a red run. Every entry registers the retired path (file), the original path it was retired from (original_path), the sha256 of the preserved bytes (the retirement's retired_sha256), the commit those bytes are claimed to come from (retired_from_commit), a free-text reason, the registration date (retired_on) and the review that accepted the retirement (review_reference). scripts/verify-retirement-registry.js reads no test output. It checks five things from files, hashes and the object store: (a) preserved - the file at the registered path hashes to the registered sha256; (b) complete - every file under tests/legacy/ is registered; (c) not a fake retirement - the original path does not still carry the registered bytes; (d) re-evaluable - the registered bytes are put back at the original path and run, and a passing run is named as a receipt (KDNA-RETIREMENT-RESTORABLE) because the entry is not stale; (e) zero rewrite - the registered sha256 is the sha256 of the bytes at original_path in retired_from_commit, read from the object store, so a move that rewrote the file on the way into tests/legacy/ cannot be registered as a retirement. Only (a)-(c) and (e) decide the exit code. One entry survives under this criterion: the pd275 terminal suite, whose move rewrote nothing because its only relative specifier, './session-harness', is one directory down from both paths. Every other file registered here had been rewritten by its move and is a current test again, byte for byte.",
   "entries": [
-    {
-      "file": "tests/legacy/cli.test.js",
-      "original_path": "tests/cli.test.js",
-      "sha256": "76c6393409e2859ca895e29d2d49094df2e5a08e4ac72fa8264aa484ee8eb345",
-      "retired_object": "pre-component-semantics Studio CLI command surface (project, card, identity, migrate, export, llm config)",
-      "reason": "bin/kdna-studio.js is a shim over src/terminal-workspace.js and declares only session, verify and read; the command surface this suite drives is not in the committed graph.",
-      "retired_on": "2026-09-12",
-      "review_reference": "review:open-retirement/2026-09-12",
-      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs, tests/current/dependency-binding.test.js"
-    },
-    {
-      "file": "tests/legacy/creation-agent-cli.test.js",
-      "original_path": "tests/creation-agent-cli.test.js",
-      "sha256": "92c5cbb89d842fe853b0970bea9b29158d3728075f9545336448d2f2961c0450",
-      "retired_object": "pre-component-semantics Agent creation CLI (create-agent, finalize-agent, answer, review, resume, try, repair, export-agent, public guide)",
-      "reason": "The creation CLI commands and the creation engine they call belong to the pre-component-semantics graph; the current CLI exposes the session / verify / read surface instead, and the retired creation CLI implementation is outside the shipped tarball surface.",
-      "retired_on": "2026-09-12",
-      "review_reference": "review:open-retirement/2026-09-12",
-      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs"
-    },
-    {
-      "file": "tests/legacy/current/shared-evidence.test.js",
-      "original_path": "tests/current/shared-evidence.test.js",
-      "sha256": "219558e7e541de7e6ff9ef948036aca0fa9b2cc3c46e7f09f9332f04a5b636d0",
-      "retired_object": "pre-component-semantics shared creation-evidence format 1 producer path",
-      "reason": "It drives the retired session harness and asserts the retired 3.1.0-rc compiler coordinate. The current evidence format is format2, and the generation-1 producer marker is gone from the session source.",
-      "retired_on": "2026-09-12",
-      "review_reference": "review:open-retirement/2026-09-12",
-      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs (format2 evidence assertions)"
-    },
-    {
-      "file": "tests/legacy/e2e-export-completeness.test.js",
-      "original_path": "tests/e2e-export-completeness.test.js",
-      "sha256": "d30d9d551fa703ed9e288016354e8ded4e9280bf5dbb0939e035c2d4aab5b9b5",
-      "retired_object": "pre-component-semantics export completeness pipeline",
-      "reason": "The export path it drives (create, card add, card approve, export, validate, load) is replaced by the current packed Studio save/readback flow and its complete.json version 2 bundle contract.",
-      "retired_on": "2026-09-12",
-      "review_reference": "review:open-retirement/2026-09-12",
-      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs (export leg)"
-    },
-    {
-      "file": "tests/legacy/pd275/session-harness.js",
-      "original_path": "tests/pd275/session-harness.js",
-      "sha256": "3c624e1bc4b2a3b945fad8c9a84432df626b47ae23a6af34e0aa6426a0d32f8b",
-      "retired_object": "pre-component-semantics CLI session harness",
-      "reason": "Helper module, not a test: it defines no test of its own and is kept because the retired pd275 suites require it as './session-harness'. Its (d) receipt passes because running a helper module executes nothing, not because a retired test came back. It stays retired with the suites that require it.",
-      "retired_on": "2026-09-12",
-      "review_reference": "review:open-retirement/2026-09-12",
-      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs"
-    },
-    {
-      "file": "tests/legacy/pd275/session-termination.test.js",
-      "original_path": "tests/pd275/session-termination.test.js",
-      "sha256": "73271243ff0055fda9228b103680485caa5db3678cd3cf923200faa47d71c9e6",
-      "retired_object": "pre-component-semantics CLI session harness protocol (tests/legacy/pd275/session-harness.js)",
-      "reason": "The harness expects session events and channel kinds that the current session protocol does not emit, so the surviving assertions read retired event names.",
-      "retired_on": "2026-09-12",
-      "review_reference": "review:open-retirement/2026-09-12",
-      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs"
-    },
     {
       "file": "tests/legacy/pd275/terminal.test.js",
       "original_path": "tests/pd275/terminal.test.js",
       "sha256": "009e2bc16fccf64efba0f7cd8723d8e45b968186345c273f8cef006fa7dadb13",
-      "retired_object": "pre-component-semantics CLI session harness protocol (tests/legacy/pd275/session-harness.js)",
-      "reason": "The harness expects session events and material kinds the current session protocol does not emit, and the retired material-admission code it asserts is gone from the session source.",
+      "retired_from_commit": "1f5049b714ca05cc443c841d386ac9b96d219bff",
+      "retired_object": "pre-component-semantics CLI session harness protocol (tests/pd275/session-harness.js)",
+      "reason": "The suite drives the pre-component-semantics session protocol: it expects session events and material kinds the current session surface does not emit, and it fails when its registered bytes are put back at the original path. It is the one entry whose move rewrote nothing - './session-harness' is the same one directory down from tests/pd275/ and from tests/legacy/pd275/ - so its registered sha256 is the sha256 the original path carried in 1f5049b. The harness module it requires was rewritten by the same move and is therefore not retired material under criterion (e): it is back at tests/pd275/session-harness.js.",
       "retired_on": "2026-09-12",
       "review_reference": "review:open-retirement/2026-09-12",
       "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs"
-    },
-    {
-      "file": "tests/legacy/protocol-producer.test.js",
-      "original_path": "tests/protocol-producer.test.js",
-      "sha256": "1b0a6e4b6dfcb5aade7355f7e93f28cf60c231a6659567ca4d9e7678ef6ea493",
-      "retired_object": "pre-component-semantics protocol producer transport",
-      "reason": "The producer transport it asserts is not part of the current graph; the file stops on retired public APIs before any product assertion, because @aikdna/kdna-core now exports admitBytes only and @aikdna/kdna-studio-core now exports createSession / verifyCreationEvidence only.",
-      "retired_on": "2026-09-12",
-      "review_reference": "review:open-retirement/2026-09-12",
-      "coverage_inherited_by": "none (recorded as uncovered; re-wire required if a producer path returns)"
-    },
-    {
-      "file": "tests/legacy/public-package-surface.test.js",
-      "original_path": "tests/public-package-surface.test.js",
-      "sha256": "241a949eb348dc98ea955cd6b806a37e0a53b254a5fe92c4148e73d7a77bf10d",
-      "retired_object": "retired packed member list (e.g. src/ai/distill.js)",
-      "reason": "The packed surface is now the files[] list in package.json; the guarded members this suite requires no longer ship.",
-      "retired_on": "2026-09-12",
-      "review_reference": "review:open-retirement/2026-09-12",
-      "coverage_inherited_by": ".github/workflows/public-surface.yml + scripts/check-public-surface.mjs"
     }
   ]
 }

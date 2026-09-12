@@ -10,18 +10,25 @@ const { spawnSync } = require('node:child_process');
 // A retirement is a preservation claim, and these cases keep the gate that
 // checks it honest. The gate reads no test output, so nothing here can be
 // defeated by a title, a console.log, a stack frame or a specifier the move
-// rewrote. Each shape is decided from files and hashes alone:
+// rewrote. Each shape is decided from files, hashes and the object store alone:
 //
 //   1. a registry that agrees with the committed files -> green;
 //   2. delete a registered file                        -> refused (preserved);
-//   3. change one byte of a registered file            -> refused (sha256);
+//   3. change one byte of a registered file after the move
+//                                                      -> refused (sha256);
 //   4. drop an unregistered file into tests/legacy/    -> refused (complete);
 //   5. register a file that is still running           -> refused (not a fake
 //      retirement: the original path still carries the registered bytes);
 //   6. put a registered file's bytes back at the original path and they pass
 //                                                      -> named as
 //      KDNA-RETIREMENT-RESTORABLE, without failing the gate.
+//   7. rewrite one byte while moving the file and register the rewritten bytes
+//                                                      -> refused (zero rewrite:
+//      the registered bytes are not the bytes the original path carried);
+//   8. name a pre-retirement commit that HEAD cannot reach -> refused.
 //
+// Every shape is built on a real two-commit history, because (e) reads the
+// retired bytes out of the object store rather than out of the working tree.
 // The last two cases also carry the entry guard: a clean copy of the gate runs
 // and prints its success line, and so does an invocation through an absolute
 // symlink - neither may be a silent no-op that exits 0.
@@ -72,7 +79,30 @@ function entryFor(file, text, overrides = {}) {
   };
 }
 
-function sandbox({ registry, files, withGate = false }) {
+function writeFile(dir, relative, contents) {
+  fs.mkdirSync(path.dirname(path.join(dir, relative)), { recursive: true });
+  fs.writeFileSync(path.join(dir, relative), contents);
+}
+
+// A real repository, because (e) has to read the retired bytes out of git. The
+// identity is passed through the environment rather than taken from whatever
+// global config the machine happens to carry.
+function git(dir, args) {
+  const result = spawnSync('git', ['-C', dir, '-c', 'commit.gpgsign=false', ...args], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'probe',
+      GIT_AUTHOR_EMAIL: 'probe@example.invalid',
+      GIT_COMMITTER_NAME: 'probe',
+      GIT_COMMITTER_EMAIL: 'probe@example.invalid',
+    },
+  });
+  assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr ?? result.error}`);
+  return result.stdout.trim();
+}
+
+function sandbox({ registry, files, history = null, withGate = false, fillCommit = true }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-retirement-registry-'));
   fs.mkdirSync(path.join(dir, 'tests', 'legacy'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
@@ -82,14 +112,36 @@ function sandbox({ registry, files, withGate = false }) {
     fs.mkdirSync(path.join(dir, 'scripts'), { recursive: true });
     fs.copyFileSync(verifier, path.join(dir, 'scripts', 'verify-retirement-registry.js'));
   }
-  for (const [relative, contents] of Object.entries(files)) {
-    fs.mkdirSync(path.dirname(path.join(dir, relative)), { recursive: true });
-    fs.writeFileSync(path.join(dir, relative), contents);
+  // The pre-retirement commit: the bytes each file carried at the path it was
+  // retired from. A move that leaves them alone is the shape the gate accepts.
+  const before = history ?? {};
+  if (history === null) {
+    for (const entry of registry) {
+      if (typeof entry.file === 'string' && typeof entry.original_path === 'string' && files[entry.file] !== undefined) {
+        before[entry.original_path] = files[entry.file];
+      }
+    }
   }
+  for (const [relative, contents] of Object.entries(before)) writeFile(dir, relative, contents);
+  git(dir, ['init', '--quiet']);
+  git(dir, ['add', '--all']);
+  git(dir, ['commit', '--quiet', '--message', 'probe: the file at the path it was retired from']);
+  const preRetire = git(dir, ['rev-parse', 'HEAD']);
+  const entries = registry.map((entry) =>
+    fillCommit && entry.retired_from_commit === undefined ? { ...entry, retired_from_commit: preRetire } : entry,
+  );
+  // The move itself: a path the retirement did not leave at its original place
+  // is gone from the working tree, exactly as `git mv` would leave it.
+  for (const relative of Object.keys(before)) {
+    if (files[relative] === undefined) fs.rmSync(path.join(dir, relative), { force: true });
+  }
+  for (const [relative, contents] of Object.entries(files)) writeFile(dir, relative, contents);
   fs.writeFileSync(
     path.join(dir, 'tests', 'retired.json'),
-    `${JSON.stringify({ schema: 'kdna.retired-test-registry', schema_version: '2.0.0', entries: registry }, null, 2)}\n`,
+    `${JSON.stringify({ schema: 'kdna.retired-test-registry', schema_version: '3.0.0', entries }, null, 2)}\n`,
   );
+  git(dir, ['add', '--all']);
+  git(dir, ['commit', '--quiet', '--message', 'probe: the retirement']);
   return dir;
 }
 
@@ -115,16 +167,17 @@ test('a registry that agrees with the committed files is green', () => {
       const result = runVerifier(dir);
       assert.equal(result.status, 0, result.output);
       assert.match(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
-      assert.match(result.output, /entries=1 legacy=1 preserved=1 restorable=0/);
+      assert.match(result.output, /entries=1 legacy=1 preserved=1 restorable=0 zero_rewrite=1/);
       assert.match(result.output, /preserved=true original_carries_same_bytes=false/);
       assert.match(result.output, /reeval=fails rc=1/);
+      assert.match(result.output, /zero_rewrite=true/);
     },
   );
 });
 
 test('deleting a registered file is refused', () => {
   const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
-  withSandbox({ registry: [entry], files: {} }, (dir) => {
+  withSandbox({ registry: [entry], files: {}, history: { 'tests/probe.test.js': RED_TEST } }, (dir) => {
     const result = runVerifier(dir);
     assert.equal(result.status, 1, result.output);
     assert.match(result.output, /registered_file_missing/);
@@ -135,13 +188,23 @@ test('deleting a registered file is refused', () => {
 test('changing one byte of a registered file is refused', () => {
   const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
   const changed = RED_TEST.replace('assert.equal(1, 2)', 'assert.equal(1, 3)');
-  withSandbox({ registry: [entry], files: { 'tests/legacy/probe.test.js': changed } }, (dir) => {
-    const result = runVerifier(dir);
-    assert.equal(result.status, 1, result.output);
-    assert.match(result.output, /preserved_bytes_changed/);
-    assert.match(result.output, /preserved=false/);
-    assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
-  });
+  withSandbox(
+    {
+      registry: [entry],
+      files: { 'tests/legacy/probe.test.js': changed },
+      history: { 'tests/probe.test.js': RED_TEST },
+    },
+    (dir) => {
+      const result = runVerifier(dir);
+      assert.equal(result.status, 1, result.output);
+      assert.match(result.output, /preserved_bytes_changed/);
+      assert.match(result.output, /preserved=false/);
+      // This shape edits the copy after the move, so the registered bytes still
+      // are the bytes the original path carried: (a) refuses it, not (e).
+      assert.match(result.output, /zero_rewrite=true/);
+      assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
+    },
+  );
 });
 
 test('an unregistered file under tests/legacy/ is refused', () => {
@@ -192,12 +255,25 @@ test('registered bytes that pass at the original path are named, not accepted si
   );
 });
 
-test('a registration missing any of the six fields is refused', () => {
-  for (const field of ['file', 'original_path', 'sha256', 'reason', 'retired_on', 'review_reference']) {
+test('a registration missing any of the seven fields is refused', () => {
+  const fields = [
+    'file',
+    'original_path',
+    'sha256',
+    'retired_from_commit',
+    'reason',
+    'retired_on',
+    'review_reference',
+  ];
+  for (const field of fields) {
     const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
     delete entry[field];
     withSandbox(
-      { registry: [entry], files: { 'tests/legacy/probe.test.js': RED_TEST } },
+      {
+        registry: [entry],
+        files: { 'tests/legacy/probe.test.js': RED_TEST },
+        fillCommit: field !== 'retired_from_commit',
+      },
       (dir) => {
         const result = runVerifier(dir);
         assert.equal(result.status, 1, `${field}: ${result.output}`);
@@ -229,6 +305,45 @@ test('a duplicate registration is refused', () => {
   );
 });
 
+test('a retirement that rewrote one byte on the way into tests/legacy/ is refused', () => {
+  // One commit does the move and the edit, which is how a retirement that
+  // re-points a relative require is actually written. The registered bytes are
+  // then not the bytes the original path carried, and the entry describes a
+  // test that never ran.
+  const rewritten = RED_TEST.replace('assert.equal(1, 2)', 'assert.equal(1, 3)');
+  const entry = entryFor('tests/legacy/probe.test.js', rewritten);
+  withSandbox(
+    {
+      registry: [entry],
+      files: { 'tests/legacy/probe.test.js': rewritten },
+      history: { 'tests/probe.test.js': RED_TEST },
+    },
+    (dir) => {
+      const result = runVerifier(dir);
+      assert.equal(result.status, 1, result.output);
+      assert.match(result.output, /retired_bytes_were_rewritten/);
+      assert.match(result.output, /zero_rewrite=false/);
+      assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
+    },
+  );
+});
+
+test('a pre-retirement commit that the head history cannot reach is refused', () => {
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
+  withSandbox({ registry: [entry], files: { 'tests/legacy/probe.test.js': RED_TEST } }, (dir) => {
+    // The registered bytes still exist in the object store, but no commit under
+    // HEAD ever carried them at that path.
+    git(dir, ['checkout', '--quiet', '--orphan', 'elsewhere']);
+    git(dir, ['add', '--all']);
+    git(dir, ['commit', '--quiet', '--message', 'probe: a history that is not the one being retired']);
+    const result = runVerifier(dir);
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.output, /retired_from_commit_not_an_ancestor_of_head/);
+    assert.match(result.output, /zero_rewrite=true/);
+    assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
+  });
+});
+
 test('a clean copy of the gate really runs and prints its success line', () => {
   const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
   withSandbox(
@@ -242,7 +357,7 @@ test('a clean copy of the gate really runs and prints its success line', () => {
       const result = runVerifier(dir, { script, cwd: dir });
       assert.equal(result.status, 0, result.output);
       assert.match(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
-      assert.match(result.output, /entries=1 legacy=1 preserved=1/);
+      assert.match(result.output, /entries=1 legacy=1 preserved=1 restorable=0 zero_rewrite=1/);
     },
   );
 });
@@ -257,7 +372,7 @@ test('the gate still runs through an absolute symlinked invocation path', () => 
       const result = runVerifier(dir, { script: link, cwd: linkDirectory });
       assert.equal(result.status, 0, result.output);
       assert.match(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
-      assert.match(result.output, /entries=1 legacy=1 preserved=1/);
+      assert.match(result.output, /entries=1 legacy=1 preserved=1 restorable=0 zero_rewrite=1/);
     } finally {
       fs.rmSync(linkDirectory, { recursive: true, force: true });
     }

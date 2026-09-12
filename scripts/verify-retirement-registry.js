@@ -10,9 +10,11 @@
 // the test itself prints, a stack frame naming its own file, a specifier the
 // move rewrote - each one can be made to name any object at all, and each one
 // was in turn accepted as "proof". The gate therefore reads no test output. It
-// checks files and hashes, plus one run that is a receipt rather than a verdict.
+// checks files, hashes and the object store, plus one run that is a receipt
+// rather than a verdict.
 //
-// retirement = preservation + registration. The gate checks four things:
+// retirement = preservation + registration + zero rewrite. The gate checks five
+// things:
 //
 //   (a) preserved: the registered file exists at its registered location and its
 //       sha256 is the registered sha256, so a retirement can never quietly
@@ -25,12 +27,24 @@
 //   (d) re-evaluable: the registered bytes are put back at the original path and
 //       run. If that run passes, the file was not stale at all and the gate names
 //       the entry so it can be restored or its reason rewritten. (d) is a
-//       receipt, never an acceptance condition: the exit code is about (a)-(c).
+//       receipt, never an acceptance condition: the exit code is about (a)-(c)
+//       and (e).
+//   (e) zero rewrite: the registered sha256 is the sha256 of the bytes the file
+//       carried at its original path in the commit before the retirement
+//       (`retired_from_commit`). The bytes are read from the object store, not
+//       from the working tree, so a later edit to the copy under tests/legacy/
+//       cannot make the claim true. A move that rewrote even one of the file's
+//       own requires - to the new depth, say - registers bytes that are not the
+//       test that was there, and the record would then describe a test that
+//       never ran. Such an entry is refused: the file goes back to its original
+//       path as a current test. A file that only retires after adaptation is not
+//       retired at all.
 //
-// Every entry carries the six registration fields: the retired path (`file`),
-// the `original_path` it was retired from, the `sha256` of the preserved bytes, a
-// free-text `reason`, the registration date `retired_on`, and a
-// `review_reference` that says who accepted the retirement.
+// Every entry carries the seven registration fields: the retired path (`file`),
+// the `original_path` it was retired from, the `sha256` of the preserved bytes
+// (the retirement's `retired_sha256`), the `retired_from_commit` those bytes are
+// claimed to come from, a free-text `reason`, the registration date `retired_on`,
+// and a `review_reference` that says who accepted the retirement.
 //
 // usage: node scripts/verify-retirement-registry.js [--root <tree>]
 
@@ -38,13 +52,22 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 
 const CONCURRENCY = 4;
 const LEGACY_PREFIX = 'tests/legacy/';
 const SHA256_RE = /^[0-9a-f]{64}$/u;
+const COMMIT_RE = /^[0-9a-f]{40}$/u;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/u;
-const REQUIRED_FIELDS = ['file', 'original_path', 'sha256', 'reason', 'retired_on', 'review_reference'];
+const REQUIRED_FIELDS = [
+  'file',
+  'original_path',
+  'sha256',
+  'retired_from_commit',
+  'reason',
+  'retired_on',
+  'review_reference',
+];
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -63,6 +86,40 @@ function walk(directory) {
 
 function sha256(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+// (e) reads the retired bytes from the object store. `spawnSync` is used with an
+// argument vector and no shell, and the commit is matched against COMMIT_RE
+// before it reaches git, so a registry field cannot turn into an option or a
+// command.
+function gitBytes(root, args) {
+  const result = spawnSync('git', ['-C', root, ...args], { maxBuffer: 1 << 28 });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(' ')} exited ${result.status}: ${result.stderr.toString('utf8').trim()}`);
+  }
+  return result.stdout;
+}
+
+// The blob the entry claims to preserve: <commit>:<original_path> resolved to an
+// object name, then the bytes of that object, hashed here rather than compared
+// through a git-provided digest.
+function historicalSha256(root, commit, originalPath) {
+  const blob = gitBytes(root, ['rev-parse', '--verify', '--quiet', `${commit}:${originalPath}`])
+    .toString('utf8')
+    .trim();
+  return crypto.createHash('sha256').update(gitBytes(root, ['cat-file', 'blob', blob])).digest('hex');
+}
+
+// A commit that is not on the history of HEAD cannot describe the tree being
+// retired, so the entry is refused as well.
+function ancestorOfHead(root, commit) {
+  const result = spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', commit, 'HEAD'], {
+    stdio: ['ignore', 'ignore', 'ignore'],
+  });
+  if (result.status === 0) return true;
+  if (result.status === 1) return false;
+  return null;
 }
 
 // (d): run the registered bytes from the path they were retired from. The
@@ -149,6 +206,9 @@ function fieldFindings(entry) {
   if (typeof entry.sha256 === 'string' && !SHA256_RE.test(entry.sha256)) {
     findings.push({ file, check: 'malformed_sha256', detail: entry.sha256 });
   }
+  if (typeof entry.retired_from_commit === 'string' && !COMMIT_RE.test(entry.retired_from_commit)) {
+    findings.push({ file, check: 'malformed_retired_from_commit', detail: entry.retired_from_commit });
+  }
   if (typeof entry.retired_on === 'string' && !DATE_RE.test(entry.retired_on)) {
     findings.push({ file, check: 'malformed_retired_on', detail: entry.retired_on });
   }
@@ -197,6 +257,26 @@ async function verify(root) {
       const original = typeof entry.original_path === 'string' ? path.join(root, entry.original_path) : null;
       row.originalExists = original !== null && fs.existsSync(original);
       row.originalSameBytes = row.originalExists && sha256(original) === entry.sha256;
+      // (e) zero rewrite, from the object store rather than the working tree.
+      row.retiredFromCommit = typeof entry.retired_from_commit === 'string' ? entry.retired_from_commit : null;
+      row.historicalSha256 = null;
+      row.historicalError = null;
+      row.zeroRewrite = null;
+      row.ancestorOfHead = null;
+      const commitIsUsable = row.retiredFromCommit !== null && COMMIT_RE.test(row.retiredFromCommit);
+      const pathIsUsable =
+        typeof entry.original_path === 'string' &&
+        entry.original_path.length > 0 &&
+        !entry.original_path.startsWith('-');
+      if (commitIsUsable && pathIsUsable) {
+        try {
+          row.historicalSha256 = historicalSha256(root, row.retiredFromCommit, entry.original_path);
+          row.zeroRewrite = SHA256_RE.test(entry.sha256 ?? '') && row.historicalSha256 === entry.sha256;
+        } catch (error) {
+          row.historicalError = error.message;
+        }
+        row.ancestorOfHead = ancestorOfHead(root, row.retiredFromCommit);
+      }
       // (d) re-evaluable receipt.
       row.reeval = 'skipped';
       if (original !== null && typeof entry.original_path === 'string' && entry.original_path.startsWith('tests/')) {
@@ -230,12 +310,37 @@ async function verify(root) {
         detail: `${entry.original_path} still carries the registered bytes, so the file still runs as a current test`,
       });
     }
+    if (row.historicalError !== null) {
+      findings.push({
+        file: entry.file,
+        check: 'retired_from_commit_unreadable',
+        detail: `${entry.retired_from_commit}:${entry.original_path ?? 'MISSING'}: ${row.historicalError}`,
+      });
+    } else if (row.zeroRewrite === false) {
+      findings.push({
+        file: entry.file,
+        check: 'retired_bytes_were_rewritten',
+        detail:
+          `registered sha256 ${entry.sha256} but ${entry.retired_from_commit}:${entry.original_path} ` +
+          `is ${row.historicalSha256}, so the retirement changed the file`,
+      });
+    }
+    if (row.ancestorOfHead === false) {
+      findings.push({
+        file: entry.file,
+        check: 'retired_from_commit_not_an_ancestor_of_head',
+        detail: entry.retired_from_commit,
+      });
+    }
     console.log(
       `KDNA-RETIREMENT-ENTRY: ${entry.file} original_path=${entry.original_path ?? 'MISSING'} ` +
         `sha256=${typeof entry.sha256 === 'string' ? entry.sha256.slice(0, 12) : 'MISSING'} ` +
         `preserved=${row.preserved} original_carries_same_bytes=${row.originalSameBytes} ` +
         `retired_on=${entry.retired_on ?? 'MISSING'} review_reference=${JSON.stringify(entry.review_reference ?? '')} ` +
-        `reeval=${row.reeval}${row.reevalRc === undefined ? '' : ` rc=${row.reevalRc}`}`,
+        `reeval=${row.reeval}${row.reevalRc === undefined ? '' : ` rc=${row.reevalRc}`} ` +
+        `retired_from_commit=${row.retiredFromCommit === null ? 'MISSING' : row.retiredFromCommit.slice(0, 12)} ` +
+        `historical_sha256=${row.historicalSha256 === null ? 'MISSING' : row.historicalSha256.slice(0, 12)} ` +
+        `zero_rewrite=${row.zeroRewrite === null ? 'unchecked' : row.zeroRewrite}`,
     );
     if (row.reeval === 'passes') {
       console.log(
@@ -255,16 +360,18 @@ async function main(argv) {
   const { findings, rows, entries, legacy } = await verify(root);
   const preserved = rows.filter((row) => row.preserved).length;
   const restorable = rows.filter((row) => row.reeval === 'passes').length;
+  const zeroRewrite = rows.filter((row) => row.zeroRewrite === true).length;
   if (findings.length > 0) {
     console.log(
       `KDNA-RETIREMENT-REGISTRY: findings=${findings.length} root=${root} entries=${entries} ` +
-        `legacy=${legacy} preserved=${preserved} restorable=${restorable} ${JSON.stringify(findings)}`,
+        `legacy=${legacy} preserved=${preserved} restorable=${restorable} zero_rewrite=${zeroRewrite} ` +
+        `${JSON.stringify(findings)}`,
     );
     return 1;
   }
   console.log(
     `KDNA-RETIREMENT-REGISTRY: ok root=${root} entries=${entries} legacy=${legacy} ` +
-      `preserved=${preserved} restorable=${restorable}`,
+      `preserved=${preserved} restorable=${restorable} zero_rewrite=${zeroRewrite}`,
   );
   return 0;
 }
@@ -274,7 +381,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  ancestorOfHead,
   fieldFindings,
+  historicalSha256,
   overlayAtOriginalPath,
   runTestFile,
   sha256,

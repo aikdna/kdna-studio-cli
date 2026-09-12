@@ -6,7 +6,7 @@ const { spawn, spawnSync } = require('node:child_process');
 const readline = require('node:readline');
 const assert = require('node:assert/strict');
 const ROOT = fs.mkdtempSync(path.join(process.env.KDNA_CLI_TEST_ROOT || os.tmpdir(), 'cli-observations-'));
-const BIN = process.env.KDNA_CLI_TEST_BIN || path.resolve(__dirname, '../../../bin/kdna-studio.js');
+const BIN = process.env.KDNA_CLI_TEST_BIN || path.resolve(__dirname, '../../bin/kdna-studio.js');
 let sequence = 0;
 function save(name, value) { fs.writeFileSync(path.join(ROOT, `${++sequence}-${name}.json`), JSON.stringify(value, null, 2) + '\n'); }
 function isolated(command) {

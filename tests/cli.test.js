@@ -9,7 +9,7 @@ const test = require('node:test');
 let kdnaCore = null;
 try { kdnaCore = require('@aikdna/kdna-core'); } catch { /* optional — runtime digest cross-verification */ }
 
-const root = path.resolve(__dirname, '../..');
+const root = path.resolve(__dirname, '..');
 const cli = path.join(root, 'bin', 'kdna-studio.js');
 
 function run(args, options = {}) {

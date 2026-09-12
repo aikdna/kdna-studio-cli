@@ -1,35 +1,30 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-// The retirement registry is a claim; these cases keep the gate that checks it
-// honest. Every hostile case below used to be silently accepted: a passing test
-// could be moved under tests/legacy/ and registered, an unregistered legacy
-// file was ignored, and a retired_object declaration was never checked.
+// A retirement is a preservation claim, and these cases keep the gate that
+// checks it honest. The gate reads no test output, so nothing here can be
+// defeated by a title, a console.log, a stack frame or a specifier the move
+// rewrote. Each shape is decided from files and hashes alone:
 //
-// The criterion has one sufficient leg (b): the failure output has to name an
-// object the entry declares absent. The fixtures below are the shapes it has to
-// tell apart, and all three of the hostile shapes are refused:
+//   1. a registry that agrees with the committed files -> green;
+//   2. delete a registered file                        -> refused (preserved);
+//   3. change one byte of a registered file            -> refused (sha256);
+//   4. drop an unregistered file into tests/legacy/    -> refused (complete);
+//   5. register a file that is still running           -> refused (not a fake
+//      retirement: the original path still carries the registered bytes);
+//   6. put a registered file's bytes back at the original path and they pass
+//                                                      -> named as
+//      KDNA-RETIREMENT-RESTORABLE, without failing the gate.
 //
-//   1. `RELOCATION_LOSS_TEST` still passes, and is only moved (`git mv`, no
-//      require touched). It turns red under tests/legacy/ because the move broke
-//      `../src/live.js`.
-//   2. `MIXED_DEPTH_TEST` still passes, and the move rewrites exactly one of its
-//      relative requires to the new depth - the shape an independent review
-//      reproduced against the previous rule. Both the registered run and the
-//      re-run from the original path then die on `Cannot find module` with no
-//      assertion executed at all, and the probe is pointed at the broken
-//      specifier itself.
-//   3. `RED_AT_ORIGINAL_TEST` is red from the path it was retired from with its
-//      requires untouched. That is the demoted auxiliary leg (a): the gate
-//      reports it as admissible but it never accepts an entry on its own.
-//
-// `NAMED_OBJECT_TEST` fails with a message that spells out a declared absent
-// object, which is the accepting leg (b).
+// The last two cases also carry the entry guard: a clean copy of the gate runs
+// and prints its success line, and so does an invocation through an absolute
+// symlink - neither may be a silent no-op that exits 0.
 
 const root = path.resolve(__dirname, '..');
 const verifier = path.join(root, 'scripts', 'verify-retirement-registry.js');
@@ -48,73 +43,59 @@ const GREEN_TEST = [
   "test('still current behaviour', () => { assert.equal(1, 1); });",
   '',
 ].join('\n');
-const RELOCATION_LOSS_TEST = [
+// Passes from tests/ (the original path), fails from tests/legacy/ (the retired
+// path): exactly the shape a plain `git mv` produces, and the one the gate has
+// to name rather than retire.
+const BROKEN_AT_LEGACY_TEST = [
   "'use strict';",
   "const test = require('node:test');",
   "const assert = require('node:assert/strict');",
   "const live = require('../src/live.js');",
   "test('still current behaviour', () => { assert.equal(live.live, true); });",
-  '// c2RelocationProbe',
-  '',
-].join('\n');
-const MIXED_DEPTH_TEST = [
-  "'use strict';",
-  "const test = require('node:test');",
-  "const assert = require('node:assert/strict');",
-  "const live = require('../src/live.js');",
-  "const moved = require('../../src/live.js');",
-  "test('still current behaviour', () => { assert.equal(live.live, true); assert.equal(moved.live, true); });",
-  '// c2MixedDepthProbe',
-  '',
-].join('\n');
-const RED_AT_ORIGINAL_TEST = [
-  "'use strict';",
-  "const test = require('node:test');",
-  "const assert = require('node:assert/strict');",
-  "const live = require('../src/live.js');",
-  "test('retired behaviour', () => { assert.equal(live.retiredObject, true); });",
-  '// c2RedAtOriginalProbe',
-  '',
-].join('\n');
-const NAMED_OBJECT_TEST = [
-  "'use strict';",
-  "const test = require('node:test');",
-  "const live = require('../src/live.js');",
-  "if (live.live !== true) throw new Error('c2NamedProbe is gone');",
-  "test('still current behaviour', () => {});",
   '',
 ].join('\n');
 
-function baseEntry() {
+function digest(text) {
+  return crypto.createHash('sha256').update(Buffer.from(text)).digest('hex');
+}
+
+function entryFor(file, text, overrides = {}) {
   return {
-    file: 'tests/legacy/probe.test.js',
+    file,
+    original_path: `tests/${file.slice('tests/legacy/'.length)}`,
+    sha256: digest(text),
     retired_object: 'probe retired object',
     reason: 'synthetic',
-    observed_on_committed_graph: '0 passing / 1 failing assertion',
-    coverage_inherited_by: 'tests/retirement-registry.test.js',
-    object_absence: [{ kind: 'token_absent', path: 'src/live.js', token: 'retired' }],
+    retired_on: '2026-09-12',
+    review_reference: 'review:synthetic',
+    ...overrides,
   };
 }
 
-function sandbox({ registry, files }) {
+function sandbox({ registry, files, withGate = false }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-retirement-registry-'));
   fs.mkdirSync(path.join(dir, 'tests', 'legacy'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
-  fs.mkdirSync(path.join(dir, 'bin'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'src', 'live.js'), "'use strict';\nmodule.exports = { live: true };\n");
-  fs.writeFileSync(path.join(dir, 'bin', 'probe-cli.js'), "console.log('kdna-studio session --out DIR card');\n");
   fs.writeFileSync(path.join(dir, 'package.json'), `${JSON.stringify({ name: 'probe', files: ['src/live.js'] }, null, 2)}\n`);
-  fs.writeFileSync(path.join(dir, 'tests', 'retired.json'), `${JSON.stringify({ schema: 'kdna.retired-test-registry', schema_version: '1.0.0', entries: registry }, null, 2)}\n`);
+  if (withGate) {
+    fs.mkdirSync(path.join(dir, 'scripts'), { recursive: true });
+    fs.copyFileSync(verifier, path.join(dir, 'scripts', 'verify-retirement-registry.js'));
+  }
   for (const [relative, contents] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(dir, relative)), { recursive: true });
     fs.writeFileSync(path.join(dir, relative), contents);
   }
+  fs.writeFileSync(
+    path.join(dir, 'tests', 'retired.json'),
+    `${JSON.stringify({ schema: 'kdna.retired-test-registry', schema_version: '2.0.0', entries: registry }, null, 2)}\n`,
+  );
   return dir;
 }
 
-function runVerifier(dir) {
-  const result = spawnSync(process.execPath, [verifier, '--root', dir], { encoding: 'utf8' });
-  return { status: result.status, output: result.stdout + result.stderr };
+function runVerifier(dir, { script = verifier, cwd } = {}) {
+  const result = spawnSync(process.execPath, [script, '--root', dir], { cwd, encoding: 'utf8' });
+  return { status: result.status, output: `${result.stdout ?? ''}${result.stderr ?? ''}` };
 }
 
 function withSandbox(options, body) {
@@ -126,339 +107,159 @@ function withSandbox(options, body) {
   }
 }
 
-test('a registry that agrees with the committed graph is green', () => {
-  const entry = baseEntry();
-  entry.object_absence = [{ kind: 'token_absent', path: 'package.json', token: 'c2NamedProbe' }];
+test('a registry that agrees with the committed files is green', () => {
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
   withSandbox(
-    {
-      registry: [entry],
-      files: {
-        'tests/legacy/probe.test.js': NAMED_OBJECT_TEST,
-        'tests/src/live.js': "'use strict';\nmodule.exports = { live: false };\n",
-      },
-    },
+    { registry: [entry], files: { 'tests/legacy/probe.test.js': RED_TEST } },
     (dir) => {
       const result = runVerifier(dir);
       assert.equal(result.status, 0, result.output);
       assert.match(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
-      assert.match(result.output, /named_object=1 aux_leg_a=0/);
-      assert.match(result.output, /criterion=b:failure-names-the-object/);
+      assert.match(result.output, /entries=1 legacy=1 preserved=1 restorable=0/);
+      assert.match(result.output, /preserved=true original_carries_same_bytes=false/);
+      assert.match(result.output, /reeval=fails rc=1/);
     },
   );
 });
 
-test('retiring a file that still passes is caught', () => {
-  withSandbox(
-    { registry: [baseEntry()], files: { 'tests/legacy/probe.test.js': GREEN_TEST } },
-    (dir) => {
-      const result = runVerifier(dir);
-      assert.equal(result.status, 1, result.output);
-      assert.match(result.output, /retired_file_still_passes/);
-    },
-  );
+test('deleting a registered file is refused', () => {
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
+  withSandbox({ registry: [entry], files: {} }, (dir) => {
+    const result = runVerifier(dir);
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.output, /registered_file_missing/);
+    assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
+  });
 });
 
-test('a legacy file that is not registered is caught', () => {
+test('changing one byte of a registered file is refused', () => {
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
+  const changed = RED_TEST.replace('assert.equal(1, 2)', 'assert.equal(1, 3)');
+  withSandbox({ registry: [entry], files: { 'tests/legacy/probe.test.js': changed } }, (dir) => {
+    const result = runVerifier(dir);
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.output, /preserved_bytes_changed/);
+    assert.match(result.output, /preserved=false/);
+    assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
+  });
+});
+
+test('an unregistered file under tests/legacy/ is refused', () => {
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
   withSandbox(
     {
-      registry: [baseEntry()],
+      registry: [entry],
       files: { 'tests/legacy/probe.test.js': RED_TEST, 'tests/legacy/unregistered.test.js': RED_TEST },
     },
     (dir) => {
       const result = runVerifier(dir);
       assert.equal(result.status, 1, result.output);
       assert.match(result.output, /legacy_file_not_registered/);
+      assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
     },
   );
 });
 
-test('a registered file that does not exist is caught', () => {
-  withSandbox(
-    { registry: [baseEntry()], files: {} },
-    (dir) => {
-      const result = runVerifier(dir);
-      assert.equal(result.status, 1, result.output);
-      assert.match(result.output, /registered_file_missing/);
-    },
-  );
-});
-
-test('a registered file outside tests/legacy/ is caught', () => {
-  const entry = { ...baseEntry(), file: 'tests/probe.test.js' };
-  withSandbox(
-    { registry: [entry], files: { 'tests/probe.test.js': RED_TEST } },
-    (dir) => {
-      const result = runVerifier(dir);
-      assert.equal(result.status, 1, result.output);
-      assert.match(result.output, /retired_file_outside_legacy/);
-    },
-  );
-});
-
-test('an entry without an object_absence probe is caught', () => {
-  const entry = baseEntry();
-  delete entry.object_absence;
-  withSandbox(
-    { registry: [entry], files: { 'tests/legacy/probe.test.js': RED_TEST } },
-    (dir) => {
-      const result = runVerifier(dir);
-      assert.equal(result.status, 1, result.output);
-      assert.match(result.output, /missing_object_absence_probe/);
-    },
-  );
-});
-
-test('a probe whose token does not name the retired file is caught', () => {
-  const entry = baseEntry();
-  entry.object_absence = [{ kind: 'token_absent', path: 'src/live.js', token: 'neverMentionedAnywhere' }];
-  withSandbox(
-    { registry: [entry], files: { 'tests/legacy/probe.test.js': RED_TEST } },
-    (dir) => {
-      const result = runVerifier(dir);
-      assert.equal(result.status, 1, result.output);
-      assert.match(result.output, /probe_token_not_anchored/);
-    },
-  );
-});
-
-test('a declared absence that is still present in the live source is caught', () => {
-  const entry = baseEntry();
-  entry.object_absence = [{ kind: 'token_absent', path: 'src/live.js', token: 'retiredToken' }];
+test('a retirement that is a duplicate of a running test is refused', () => {
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
   withSandbox(
     {
       registry: [entry],
-      files: {
-        'tests/legacy/probe.test.js': `${RED_TEST}// drives retiredToken\n`,
-        'src/live.js': "'use strict';\nmodule.exports = { retiredToken: true };\n",
+      files: { 'tests/legacy/probe.test.js': RED_TEST, 'tests/probe.test.js': RED_TEST },
+    },
+    (dir) => {
+      const result = runVerifier(dir);
+      assert.equal(result.status, 1, result.output);
+      assert.match(result.output, /retirement_is_a_duplicate_of_a_running_test/);
+      assert.match(result.output, /original_carries_same_bytes=true/);
+      assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
+    },
+  );
+});
+
+test('registered bytes that pass at the original path are named, not accepted silently', () => {
+  const entry = entryFor('tests/legacy/probe.test.js', BROKEN_AT_LEGACY_TEST);
+  withSandbox(
+    { registry: [entry], files: { 'tests/legacy/probe.test.js': BROKEN_AT_LEGACY_TEST } },
+    (dir) => {
+      const result = runVerifier(dir);
+      // (d) is a receipt, not a verdict: the entry is named and the gate stays green.
+      assert.equal(result.status, 0, result.output);
+      assert.match(result.output, /KDNA-RETIREMENT-RESTORABLE: tests\/legacy\/probe\.test\.js/);
+      assert.match(result.output, /reeval=passes rc=0/);
+      assert.match(result.output, /restorable=1/);
+    },
+  );
+});
+
+test('a registration missing any of the six fields is refused', () => {
+  for (const field of ['file', 'original_path', 'sha256', 'reason', 'retired_on', 'review_reference']) {
+    const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
+    delete entry[field];
+    withSandbox(
+      { registry: [entry], files: { 'tests/legacy/probe.test.js': RED_TEST } },
+      (dir) => {
+        const result = runVerifier(dir);
+        assert.equal(result.status, 1, `${field}: ${result.output}`);
+        assert.match(result.output, new RegExp(`missing_${field}`, 'u'));
       },
-    },
-    (dir) => {
-      const result = runVerifier(dir);
-      assert.equal(result.status, 1, result.output);
-      assert.match(result.output, /declared_absent_token_present/);
-    },
-  );
+    );
+  }
 });
 
-test('a claimed absence from the packed surface is checked against files[]', () => {
-  const entry = baseEntry();
-  entry.object_absence = [{ kind: 'not_packed', path: 'src/live.js' }];
+test('a registration whose original path is the retired path is refused', () => {
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST, { original_path: 'tests/legacy/probe.test.js' });
+  withSandbox({ registry: [entry], files: { 'tests/legacy/probe.test.js': RED_TEST } }, (dir) => {
+    const result = runVerifier(dir);
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.output, /original_path_inside_legacy/);
+    assert.match(result.output, /original_path_is_the_retired_path/);
+  });
+});
+
+test('a duplicate registration is refused', () => {
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
   withSandbox(
-    { registry: [entry], files: { 'tests/legacy/probe.test.js': `${RED_TEST}// src/live.js\n` } },
+    { registry: [entry, { ...entry }], files: { 'tests/legacy/probe.test.js': RED_TEST } },
     (dir) => {
       const result = runVerifier(dir);
       assert.equal(result.status, 1, result.output);
-      assert.match(result.output, /declared_unpacked_path_is_packed/);
+      assert.match(result.output, /duplicate_registration/);
     },
   );
 });
 
-test('a claimed absence from the shipped command help is checked by running it', () => {
-  const entry = baseEntry();
-  entry.object_absence = [
-    { kind: 'help_excludes', command: ['node', 'bin/probe-cli.js', '--help'], tokens: ['card'] },
-  ];
-  withSandbox(
-    { registry: [entry], files: { 'tests/legacy/probe.test.js': `${RED_TEST}// card\n` } },
-    (dir) => {
-      const result = runVerifier(dir);
-      assert.equal(result.status, 1, result.output);
-      assert.match(result.output, /declared_absent_token_present/);
-    },
-  );
-});
-
-// The three cases below are the retirement criterion itself: two hostile shapes
-// that must stay red, and the one shape that is allowed to accept an entry.
-
-test('a still-passing test that is only moved (no require rewritten) is refused', () => {
-  const entry = baseEntry();
-  // `src/live.js` is named by the probe and it is also the specifier the move
-  // broke, so a gate that matched the failure text naively would accept this.
-  entry.object_absence = [{ kind: 'token_absent', path: 'src/live.js', token: 'c2RelocationProbe' }];
-  withSandbox(
-    { registry: [entry], files: { 'tests/legacy/probe.test.js': RELOCATION_LOSS_TEST } },
-    (dir) => {
-      const result = runVerifier(dir);
-      assert.equal(result.status, 1, result.output);
-      assert.match(result.output, /retirement_red_not_attributed_to_the_declared_object/);
-      assert.match(result.output, /named_object=no/);
-      assert.match(result.output, /criterion=none/);
-      assert.match(result.output, /original_path=tests\/probe.test.js original_rc=0/);
-      assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
-    },
-  );
-});
-
-test('a still-passing test whose move rewrote one require is refused', () => {
-  const entry = baseEntry();
-  // The declared identity is the specifier the un-rewritten require asks for, so
-  // the failure text does contain the token - inside a module-resolution
-  // specifier, which is exactly what must not count.
-  entry.object_absence = [{ kind: 'token_absent', path: 'src/live.js', token: '../src/live.js' }];
-  withSandbox(
-    { registry: [entry], files: { 'tests/legacy/probe.test.js': MIXED_DEPTH_TEST } },
-    (dir) => {
-      const result = runVerifier(dir);
-      assert.equal(result.status, 1, result.output);
-      assert.match(result.output, /retirement_red_not_attributed_to_the_declared_object/);
-      assert.match(result.output, /named_object=no/);
-      assert.match(result.output, /original_path=tests\/probe.test.js original_rc=1/);
-      assert.match(result.output, /aux_leg_a=inadmissible/);
-      assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
-    },
-  );
-});
-
-test('a file that is red from the path it was retired from is not accepted on its own', () => {
-  const entry = baseEntry();
-  entry.object_absence = [{ kind: 'token_absent', path: 'src/live.js', token: 'c2RedAtOriginalProbe' }];
-  withSandbox(
-    { registry: [entry], files: { 'tests/legacy/probe.test.js': RED_AT_ORIGINAL_TEST } },
-    (dir) => {
-      const result = runVerifier(dir);
-      assert.equal(result.status, 1, result.output);
-      // The demoted leg (a) is reported as admissible, and still does not accept:
-      // the failure never names an object this entry declares absent.
-      assert.match(result.output, /original_path=tests\/probe.test.js original_rc=1/);
-      assert.match(result.output, /aux_leg_a=admissible/);
-      assert.match(result.output, /criterion=none/);
-      assert.match(result.output, /retirement_red_not_attributed_to_the_declared_object/);
-    },
-  );
-});
-
-test('a failure that names the retired object is accepted even where the original path is green', () => {
-  const entry = baseEntry();
-  entry.object_absence = [{ kind: 'token_absent', path: 'package.json', token: 'c2NamedProbe' }];
+test('a clean copy of the gate really runs and prints its success line', () => {
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
   withSandbox(
     {
       registry: [entry],
-      files: {
-        'tests/legacy/probe.test.js': NAMED_OBJECT_TEST,
-        'tests/src/live.js': "'use strict';\nmodule.exports = { live: false };\n",
-      },
+      files: { 'tests/legacy/probe.test.js': RED_TEST },
+      withGate: true,
     },
     (dir) => {
-      const result = runVerifier(dir);
+      const script = path.join(dir, 'scripts', 'verify-retirement-registry.js');
+      const result = runVerifier(dir, { script, cwd: dir });
       assert.equal(result.status, 0, result.output);
-      assert.match(result.output, /original_rc=0/);
-      assert.match(result.output, /criterion=b:failure-names-the-object/);
+      assert.match(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
+      assert.match(result.output, /entries=1 legacy=1 preserved=1/);
     },
   );
 });
 
-// Round-4 tightening. Two kinds of naming used to be accepted as the reason for
-// a retirement and are not reasons:
-//
-//   * a *failing test's title* - static text that can name any object at all, so
-//     it cannot show that the named object is why the run is red;
-//   * a *diagnostic line* - output the judged artifact printed rather than a
-//     statement about the failure - which counts only together with the
-//     differential contrast that shows it appears because the object is absent.
-//
-// The last three cases are the diagnostic contract in both directions: the same
-// entry with and without the contrast, and a contrast that does not hold.
-
-const TITLE_ONLY_TEST = [
-  "'use strict';",
-  "const test = require('node:test');",
-  "const assert = require('node:assert/strict');",
-  "test('c2TitleOnlyProbe is gone', () => { assert.equal(1, 2); });",
-  '',
-].join('\n');
-const DIAGNOSTIC_TEST = [
-  "'use strict';",
-  "const fs = require('node:fs');",
-  "const path = require('node:path');",
-  "const test = require('node:test');",
-  "const assert = require('node:assert/strict');",
-  "const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'live.js'), 'utf8');",
-  "if (!source.includes('c2DiagnosticProbe')) {",
-  "  process.stdout.write(JSON.stringify({ c2DiagnosticProbe: 'the retired object is absent from the live source' }) + '\\n');",
-  "}",
-  "test('retired behaviour', () => { assert.equal(source.includes('c2DiagnosticProbe'), true); });",
-  '',
-].join('\n');
-const UNCONDITIONAL_DIAGNOSTIC_TEST = [
-  "'use strict';",
-  "const test = require('node:test');",
-  "const assert = require('node:assert/strict');",
-  "process.stdout.write(JSON.stringify({ c2DiagnosticProbe: 'the retired object is absent from the live source' }) + '\\n');",
-  "test('retired behaviour', () => { assert.equal(1, 2); });",
-  '',
-].join('\n');
-
-function diagnosticEntry() {
-  const entry = baseEntry();
-  entry.object_absence = [{ kind: 'token_absent', path: 'src/live.js', token: 'c2DiagnosticProbe' }];
-  return entry;
-}
-
-const DIAGNOSTIC_CONTRAST = {
-  identifier: 'c2DiagnosticProbe',
-  diagnostic: 'the retired object is absent from the live source',
-  present: { kind: 'append_token', path: 'src/live.js', token: 'c2DiagnosticProbe' },
-};
-
-test('a reason that only comes from a failing test title is refused', () => {
-  const entry = baseEntry();
-  entry.object_absence = [{ kind: 'token_absent', path: 'src/live.js', token: 'c2TitleOnlyProbe' }];
-  withSandbox(
-    { registry: [entry], files: { 'tests/legacy/probe.test.js': TITLE_ONLY_TEST } },
-    (dir) => {
-      const result = runVerifier(dir);
-      assert.equal(result.status, 1, result.output);
-      assert.match(result.output, /named_object=no/);
-      assert.match(result.output, /criterion=none/);
-      assert.match(result.output, /retirement_red_not_attributed_to_the_declared_object/);
-      assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
-    },
-  );
-});
-
-test('a diagnostic reason without a differential contrast is refused', () => {
-  const entry = diagnosticEntry();
-  withSandbox(
-    { registry: [entry], files: { 'tests/legacy/probe.test.js': DIAGNOSTIC_TEST } },
-    (dir) => {
-      const result = runVerifier(dir);
-      assert.equal(result.status, 1, result.output);
-      assert.match(result.output, /criterion=c:diagnostic-names-the-object/);
-      assert.match(result.output, /diagnostic_reason_without_contrast/);
-      assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
-    },
-  );
-});
-
-test('a diagnostic reason with a differential contrast that holds is accepted', () => {
-  const entry = diagnosticEntry();
-  entry.diagnostic_evidence = DIAGNOSTIC_CONTRAST;
-  withSandbox(
-    { registry: [entry], files: { 'tests/legacy/probe.test.js': DIAGNOSTIC_TEST } },
-    (dir) => {
-      const result = runVerifier(dir);
+test('the gate still runs through an absolute symlinked invocation path', () => {
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
+  withSandbox({ registry: [entry], files: { 'tests/legacy/probe.test.js': RED_TEST } }, (dir) => {
+    const linkDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-retirement-gate-link-'));
+    try {
+      const link = path.join(linkDirectory, 'gate.js');
+      fs.symlinkSync(verifier, link);
+      const result = runVerifier(dir, { script: link, cwd: linkDirectory });
       assert.equal(result.status, 0, result.output);
-      assert.match(result.output, /criterion=c:diagnostic-names-the-object/);
-      assert.match(result.output, /absent_rc=1 absent_diagnostic=true/);
-      assert.match(result.output, /present_rc=0 present_diagnostic=false/);
-      assert.match(result.output, /verdict=holds/);
-      assert.match(result.output, /diagnostic_contrast=1/);
-    },
-  );
-});
-
-test('a diagnostic reason whose contrast does not hold is refused', () => {
-  const entry = diagnosticEntry();
-  entry.diagnostic_evidence = DIAGNOSTIC_CONTRAST;
-  withSandbox(
-    { registry: [entry], files: { 'tests/legacy/probe.test.js': UNCONDITIONAL_DIAGNOSTIC_TEST } },
-    (dir) => {
-      const result = runVerifier(dir);
-      assert.equal(result.status, 1, result.output);
-      assert.match(result.output, /diagnostic_contrast_failed/);
-      assert.match(result.output, /verdict=fails/);
-      assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
-    },
-  );
+      assert.match(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
+      assert.match(result.output, /entries=1 legacy=1 preserved=1/);
+    } finally {
+      fs.rmSync(linkDirectory, { recursive: true, force: true });
+    }
+  });
 });

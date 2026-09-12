@@ -10,21 +10,14 @@ const root = path.resolve(__dirname, '..');
 
 // Retired test material stays in the repository but out of this gate. Each
 // entry is announced with one explicit receipt line so the shrinkage is never
-// silent; see tests/retired.json and tests/legacy/README.md. The registry is
-// checked against reality by scripts/verify-retirement-registry.js below: it
-// requires every legacy file to be registered, evaluates each declared absence
-// probe, and requires the run to say, about the failure, that an object the
-// entry declares absent is missing. That means an error or assertion message, or
-// one half of an assertion diff. A failing test's title never counts: it is
-// static text that can name any object at all. Neither does a match inside a
-// `Cannot find module` specifier or inside a file path. A diagnostic line - the
-// judged artifact's own output rather than a statement about the failure -
-// counts only together with the differential contrast the entry declares: with
-// the object made present the file must not be red and the diagnostic must not
-// appear. Re-running the bytes from their old path is reported as an auxiliary
-// observation only. A test that still passes cannot be retired silently: whether
-// the move left its requires untouched or rewrote one of them, the file says
-// nothing about an object it declares absent and is refused.
+// silent; see tests/retired.json and docs/RETIRED-TESTS.md. The registry is
+// checked against reality by scripts/verify-retirement-registry.js below, which
+// reads no test output: a retirement is a preservation claim, and the gate
+// checks that the registered bytes are still there (sha256), that every file
+// under tests/legacy/ is registered, that the original path does not still carry
+// the registered bytes, and - as a receipt rather than a verdict - that the
+// registered bytes do not pass when they are put back where the file used to
+// run. A receipt that passes is printed as KDNA-RETIREMENT-RESTORABLE.
 const retired = JSON.parse(
   fs.readFileSync(path.join(root, 'tests', 'retired.json'), 'utf8'),
 ).entries;

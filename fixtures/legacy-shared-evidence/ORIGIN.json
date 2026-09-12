@@ -1,0 +1,34 @@
+{
+  "kind": "synthetic-legacy-producer-fixture",
+  "legacyFormat": "absent",
+  "producerManifestSha256": "2d765560cf66121a2570f440415766616c4d0b773e7aa1ba94a028c3cff47589",
+  "producerPID": 91613,
+  "evidenceUntouched": true,
+  "producerArchives": {
+    "studio": "99a3b52c9ae56a8f43a6e51f621dba4fa3faf76632cd8ec7ab63a521afd4315c",
+    "core": "02b766c244d67d4ed36d8304b26cd1be784010c75bbe6a83b0938b049f548a63"
+  },
+  "scope": "Actual original legacy producer execution on a separately pinned local graph; no inherited whole historical graph claim",
+  "files": [
+    {
+      "name": "artifact.kdna",
+      "bytes": 1738,
+      "sha256": "c7818eada62db00633647b670c03d0aaff0afc37a68677488ff3c4cb779d9200"
+    },
+    {
+      "name": "binding.json",
+      "bytes": 256,
+      "sha256": "2ee29cd874f616f3e3026fa43eef03b31050b0f5c270424d70031f75681b1f51"
+    },
+    {
+      "name": "evidence.json",
+      "bytes": 30257,
+      "sha256": "9987621ded32029791d1f079bbdfece97c56383e63fe7f0603a13cc96f07d809"
+    },
+    {
+      "name": "verification.json",
+      "bytes": 459,
+      "sha256": "0ca173779c03a5cd7d998a144f99be66d93ceb0bf949e992b7709c8977b26bd7"
+    }
+  ]
+}

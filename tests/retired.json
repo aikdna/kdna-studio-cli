@@ -1,12 +1,12 @@
 {
   "schema": "kdna.retired-test-registry",
   "schema_version": "3.0.0",
-  "note": "A retirement is a preservation claim, not a story about a red run. Every entry registers the retired path (file), the original path it was retired from (original_path), the sha256 of the preserved bytes (the retirement's retired_sha256), the commit those bytes are claimed to come from (retired_from_commit), a free-text reason, the registration date (retired_on) and the review that accepted the retirement (review_reference). scripts/verify-retirement-registry.js reads no test output. It checks five things from files, hashes and the object store: (a) preserved - the file at the registered path hashes to the registered sha256, so the registered bytes cannot be deleted or edited; (b) complete - every file under tests/legacy/ is registered; (c) not a fake retirement - the original path does not still carry the registered bytes; (d) re-evaluable - the registered bytes are put back at the original path and run, and a passing run is named as a receipt (KDNA-RETIREMENT-RESTORABLE) because the entry is not stale; (e) re-checkable - retired_from_commit is the commit the file was retired from: the gate requires that its tree really carries the file at original_path and derives the move as the commit whose parent it is. Only (a)-(c) and (e) decide the exit code. What a machine cannot prove is that nobody wrote the file before the move, so the gate does not judge it: for every entry it prints the complete diff of the file between retired_from_commit and the move commit, plus the diff of the named commit's own write when that commit wrote the file, counts the differing lines, and names the entries whose diff is not empty and whose review_signature does not cover it. An unsigned entry needs an independent reviewer's per-entry signature - review_signature 'no-content-change', or 'change-explained' with a review_note holding the reason - before it may enter a push batch. The copies registered here are the pre-retirement files themselves; the move that put them under tests/legacy/ did change content once (relative requires, __dirname paths and the path to bin/kdna-studio.js were re-pointed), its diffs are printed and counted, and the copies were restored to the bytes their original paths carried. The suites are red against the committed graph because the objects they exercise are gone from it; that is an independent observation, not a verdict.",
+  "note": "A retirement is a preservation claim, not a story about a red run. Every entry registers the retired path (file), the original path it was retired from (original_path), the sha256 of the preserved bytes (the retirement's retired_sha256), the commit the file was retired from (retired_from_commit), a free-text reason, the registration date (retired_on) and the review that accepted the retirement (review_reference). scripts/verify-retirement-registry.js reads no test output. It checks: (a) preserved - the file at the registered path hashes to the registered sha256, so the registered bytes cannot be deleted or edited; (b) complete - every file under tests/legacy/ is registered; (c) not a fake retirement - the original path does not still carry the registered bytes; (d) re-evaluable - the registered bytes are put back at the original path and run, and a passing run is named as a receipt (KDNA-RETIREMENT-RESTORABLE); an entry whose bytes cannot be run there records reeval_in_place not-possible with a reeval_note instead (tests/legacy/pd275/terminal.test.js is such an entry: the helper it requires is retired material too); (e) re-checkable - the gate computes C_last, the newest commit on HEAD whose tree still carries the file at original_path, refuses any entry that names a different commit (so a retirement cannot be anchored at an older retirement that a later one superseded) and requires the named commit to be reachable from HEAD. Only (a)-(c) and (e) decide the exit code. What a machine cannot prove is that nobody wrote the file before the move, so the gate prints it instead of judging it: KDNA-RETIREMENT-DIFF (the first retirement changed the content while moving the file, full diff), KDNA-RETIREMENT-PRIOR-WRITE (the named commit wrote the file at the original path itself, full diff), and KDNA-RETIREMENT-WINDOW (later commits in the retirement window that modified or removed the retired copy, counted as content_changed_in_window, the retirement's own rewrite included). A non-zero window or a prior write needs an independent reviewer's per-entry signature - review_signature 'no-content-change', or 'change-explained' with a review_note holding the reason - before the entry may enter a push batch; entries that still lack one are printed as KDNA-RETIREMENT-UNSIGNED. Shape five - rewrite one byte, then move the file - is rc=0 with the change exposed and unsigned, never a red gate. The copies registered here are the pre-retirement files themselves; the first move changed content once (relative requires, __dirname paths and the path to bin/kdna-studio.js were re-pointed), its diff and the window are printed and counted, and the copies were restored to the bytes their original paths carried. The suites are red against the committed graph because the objects they exercise are gone from it; that is an independent observation, not a verdict.",
   "entries": [
     {
       "file": "tests/legacy/cli.test.js",
       "original_path": "tests/cli.test.js",
-      "retired_from_commit": "1f5049b714ca05cc443c841d386ac9b96d219bff",
+      "retired_from_commit": "35c90c8db56a514c76d3384ba46bb7807e93a6cd",
       "sha256": "d9dc4e905dbff21c4cf782aad002f496ac73cf7dfb7a18f311abc3ace8ff9e54",
       "retired_object": "pre-component-semantics Studio CLI command surface (project, card, identity, migrate, export, llm config)",
       "reason": "bin/kdna-studio.js is a shim over src/terminal-workspace.js and declares only session, verify and read; the command surface this suite drives is not in the committed graph.",
@@ -17,7 +17,7 @@
     {
       "file": "tests/legacy/creation-agent-cli.test.js",
       "original_path": "tests/creation-agent-cli.test.js",
-      "retired_from_commit": "1f5049b714ca05cc443c841d386ac9b96d219bff",
+      "retired_from_commit": "35c90c8db56a514c76d3384ba46bb7807e93a6cd",
       "sha256": "67b6883983208866b2fb071772350487162c6f0d77a0bb4b1c68af52d0a2d4de",
       "retired_object": "pre-component-semantics Agent creation CLI (create-agent, finalize-agent, answer, review, resume, try, repair, export-agent, public guide)",
       "reason": "The creation CLI commands and the creation engine they call belong to the pre-component-semantics graph; the current CLI exposes the session / verify / read surface instead, and the retired creation CLI implementation is outside the shipped tarball surface.",
@@ -28,7 +28,7 @@
     {
       "file": "tests/legacy/current/shared-evidence.test.js",
       "original_path": "tests/current/shared-evidence.test.js",
-      "retired_from_commit": "1f5049b714ca05cc443c841d386ac9b96d219bff",
+      "retired_from_commit": "35c90c8db56a514c76d3384ba46bb7807e93a6cd",
       "sha256": "547f37c6ca7e09a342f4f2de7d210c4520a8d2471bdd52ada046b90223b8c0a1",
       "retired_object": "pre-component-semantics shared creation-evidence format 1 producer path",
       "reason": "It drives the retired session harness and asserts the retired 3.1.0-rc compiler coordinate. The current evidence format is format2, and the generation-1 producer marker is gone from the session source.",
@@ -39,7 +39,7 @@
     {
       "file": "tests/legacy/e2e-export-completeness.test.js",
       "original_path": "tests/e2e-export-completeness.test.js",
-      "retired_from_commit": "1f5049b714ca05cc443c841d386ac9b96d219bff",
+      "retired_from_commit": "35c90c8db56a514c76d3384ba46bb7807e93a6cd",
       "sha256": "b40cd129a0cdec9e90206c3b3f2813a8da57bd2190b906008be5af92f8de66ef",
       "retired_object": "pre-component-semantics export completeness pipeline",
       "reason": "The export path it drives (create, card add, card approve, export, validate, load) is replaced by the current packed Studio save/readback flow and its complete.json version 2 bundle contract.",
@@ -50,7 +50,7 @@
     {
       "file": "tests/legacy/pd275/session-harness.js",
       "original_path": "tests/pd275/session-harness.js",
-      "retired_from_commit": "1f5049b714ca05cc443c841d386ac9b96d219bff",
+      "retired_from_commit": "35c90c8db56a514c76d3384ba46bb7807e93a6cd",
       "sha256": "dbe64f9cac91ed94a283101e023200464e7aa2b4c80bbee8e2402f023d4fd9c5",
       "retired_object": "pre-component-semantics CLI session harness",
       "reason": "Helper module, not a test: it defines no test of its own and is kept because the retired pd275 suites require it as './session-harness'. Its (d) receipt passes because running a helper module executes nothing, not because a retired test came back. It stays retired with the suites that require it.",
@@ -61,7 +61,7 @@
     {
       "file": "tests/legacy/pd275/session-termination.test.js",
       "original_path": "tests/pd275/session-termination.test.js",
-      "retired_from_commit": "1f5049b714ca05cc443c841d386ac9b96d219bff",
+      "retired_from_commit": "35c90c8db56a514c76d3384ba46bb7807e93a6cd",
       "sha256": "fb01b892dd8c89484740d7250dbc8efe15b958fe6888776df46fd311433f09f8",
       "retired_object": "pre-component-semantics CLI session harness protocol (tests/legacy/pd275/session-harness.js)",
       "reason": "The harness expects session events and channel kinds that the current session protocol does not emit, so the surviving assertions read retired event names.",
@@ -72,8 +72,10 @@
     {
       "file": "tests/legacy/pd275/terminal.test.js",
       "original_path": "tests/pd275/terminal.test.js",
-      "retired_from_commit": "1f5049b714ca05cc443c841d386ac9b96d219bff",
+      "retired_from_commit": "211996aa97276603052490005303cf92b1ee8d3f",
       "sha256": "009e2bc16fccf64efba0f7cd8723d8e45b968186345c273f8cef006fa7dadb13",
+      "reeval_in_place": "not-possible",
+      "reeval_note": "The suite requires tests/pd275/session-harness.js, and that helper is itself retired material: the same move re-pointed the path it resolves to bin/kdna-studio.js, so it sits in tests/legacy/pd275/ and tests/pd275/ does not exist. The registered bytes therefore cannot be run at tests/pd275/terminal.test.js; the retirement stands on the preserved bytes, the recorded window and the reviewer's signature, not on a put-back run.",
       "retired_object": "pre-component-semantics CLI session harness protocol (tests/legacy/pd275/session-harness.js)",
       "reason": "The harness expects session events and material kinds the current session protocol does not emit, and the retired material-admission code it asserts is gone from the session source.",
       "retired_on": "2026-09-12",
@@ -83,7 +85,7 @@
     {
       "file": "tests/legacy/protocol-producer.test.js",
       "original_path": "tests/protocol-producer.test.js",
-      "retired_from_commit": "1f5049b714ca05cc443c841d386ac9b96d219bff",
+      "retired_from_commit": "35c90c8db56a514c76d3384ba46bb7807e93a6cd",
       "sha256": "85fb4619a96cb17c5bf9f1232fdbe4342183296653ab4061296cfa1e8f55ba75",
       "retired_object": "pre-component-semantics protocol producer transport",
       "reason": "The producer transport it asserts is not part of the current graph; the file stops on retired public APIs before any product assertion, because @aikdna/kdna-core now exports admitBytes only and @aikdna/kdna-studio-core now exports createSession / verifyCreationEvidence only.",
@@ -94,7 +96,7 @@
     {
       "file": "tests/legacy/public-package-surface.test.js",
       "original_path": "tests/public-package-surface.test.js",
-      "retired_from_commit": "1f5049b714ca05cc443c841d386ac9b96d219bff",
+      "retired_from_commit": "35c90c8db56a514c76d3384ba46bb7807e93a6cd",
       "sha256": "deeadf6855a6c077cb5ed0b0e8c9934ea501bf23229f1ebffc3116507985d27a",
       "retired_object": "retired packed member list (e.g. src/ai/distill.js)",
       "reason": "The packed surface is now the files[] list in package.json; the guarded members this suite requires no longer ship.",

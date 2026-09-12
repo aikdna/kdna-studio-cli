@@ -16,16 +16,19 @@ const root = path.resolve(__dirname, '..');
 // checks that the registered bytes are still there (sha256), that every file
 // under tests/legacy/ is registered, that the original path does not still carry
 // the registered bytes, that retired_from_commit is the commit the file was
-// retired from (its tree really carries the file at the original path) - and, as
-// a receipt rather than a verdict, that the registered bytes do not pass when
-// they are put back where the file used to run. A receipt that passes is printed
-// as KDNA-RETIREMENT-RESTORABLE. What a machine cannot prove is that nobody wrote
-// the file before the move: the gate prints the complete diff the move produced
-// (and the diff of the named commit's own write), counts it, and names the
-// entries whose diff is not empty and unsigned, which an independent reviewer has
-// to sign before they may enter a push batch. The registry check reads git
-// history, so the checkout has to carry it (fetch-depth: 0 in
-// .github/workflows/ci.yml).
+// retired from (C_last: the newest commit on HEAD whose tree still carries the
+// file at the original path) - and, as a receipt rather than a verdict, that the
+// registered bytes do not pass when they are put back where the file used to run.
+// A receipt that passes is printed as KDNA-RETIREMENT-RESTORABLE, and an entry
+// that cannot be run there records reeval_in_place not-possible with a
+// reeval_note. What a machine cannot prove is that nobody wrote the file before
+// the move: the gate prints the complete diff the first retirement produced, any
+// write by the named commit, and every later commit in the retirement window that
+// modified or removed the copy (content_changed_in_window), and names the entries
+// that still lack a review_signature. Shape five - rewrite one byte, then move
+// the file - is rc=0 with the change exposed and unsigned, never a red gate; the
+// registry check reads git history, so the checkout has to carry it
+// (fetch-depth: 0 in .github/workflows/ci.yml).
 const retired = JSON.parse(
   fs.readFileSync(path.join(root, 'tests', 'retired.json'), 'utf8'),
 ).entries;

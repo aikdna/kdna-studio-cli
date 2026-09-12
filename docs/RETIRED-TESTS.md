@@ -83,26 +83,44 @@ the object store:
   and run. A passing run is printed as `KDNA-RETIREMENT-RESTORABLE: <file>`: the
   entry is not stale, so restore it or record why it stays retired. (d) is a
   receipt, never an acceptance condition;
-- **(e) re-checkable** - the copy under `tests/legacy/` hashes to the registered
-  `sha256`, so the registered bytes cannot be deleted or edited without the gate
-  going red; and `retired_from_commit` is the commit the file was retired from.
-  The gate checks that the named commit's tree really carries the file at
-  `original_path` (and that HEAD reaches it), and it derives the move as the
-  commit whose parent that is (`--no-renames --diff-filter=D`).
+- **(e) re-checkable** - two things, both machine-checkable, and nothing more.
+  First, the copy under `tests/legacy/` hashes to the registered `sha256`, so the
+  registered bytes cannot be deleted or edited. Second, `retired_from_commit` is
+  the commit the file was retired from: the gate computes `C_last`, the newest
+  commit on HEAD whose tree still carries the file at `original_path`, and
+  refuses any entry that names a different one - so a retirement cannot be
+  anchored at an older retirement that a later one superseded - and the named
+  commit has to be reachable from HEAD.
 
-  This is the whole of what a machine can prove about a retirement. It cannot
-  prove that nobody wrote the file before the move: a rewrite in a commit of its
-  own followed by a "pure" move is indistinguishable from a file that was edited
-  long before it was retired, and no history-only rule can tell the two apart.
-  The gate does not claim to. It **exposes** it instead: for every entry it
-  prints the complete diff of the file between `retired_from_commit` and the move
-  commit - and the diff of the named commit's own write, when that commit wrote
-  the file - counts the differing lines, and names the entries whose diff is not
-  empty and whose `review_signature` does not cover it. Those entries are
-  **unsigned**: an independent reviewer has to sign each one `no-content-change`,
-  or `change-explained` with a `review_note` holding the reason, before the entry
-  may enter a push batch. A gate that is green is not a claim that nothing was
-  written; it is a claim that everything written is on the record and attributed.
+  That is the whole of what a machine can prove. It cannot prove that nobody wrote
+  the file before the move, and no history-only rule can: a rewrite in a commit of
+  its own followed by a "pure" move is indistinguishable from a file that was
+  edited long before it was retired. The gate does not judge that; it prints it:
+
+  - `KDNA-RETIREMENT-DIFF` - the first retirement changed the content while moving
+    the file, with the complete diff;
+  - `KDNA-RETIREMENT-PRIOR-WRITE` - the commit the entry names wrote the file at
+    the original path itself, with the complete diff;
+  - `KDNA-RETIREMENT-WINDOW` - every later commit in the retirement window (from
+    the first retirement to HEAD) that modified or removed the retired copy, and
+    `content_changed_in_window` counts them, the retirement's own rewrite
+    included.
+
+  A non-zero window, or a prior write, needs the reviewer's per-entry signature:
+  `review_signature` is `no-content-change`, or `change-explained` with a
+  `review_note` holding the reason. Entries that still lack one are printed as
+  `KDNA-RETIREMENT-UNSIGNED` and may not enter a push batch. **Shape five -
+  "rewrite one byte, then move the file" - is rc=0 with the change exposed and
+  unsigned, never a red gate.** The refusal shapes are the other ones: a deleted
+  registered file, a byte edited in the registered copy, an unregistered file
+  under `tests/legacy/`, a `retired_from_commit` that is not `C_last`, and one
+  that HEAD cannot reach.
+
+  An entry whose bytes cannot be run where they used to live records that
+  explicitly: `reeval_in_place: "not-possible"` with a `reeval_note` holding the
+  reason, and the gate prints `KDNA-RETIREMENT-REEVAL-NOTE` instead of reporting a
+  run it cannot make. `tests/legacy/pd275/terminal.test.js` is such an entry: the
+  helper it requires is retired material too, so `tests/pd275/` does not exist.
 
 The exit code is about (a)-(c) and (e). (e) reads git history, so the checkout
 that runs the gate has to carry it: `.github/workflows/ci.yml` fetches the full

@@ -31,24 +31,32 @@
 //       and (e).
 //   (e) re-checkable: the copy under tests/legacy/ hashes to the registered
 //       sha256, and `retired_from_commit` is the commit the file was retired
-//       from - the one that last carried it at its original path. The gate
-//       checks that the named commit's tree really carries the file at that path
-//       (and that HEAD reaches it), and derives the move: the commit whose parent
-//       is `retired_from_commit` and which removed the path from its original
-//       location. That is the whole of what a machine can prove about a
-//       retirement. It cannot prove that nobody wrote the file before the move:
-//       an edit in an earlier commit and a "pure" move after it are
-//       indistinguishable from a file that was edited long before it was
-//       retired, and no history-only rule can tell them apart.
+//       from. The gate computes that commit itself - `C_last`, the newest commit
+//       on HEAD whose tree still carries the file at its original path (`git log
+//       --format=%H -- <original_path>`, first hit whose tree has it) - and
+//       refuses any entry that names a different commit, so a retirement cannot
+//       be anchored at an older retirement that a later one superseded. It also
+//       derives the move: the commit whose parent is `retired_from_commit` and
+//       which removed the path from its original location. That is the whole of
+//       what a machine can prove about a retirement. It cannot prove that nobody
+//       wrote the file before the move: an edit in an earlier commit and a
+//       "pure" move after it are indistinguishable from a file that was edited
+//       long before it was retired, and no history-only rule can tell them apart.
 //
 // What the gate does instead of judging that is expose it. For every entry it
 // prints the complete diff of the file between `retired_from_commit` and the
-// move commit, counts the differing lines, and names the entries whose diff is
-// not empty and whose `review_signature` does not cover it. Those entries are
-// listed as unsigned for the owner's push gate: an independent reviewer has to
-// sign each one either `no-content-change` or `change-explained` (with a
-// `review_note` holding the reason) before it may enter a push batch. The gate
-// never accepts a retirement on the strength of a diff it cannot interpret.
+// move commit, the diff of the named commit's own write when that commit wrote
+// the file, and every commit in the retirement window (from the first commit
+// that took the file out of its original location to HEAD) that touched the
+// retired copy's content, as `content_changed_in_window`. Anything it printed -
+// a non-empty move diff, a write by the named commit, or a non-zero window -
+// needs the reviewer's per-entry signature (`no-content-change`, or
+// `change-explained` with a `review_note` holding the reason) before the entry
+// may enter a push batch, and the entries that still lack one are printed as
+// unsigned. The gate never accepts a retirement on the strength of a diff it
+// cannot interpret, and it does not refuse a shape it cannot judge: shape five -
+// "rewrite one byte, then move the file" - is rc=0 with the change exposed and a
+// signature required, not a red gate.
 //
 // Every entry carries the seven registration fields: the retired path (`file`),
 // the `original_path` it was retired from, the `sha256` of the preserved bytes
@@ -155,6 +163,48 @@ function removalCandidates(root, originalPath) {
     .toString('utf8')
     .trim();
   return output === '' ? [] : output.split('\n');
+}
+
+// The commit where the file was last seen in its original location: the newest
+// commit on HEAD whose tree still carries it. The registry has to name this
+// commit verbatim, so an entry cannot anchor at a retirement that a later
+// retirement superseded.
+function lastAppearanceCommit(root, originalPath) {
+  const output = gitBytes(root, ['log', '--format=%H', '--', originalPath]).toString('utf8').trim();
+  if (output === '') return null;
+  for (const commit of output.split('\n')) {
+    if (blobAt(root, commit, originalPath) !== null) return commit;
+  }
+  return null;
+}
+
+// The retirement window: from the first commit that took the file out of its
+// original location to HEAD. Every commit in that window that touched the
+// retired copy's content is a change the owner has to see and sign.
+function retirementWindow(root, originalPath, retiredFile) {
+  const removals = removalCandidates(root, originalPath);
+  if (removals.length === 0) return null;
+  const first = removals[removals.length - 1];
+  const output = gitBytes(root, [
+    'log',
+    '--format=%H%x09%s',
+    '--diff-filter=MD',
+    `${first}..HEAD`,
+    '--',
+    retiredFile,
+  ])
+    .toString('utf8')
+    .trim();
+  return {
+    first,
+    commits:
+      output === ''
+        ? []
+        : output.split('\n').map((line) => {
+            const [commit, ...rest] = line.split('\t');
+            return { commit, subject: rest.join('\t') };
+          }),
+  };
 }
 
 function blobText(root, commit, relative) {
@@ -338,6 +388,18 @@ function fieldFindings(entry) {
   if (typeof entry.retired_on === 'string' && !DATE_RE.test(entry.retired_on)) {
     findings.push({ file, check: 'malformed_retired_on', detail: entry.retired_on });
   }
+  if (
+    entry.reeval_in_place !== undefined &&
+    !['possible', 'not-possible'].includes(entry.reeval_in_place)
+  ) {
+    findings.push({ file, check: 'malformed_reeval_in_place', detail: String(entry.reeval_in_place) });
+  }
+  if (
+    entry.review_signature !== undefined &&
+    !['no-content-change', 'change-explained'].includes(entry.review_signature)
+  ) {
+    findings.push({ file, check: 'malformed_review_signature', detail: String(entry.review_signature) });
+  }
   if (typeof entry.original_path === 'string') {
     if (entry.original_path.startsWith('tests/legacy')) {
       findings.push({ file, check: 'original_path_inside_legacy', detail: entry.original_path });
@@ -401,23 +463,29 @@ async function verify(root) {
         }
         row.ancestorOfHead = ancestorOfHead(root, row.retiredFromCommit);
       }
-      // (e) re-checkable: the named commit has to carry the file at the original
-      // path, and the move the retirement describes is derived from it. Whether
-      // the move changed content is a receipt, not a verdict - it is printed in
-      // full below and counted, and an unsigned change is named for the push
-      // gate.
+      // (e) re-checkable, and the exposure that goes with it. The named commit
+      // has to be C_last, the commit where the file was last seen at its original
+      // path. Three things can carry a change and each is printed in full: the
+      // first retirement rewrote the bytes while moving the file, the named commit
+      // wrote the file itself, and commits after the first retirement modified or
+      // removed the retired copy (the retirement window). None of them is a
+      // verdict; all of them require the reviewer's signature.
       row.retirementCarriesOriginalPath = null;
-      row.moveCommit = null;
+      row.lastAppearance = null;
       row.historyError = null;
-      row.contentChanged = null;
-      row.contentChangedLines = 0;
-      row.diffLines = [];
+      row.firstRetirement = null;
+      row.changedInWindow = 0;
+      row.retirementRewroteContent = null;
+      row.retirementRewriteLines = 0;
+      row.retirementRewriteDiff = [];
       row.priorWriteChanged = null;
       row.priorWriteDiffLines = [];
+      row.windowCommits = [];
       row.reviewSignature = typeof entry.review_signature === 'string' ? entry.review_signature : null;
       row.signed = null;
       if (commitIsUsable && pathIsUsable) {
         try {
+          row.lastAppearance = lastAppearanceCommit(root, entry.original_path);
           row.retirementCarriesOriginalPath = blobAt(root, row.retiredFromCommit, entry.original_path) !== null;
           if (row.retirementCarriesOriginalPath) {
             // The named commit wrote the file itself: that write is also a way a
@@ -434,38 +502,50 @@ async function verify(root) {
                 `${row.retiredFromCommit.slice(0, 12)}:${entry.original_path}`,
               );
             }
-            const move =
-              removalCandidates(root, entry.original_path).find(
-                (candidate) => parentOf(root, candidate) === row.retiredFromCommit,
-              ) ?? null;
-            row.moveCommit = move;
-            if (move !== null) {
-              const before = blobText(root, row.retiredFromCommit, entry.original_path);
-              const after = blobText(root, move, entry.file);
-              if (before !== null && after !== null) {
-                row.contentChanged = before !== after;
-                if (row.contentChanged) {
-                  row.diffLines = lineDiff(
-                    before,
-                    after,
-                    `${row.retiredFromCommit.slice(0, 12)}:${entry.original_path}`,
-                    `${move.slice(0, 12)}:${entry.file}`,
-                  );
-                  row.contentChangedLines = row.diffLines.filter(
-                    (line) => (line.startsWith('-') || line.startsWith('+')) && !line.startsWith('---') && !line.startsWith('+++'),
-                  ).length;
-                }
+          }
+          const window = retirementWindow(root, entry.original_path, entry.file);
+          if (window !== null) {
+            row.firstRetirement = window.first;
+            row.windowCommits = window.commits;
+            // Did the first retirement itself change the bytes while moving them?
+            const beforeMove = blobText(root, `${window.first}^`, entry.original_path);
+            const afterMove = blobText(root, window.first, entry.file);
+            if (beforeMove !== null && afterMove !== null) {
+              row.retirementRewroteContent = beforeMove !== afterMove;
+              if (row.retirementRewroteContent) {
+                row.retirementRewriteDiff = lineDiff(
+                  beforeMove,
+                  afterMove,
+                  `${window.first.slice(0, 12)}^:${entry.original_path}`,
+                  `${window.first.slice(0, 12)}:${entry.file}`,
+                );
+                row.retirementRewriteLines = row.retirementRewriteDiff.filter(
+                  (line) => (line.startsWith('-') || line.startsWith('+')) && !line.startsWith('---') && !line.startsWith('+++'),
+                ).length;
               }
             }
           }
-          row.signed = signatureCovers(entry, row.contentChanged === true || row.priorWriteChanged === true);
+          row.signed = signatureCovers(
+            entry,
+            row.retirementRewroteContent === true ||
+              row.priorWriteChanged === true ||
+              row.windowCommits.length > 0,
+          );
+          row.changedInWindow =
+            row.windowCommits.length + (row.retirementRewroteContent === true ? 1 : 0);
         } catch (error) {
           row.historyError = error.message;
         }
       }
       // (d) re-evaluable receipt.
       row.reeval = 'skipped';
-      if (original !== null && typeof entry.original_path === 'string' && entry.original_path.startsWith('tests/')) {
+      row.reevalNote = typeof entry.reeval_note === 'string' ? entry.reeval_note : null;
+      if (entry.reeval_in_place === 'not-possible') {
+        // The entry itself says its bytes cannot be run where they used to live
+        // (the helper they require is retired material too, say). That is a
+        // recorded fact, not a silent skip, and it needs the reason.
+        row.reeval = 'not_possible';
+      } else if (original !== null && typeof entry.original_path === 'string' && entry.original_path.startsWith('tests/')) {
         const overlay = overlayAtOriginalPath(root, entry.original_path, target);
         try {
           const run = await runTestFile(overlay, entry.original_path);
@@ -531,6 +611,25 @@ async function verify(root) {
         detail: `no commit on HEAD has ${entry.retired_from_commit} as its parent and removes ${entry.original_path}`,
       });
     }
+    if (row.lastAppearance !== null && row.retiredFromCommit !== row.lastAppearance) {
+      findings.push({
+        file: entry.file,
+        check: 'retired_from_commit_is_not_the_last_appearance',
+        detail:
+          `the file was last at ${entry.original_path} in ${row.lastAppearance}, but the entry names ` +
+          `${entry.retiredFromCommit}, so it anchors at a retirement that was superseded`,
+      });
+    }
+    if (
+      entry.reeval_in_place === 'not-possible' &&
+      (typeof entry.reeval_note !== 'string' || entry.reeval_note.trim() === '')
+    ) {
+      findings.push({
+        file: entry.file,
+        check: 'missing_reeval_note',
+        detail: 'reeval_in_place is not-possible, so the entry has to record why it cannot be re-run in place',
+      });
+    }
     console.log(
       `KDNA-RETIREMENT-ENTRY: ${entry.file} original_path=${entry.original_path ?? 'MISSING'} ` +
         `sha256=${typeof entry.sha256 === 'string' ? entry.sha256.slice(0, 12) : 'MISSING'} ` +
@@ -538,25 +637,34 @@ async function verify(root) {
         `retired_on=${entry.retired_on ?? 'MISSING'} review_reference=${JSON.stringify(entry.review_reference ?? '')} ` +
         `reeval=${row.reeval}${row.reevalRc === undefined ? '' : ` rc=${row.reevalRc}`} ` +
         `retired_from_commit=${row.retiredFromCommit === null ? 'MISSING' : row.retiredFromCommit.slice(0, 12)} ` +
+        `last_appearance=${row.lastAppearance === null ? 'MISSING' : row.lastAppearance.slice(0, 12)} ` +
         `historical_sha256=${row.historicalSha256 === null ? 'MISSING' : row.historicalSha256.slice(0, 12)} ` +
-        `retirement_move_commit=${row.moveCommit === null ? 'MISSING' : row.moveCommit.slice(0, 12)} ` +
-        `content_changed=${row.contentChanged === null ? 'unknown' : row.contentChanged} ` +
-        `content_changed_lines=${row.contentChangedLines} ` +
+        `first_retirement=${row.firstRetirement === null ? 'MISSING' : row.firstRetirement.slice(0, 12)} ` +
+        `retirement_rewrote_content=${row.retirementRewroteContent === null ? 'unknown' : row.retirementRewroteContent} ` +
+        `retirement_rewrite_lines=${row.retirementRewriteLines} ` +
         `prior_write_to_the_file=${row.priorWriteChanged === null ? 'unknown' : row.priorWriteChanged} ` +
+        `content_changed_in_window=${row.changedInWindow} ` +
         `review_signature=${row.reviewSignature === null ? 'MISSING' : row.reviewSignature}`,
     );
-    if (row.contentChanged === false) {
+    if (row.retirementRewroteContent === true) {
       console.log(
-        `KDNA-RETIREMENT-UNCHANGED: ${entry.file} ${row.retiredFromCommit.slice(0, 12)}:${entry.original_path} ` +
-          `and ${row.moveCommit.slice(0, 12)}:${entry.file} are identical (0 differing lines)`,
+        `KDNA-RETIREMENT-DIFF: ${entry.file} the first retirement ${row.firstRetirement.slice(0, 12)} changed the ` +
+          `content while moving the file (${row.retirementRewriteLines} differing lines)`,
       );
+      for (const line of row.retirementRewriteDiff) console.log(`  ${line}`);
     }
-    if (row.contentChanged === true) {
+    if (row.firstRetirement !== null) {
       console.log(
-        `KDNA-RETIREMENT-DIFF: ${entry.file} retired_from_commit=${row.retiredFromCommit.slice(0, 12)} ` +
-          `move_commit=${row.moveCommit.slice(0, 12)} content_changed=true changed_lines=${row.contentChangedLines}`,
+        `KDNA-RETIREMENT-WINDOW: ${entry.file} first_retirement=${row.firstRetirement.slice(0, 12)} ` +
+          `content_changed_in_window=${row.changedInWindow} (the retirement's own rewrite counted: ` +
+          `${row.retirementRewroteContent === true}; later modifying/removing commits: ${row.windowCommits.length})`,
       );
-      for (const line of row.diffLines) console.log(`  ${line}`);
+      for (const commit of row.windowCommits) console.log(`  ${commit.commit.slice(0, 12)} ${commit.subject}`);
+    }
+    if (row.reeval === 'not_possible') {
+      console.log(
+        `KDNA-RETIREMENT-REEVAL-NOTE: ${entry.file} cannot be re-run at ${entry.original_path}: ${row.reevalNote}`,
+      );
     }
     if (row.priorWriteChanged === true) {
       console.log(
@@ -565,12 +673,12 @@ async function verify(root) {
       );
       for (const line of row.priorWriteDiffLines) console.log(`  ${line}`);
     }
-    if ((row.contentChanged === true || row.priorWriteChanged === true) && row.signed !== true) {
+    if ((row.changedInWindow > 0 || row.priorWriteChanged === true) && row.signed !== true) {
       console.log(
-        `KDNA-RETIREMENT-UNSIGNED: ${entry.file} content_changed=${row.contentChanged === true} ` +
+        `KDNA-RETIREMENT-UNSIGNED: ${entry.file} content_changed_in_window=${row.changedInWindow} ` +
           `prior_write=${row.priorWriteChanged === true} ` +
           `review_signature=${row.reviewSignature === null ? 'MISSING' : row.reviewSignature} ` +
-          `-> an independent reviewer must sign this diff (no-content-change, or change-explained with a review_note) ` +
+          `-> an independent reviewer must sign this change (no-content-change, or change-explained with a review_note) ` +
           `before the entry may enter a push batch`,
       );
     }
@@ -592,13 +700,16 @@ async function main(argv) {
   const { findings, rows, entries, legacy } = await verify(root);
   const preserved = rows.filter((row) => row.preserved).length;
   const restorable = rows.filter((row) => row.reeval === 'passes').length;
-  const contentChanged = rows.filter((row) => row.contentChanged === true).length;
+  const retirementRewrote = rows.filter((row) => row.retirementRewroteContent === true).length;
   const priorWrite = rows.filter((row) => row.priorWriteChanged === true).length;
-  const touched = rows.filter((row) => row.contentChanged === true || row.priorWriteChanged === true);
+  const windowChanged = rows.reduce((total, row) => total + row.changedInWindow, 0);
+  const touched = rows.filter(
+    (row) => row.changedInWindow > 0 || row.priorWriteChanged === true,
+  );
   const unsigned = touched.filter((row) => row.signed !== true).length;
   const counters =
-    `preserved=${preserved} restorable=${restorable} content_changed=${contentChanged} prior_write=${priorWrite} ` +
-    `signed=${touched.length - unsigned} unsigned=${unsigned}`;
+    `preserved=${preserved} restorable=${restorable} retirement_rewrote=${retirementRewrote} prior_write=${priorWrite} ` +
+    `content_changed_in_window=${windowChanged} signed=${touched.length - unsigned} unsigned=${unsigned}`;
   if (findings.length > 0) {
     console.log(
       `KDNA-RETIREMENT-REGISTRY: findings=${findings.length} root=${root} entries=${entries} ` +
@@ -622,10 +733,12 @@ module.exports = {
   blobText,
   fieldFindings,
   historicalSha256,
+  lastAppearanceCommit,
   lineDiff,
   overlayAtOriginalPath,
   parentOf,
   removalCandidates,
+  retirementWindow,
   runTestFile,
   sha256,
   sha256OfBlob,

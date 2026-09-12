@@ -22,13 +22,14 @@ const { spawnSync } = require('node:child_process');
 //   6. put a registered file's bytes back at the original path and they pass
 //                                                      -> named as
 //      KDNA-RETIREMENT-RESTORABLE, without failing the gate.
-//   7. rewrite one byte while moving the file, and register the rewritten bytes
-//                                                      -> the gate prints the
-//      complete diff, counts it, and names the entry as unsigned; it does not
-//      pretend a file-and-hash check can judge the change;
+//   7. SHAPE FIVE: rewrite one byte while moving the file, and register the
+//      rewritten bytes                                  -> rc=0, and the gate
+//      must expose content_changed_in_window>0 and name the entry unsigned. This
+//      shape is "expose and sign", never "must be red": no file-and-hash check
+//      can judge it;
 //   8. rewrite one byte in a commit of its own and move the file in the next
-//      commit                                          -> same: exposed, counted,
-//      named as unsigned (this is the shape a history-only rule cannot refuse);
+//      commit                                        -> rc=0 and exposed too
+//      (the named commit's own write is printed);
 //   9. sign that change with review_signature=change-explained and a
 //      review_note                                     -> no longer unsigned;
 //  10. name a commit whose tree does not carry the file at the original path, or
@@ -204,11 +205,14 @@ test('a registry that agrees with the committed files is green', () => {
       const result = runVerifier(dir);
       assert.equal(result.status, 0, result.output);
       assert.match(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
-      assert.match(result.output, /entries=1 legacy=1 preserved=1 restorable=0 content_changed=0 prior_write=0 signed=0 unsigned=0/);
+      assert.match(
+        result.output,
+        /entries=1 legacy=1 preserved=1 restorable=0 retirement_rewrote=0 prior_write=0 content_changed_in_window=0 signed=0 unsigned=0/,
+      );
       assert.match(result.output, /preserved=true original_carries_same_bytes=false/);
       assert.match(result.output, /reeval=fails rc=1/);
-      assert.match(result.output, /content_changed=false content_changed_lines=0/);
-      assert.match(result.output, /KDNA-RETIREMENT-UNCHANGED: tests\/legacy\/probe\.test\.js/);
+      assert.match(result.output, /retirement_rewrote_content=false retirement_rewrite_lines=0/);
+      assert.match(result.output, /content_changed_in_window=0/);
     },
   );
 });
@@ -241,7 +245,7 @@ test('changing one byte of a registered file is refused', () => {
       // This shape edits the copy after the move, so the registered bytes still
       // are the bytes the move carried: (a) refuses it, and the diff the gate
       // prints for the move itself is empty.
-      assert.match(result.output, /content_changed=false/);
+      assert.match(result.output, /content_changed_in_window=0/);
       assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
     },
   );
@@ -345,7 +349,7 @@ test('a duplicate registration is refused', () => {
   );
 });
 
-test('a retirement that rewrote one byte on the way into tests/legacy/ is printed in full and named unsigned', () => {
+test('shape 05: a retirement that rewrote one byte while moving is exposed and unsigned, not refused', () => {
   // One commit does the move and the edit, which is how a retirement that
   // re-points a relative require is actually written. The gate cannot judge
   // that; it has to put the diff on the record.
@@ -360,17 +364,17 @@ test('a retirement that rewrote one byte on the way into tests/legacy/ is printe
     (dir) => {
       const result = runVerifier(dir);
       assert.equal(result.status, 0, result.output);
-      assert.match(result.output, /content_changed=true changed_lines=2/);
+      assert.match(result.output, /retirement_rewrote_content=true retirement_rewrite_lines=2/);
       assert.match(result.output, /KDNA-RETIREMENT-DIFF: tests\/legacy\/probe\.test\.js/);
       assert.match(result.output, /^\s+-test\('retired behaviour', \(\) => \{ assert\.equal\(1, 2\); \}\);/mu);
       assert.match(result.output, /^\s+\+test\('retired behaviour', \(\) => \{ assert\.equal\(1, 3\); \}\);/mu);
       assert.match(result.output, /KDNA-RETIREMENT-UNSIGNED: tests\/legacy\/probe\.test\.js/);
-      assert.match(result.output, /content_changed=1 prior_write=0 signed=0 unsigned=1/);
+      assert.match(result.output, /content_changed_in_window=1 signed=0 unsigned=1/);
     },
   );
 });
 
-test('a byte rewritten in the commit before the move is exposed, not judged', () => {
+test('shape 06: a rewrite in the commit before the move is exposed, not judged', () => {
   // The rewrite is its own commit, the move that follows changes nothing, and
   // the registry names the rewrite commit truthfully. No history-only rule can
   // refuse this shape, so the gate must not pretend to: it prints the diff and
@@ -393,7 +397,7 @@ test('a byte rewritten in the commit before the move is exposed, not judged', ()
       assert.match(result.output, /^\s+-test\('retired behaviour', \(\) => \{ assert\.equal\(1, 2\); \}\);/mu);
       assert.match(result.output, /^\s+\+test\('retired behaviour', \(\) => \{ assert\.equal\(1, 3\); \}\);/mu);
       assert.match(result.output, /KDNA-RETIREMENT-UNSIGNED: tests\/legacy\/probe\.test\.js/);
-      assert.match(result.output, /content_changed=0 prior_write=1 signed=0 unsigned=1/);
+      assert.match(result.output, /content_changed_in_window=0 signed=0 unsigned=1/);
     },
   );
 });
@@ -413,9 +417,9 @@ test('a signed content change is no longer named unsigned', () => {
     (dir) => {
       const result = runVerifier(dir);
       assert.equal(result.status, 0, result.output);
-      assert.match(result.output, /content_changed=true changed_lines=2/);
+      assert.match(result.output, /retirement_rewrote_content=true retirement_rewrite_lines=2/);
       assert.match(result.output, /review_signature=change-explained/);
-      assert.match(result.output, /content_changed=1 prior_write=0 signed=1 unsigned=0/);
+      assert.match(result.output, /content_changed_in_window=1 signed=1 unsigned=0/);
       assert.doesNotMatch(result.output, /KDNA-RETIREMENT-UNSIGNED:/);
     },
   );
@@ -474,10 +478,37 @@ test('a retired_from_commit that is not the parent of the retirement is refused'
       git(dir, ['commit', '--quiet', '--message', 'probe: name the wrong commit']);
       const result = runVerifier(dir);
       assert.equal(result.status, 1, result.output);
-      assert.match(result.output, /retirement_move_commit_not_found/);
+      assert.match(result.output, /retired_from_commit_is_not_the_last_appearance/);
       assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
     },
   );
+});
+
+test('an entry that cannot be re-run in place says so, and records why', () => {
+  // The suite requires a helper that is itself retired material, so its bytes
+  // cannot be put back at the original path. That is a recorded fact, not a
+  // silent skip, and the entry carries the reason.
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST, {
+    reeval_in_place: 'not-possible',
+    reeval_note: 'probe: the helper this suite requires is retired material too',
+  });
+  withSandbox({ registry: [entry], files: { 'tests/legacy/probe.test.js': RED_TEST } }, (dir) => {
+    const result = runVerifier(dir);
+    assert.equal(result.status, 0, result.output);
+    assert.match(result.output, /reeval=not_possible/);
+    assert.match(result.output, /KDNA-RETIREMENT-REEVAL-NOTE: tests\/legacy\/probe\.test\.js/);
+    assert.doesNotMatch(result.output, /reeval=fails/);
+  });
+});
+
+test('an entry that cannot be re-run in place without a reason is refused', () => {
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST, { reeval_in_place: 'not-possible' });
+  withSandbox({ registry: [entry], files: { 'tests/legacy/probe.test.js': RED_TEST } }, (dir) => {
+    const result = runVerifier(dir);
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.output, /missing_reeval_note/);
+    assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
+  });
 });
 
 test('a pre-retirement commit that the head history cannot reach is refused', () => {
@@ -493,7 +524,7 @@ test('a pre-retirement commit that the head history cannot reach is refused', ()
     assert.match(result.output, /retired_from_commit_not_an_ancestor_of_head/);
     // The bytes are unchanged and readable, but the commit is not on the
     // history of HEAD, so it cannot be the commit the file was retired from.
-    assert.match(result.output, /content_changed=unknown|content_changed=false/);
+    assert.match(result.output, /content_changed_in_window=0/);
     assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
   });
 });
@@ -511,7 +542,10 @@ test('a clean copy of the gate really runs and prints its success line', () => {
       const result = runVerifier(dir, { script, cwd: dir });
       assert.equal(result.status, 0, result.output);
       assert.match(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
-      assert.match(result.output, /entries=1 legacy=1 preserved=1 restorable=0 content_changed=0 prior_write=0 signed=0 unsigned=0/);
+      assert.match(
+        result.output,
+        /entries=1 legacy=1 preserved=1 restorable=0 retirement_rewrote=0 prior_write=0 content_changed_in_window=0 signed=0 unsigned=0/,
+      );
     },
   );
 });
@@ -526,7 +560,10 @@ test('the gate still runs through an absolute symlinked invocation path', () => 
       const result = runVerifier(dir, { script: link, cwd: linkDirectory });
       assert.equal(result.status, 0, result.output);
       assert.match(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
-      assert.match(result.output, /entries=1 legacy=1 preserved=1 restorable=0 content_changed=0 prior_write=0 signed=0 unsigned=0/);
+      assert.match(
+        result.output,
+        /entries=1 legacy=1 preserved=1 restorable=0 retirement_rewrote=0 prior_write=0 content_changed_in_window=0 signed=0 unsigned=0/,
+      );
     } finally {
       fs.rmSync(linkDirectory, { recursive: true, force: true });
     }

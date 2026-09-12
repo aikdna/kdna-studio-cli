@@ -75,7 +75,7 @@
     {
       "file": "tests/legacy/protocol-producer.test.js",
       "retired_object": "pre-component-semantics protocol producer transport",
-      "reason": "The producer transport it asserts is not part of the current graph; no current equivalent exists.",
+      "reason": "The producer transport it asserts is not part of the current graph; the file stops on retired public APIs before any product assertion - the failure output is \"TypeError: core.buildChecksums is not a function\" (@aikdna/kdna-core now exports admitBytes only) and \"TypeError: Cannot read properties of undefined (reading 'createProject')\" (@aikdna/kdna-studio-core now exports createSession/verifyCreationEvidence only).",
       "observed_on_committed_graph": "0 passing / 6 failing assertions",
       "coverage_inherited_by": "none (recorded as uncovered; re-wire required if a producer path returns)",
       "object_absence": [
@@ -83,6 +83,20 @@
           "kind": "token_absent",
           "path": "src/terminal-workspace.js",
           "token": "assertRegistryReleaseReady"
+        },
+        {
+          "kind": "not_exported",
+          "module": "node_modules/@aikdna/kdna-core",
+          "tokens": [
+            "buildChecksums"
+          ]
+        },
+        {
+          "kind": "not_exported",
+          "module": "node_modules/@aikdna/kdna-studio-core",
+          "tokens": [
+            "createProject"
+          ]
         }
       ]
     },
@@ -108,23 +122,9 @@
       ]
     },
     {
-      "file": "tests/legacy/runtime-candidate-binding-completeness.test.js",
-      "retired_object": "runtime-candidate authority binding for the 3.0.0 / 0.21.0 graph",
-      "reason": "scripts/runtime-candidate-binding.js rejects the current lock ('unbound file lock package: node_modules/@aikdna/kdna-read'); admitting the current graph here would weaken a supply-chain gate, so the authority must be re-pinned instead.",
-      "observed_on_committed_graph": "0 passing / 1 failing assertion",
-      "coverage_inherited_by": "the ci.yml candidate-source leg receipt (scripts/ci-leg-receipt.sh)",
-      "object_absence": [
-        {
-          "kind": "token_absent",
-          "path": "package-lock.json",
-          "token": "0.21.0"
-        }
-      ]
-    },
-    {
       "file": "tests/legacy/pd275/terminal.test.js",
       "retired_object": "pre-component-semantics CLI session harness protocol (tests/legacy/pd275/session-harness.js)",
-      "reason": "The harness expects session events and material kinds the current session protocol does not emit; it fails with ERR_INVALID_ARG_TYPE before any product assertion.",
+      "reason": "The harness expects session events and material kinds the current session protocol does not emit; the failure output is \"The input did not match the regular expression /MATERIAL_REQUIRED/\", so the retired material-admission code MATERIAL_REQUIRED is gone from the session source. Later cases also fail with ERR_INVALID_ARG_TYPE.",
       "observed_before_move": "2 passing / 8 failing assertions (tests/pd275/terminal.test.js)",
       "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs",
       "object_absence": [
@@ -132,13 +132,18 @@
           "kind": "token_absent",
           "path": "src/terminal-workspace.js",
           "token": "session-harness"
+        },
+        {
+          "kind": "token_absent",
+          "path": "src/terminal-workspace.js",
+          "token": "MATERIAL_REQUIRED"
         }
       ]
     },
     {
       "file": "tests/legacy/pd275/session-termination.test.js",
       "retired_object": "pre-component-semantics CLI session harness protocol (tests/legacy/pd275/session-harness.js)",
-      "reason": "Same retired harness protocol; its surviving assertions read retired event names.",
+      "reason": "Same retired harness protocol: the failure output is a strict-equal diff \"+ 'adoption_reply' / - 'human_reply'\", so the retired channel kind human_reply is gone from the session source and the surviving assertions read retired event names.",
       "observed_before_move": "21 passing / 11 failing assertions (tests/pd275/session-termination.test.js)",
       "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs",
       "object_absence": [
@@ -146,13 +151,18 @@
           "kind": "token_absent",
           "path": "src/terminal-workspace.js",
           "token": "agent-frame"
+        },
+        {
+          "kind": "token_absent",
+          "path": "src/terminal-workspace.js",
+          "token": "human_reply"
         }
       ]
     },
     {
       "file": "tests/legacy/current/shared-evidence.test.js",
       "retired_object": "pre-component-semantics shared creation-evidence format 1 producer path",
-      "reason": "It drives the retired harness and asserts the retired 3.1.0-rc compiler coordinate; the current evidence format is format2.",
+      "reason": "It drives the retired harness and asserts the retired 3.1.0-rc compiler coordinate; the current evidence format is format2, and the generation-1 producer marker legacy_origin is gone from the session source - which is the fact the run prints as its generation-1 producer note before the cases fail.",
       "observed_before_move": "0 passing / 4 failing assertions (tests/current/shared-evidence.test.js)",
       "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs (format2 evidence assertions)",
       "object_absence": [
@@ -160,6 +170,11 @@
           "kind": "token_absent",
           "path": "src/terminal-workspace.js",
           "token": "shared-evidence"
+        },
+        {
+          "kind": "token_absent",
+          "path": "src/terminal-workspace.js",
+          "token": "legacy_origin"
         }
       ]
     }

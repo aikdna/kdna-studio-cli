@@ -12,27 +12,44 @@
 //      which is evaluated against the committed bytes. A token probe only
 //      counts when the token also occurs in the retired file itself, so a probe
 //      cannot be satisfied by an arbitrary string;
-//   3. executability: **a file may only be retired while it is red where it
-//      lived, or while its failure output names the retired object.**
+//   3. attributability: **a file may only be retired while its failure output
+//      names an object the entry declares absent.**
 //
 // Rule 3 is the part that has to refuse evidence the judged object produced
 // about itself. Its previous form was "the file is red under tests/legacy/",
 // and a *passing* test satisfies that for free: `git mv tests/x.test.js
 // tests/legacy/` breaks the file's relative `require`, so the file turns red
 // with nothing retired at all, and the gate waved the retirement through. The
-// red has to be attached to the retired object rather than to the move:
+// red has to be attached to the declared object rather than to the move.
 //
-//   (a) the retired bytes are red when run from the path they were retired
-//       from (`tests/<...>`), where their relative requires still resolve, so
-//       the move cannot be the reason for the red - and the committed graph is
-//       missing the object the entry's `object_absence` probes declare absent,
-//       which is what explains the red; or
-//   (b) the failure output explicitly names one of the identifiers those
-//       probes declare.
+// The criterion has exactly one sufficient leg:
 //
-// A red that is only red because of the move - green at the original path, and
-// a failure that never names the declared object - is a finding
-// (`retirement_red_only_because_of_the_move`), not a retirement.
+//   (b) the failure output explicitly names one of the identifiers the entry's
+//       `object_absence` probes declare absent.
+//
+// An earlier revision also accepted (a) "the bytes are red when they are run
+// from the path they were retired from". That leg is not sufficient: the
+// retirement commit rewrites the file's relative requires to the new depth, so
+// the current bytes re-run from the old path die on `Cannot find module
+// '../../src/...'` - a path the mover created - and a *mixed* rewrite (one
+// require updated, the rest left behind) produced two module-resolution failures
+// with no assertion executed, which the old gate accepted as
+// `a:red-where-it-lived`. Leg (a) is therefore demoted to an auxiliary,
+// non-accepting observation, admissible only when the in-place red is not a
+// module-resolution breakage *and* the retired file's relative requires were not
+// rewritten (`scripts/retirement-resolution.js` reports that independently).
+//
+// An entry whose failure names nothing it declares absent - including a file
+// that is only red because the move broke a relative require - is a finding,
+// not a retirement.
+//
+// A match only counts as "naming the object" when it appears in the passage the
+// run reports about the failure: not on a line that reports a *passing* test,
+// not inside the specifier of a module-resolution failure, and not inside a
+// file path. A path is the judged artifact naming itself - `at ... (/repo/
+// tests/legacy/pd275/session-harness.js:69:10)` is not the failure naming the
+// retired session harness, and `✖ tests/legacy/x.test.js (12ms)` is the runner
+// reporting a file that would not load.
 //
 // usage: node scripts/verify-retirement-registry.js [--root <tree>]
 
@@ -45,6 +62,14 @@ const TEST_FILE_RE = /\.test\.(?:js|cjs|mjs)$/u;
 const CONCURRENCY = 4;
 const LEGACY_PREFIX = 'tests/legacy/';
 const MODULE_RESOLUTION_RE = /Cannot find module|ERR_MODULE_NOT_FOUND|ERR_UNSUPPORTED_DIR_IMPORT|MODULE_NOT_FOUND/u;
+// Lines that carry a location rather than a statement about the failure.
+const LOCATION_LINE_RE = /^\s*(?:at\s|test at\s|Require stack:|-\s+\/|\+\s+\/|node:internal\/|\.\.\.)/u;
+// A `✖`/`✔` line whose subject is a file path is the runner reporting the file
+// itself (`✖ tests/legacy/x.test.js (12ms)`), not a test naming an object.
+const FILE_LEVEL_LINE_RE = /^\s*[✖✔]\s+(?:\.{0,2}\/|\/|tests\/)\S*\s+\(/u;
+// A `▶` line opens a suite and states nothing about a failure.
+const SUITE_HEADING_RE = /^\s*▶/u;
+const RELATIVE_SPECIFIER_RE = /(?:require\(\s*|from\s+|import\(\s*)(['"])(\.[^'"]*)\1/gu;
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -192,12 +217,31 @@ function identifierMatch(line, identifier) {
   return line.includes(identifier);
 }
 
-// Leg (b): does the failure explicitly name the retired object? A match inside
-// the specifier of a module-resolution failure does not count. That specifier is
-// what the move broke, and treating it as the object's identity would let the
-// relocation artifact certify itself again.
+function isEvidence(line) {
+  return !LOCATION_LINE_RE.test(line)
+    && !FILE_LEVEL_LINE_RE.test(line)
+    && !SUITE_HEADING_RE.test(line)
+    && !/^\s*✔/u.test(line);
+}
+
+// The lines of a run that can carry a statement about its failure. Passing-test
+// lines, pure location lines, suite headings and file-level report lines are
+// removed first.
+function evidenceLines(output) {
+  return output.split('\n').filter(isEvidence);
+}
+
+// Leg (b): does the failure explicitly name the retired object? Two exclusions
+// keep the judged artifact from certifying itself:
+//   - a match inside the specifier of a module-resolution failure is what the
+//     move broke, so it cannot count as the object's identity;
+//   - a match inside a file path is the artifact naming its own file, which the
+//     location filters above already remove for stack frames and file-level
+//     report lines.
 function namesRetiredObject(output, identifiers) {
-  for (const line of output.split('\n')) {
+  const matches = [];
+  for (const [index, line] of output.split('\n').entries()) {
+    if (!isEvidence(line)) continue;
     for (const identifier of identifiers) {
       if (!identifierMatch(line, identifier)) continue;
       if (MODULE_RESOLUTION_RE.test(line)) {
@@ -207,10 +251,47 @@ function namesRetiredObject(output, identifiers) {
         ];
         if (specifiers.some((specifier) => identifierMatch(specifier, identifier))) continue;
       }
-      return identifier;
+      matches.push({ identifier, line: index + 1, text: line.trim() });
     }
   }
-  return null;
+  if (matches.length === 0) return null;
+  // Report the strongest available evidence: a message the run printed about
+  // the failure rather than a failing test's own title.
+  return matches.find((match) => /\b(?:AssertionError|TypeError|RangeError|SyntaxError|ReferenceError|Error)\b|^\s*[+-]\s|not ok/u.test(match.text))
+    ?? matches[0];
+}
+
+// Auxiliary leg (a), which never accepts an entry on its own. It is admissible
+// only when the in-place red is not a module-resolution breakage *and* the
+// retired file's own relative requires still resolve from the path they were
+// retired from - that is, the retirement did not rewrite them to the new depth.
+// `retirement-resolution.js` reports the same fact as a standalone tool, which
+// is what makes this leg checkable independently of the gate.
+function relativeSpecifiers(file) {
+  const source = fs.readFileSync(file, 'utf8');
+  const found = new Set();
+  for (const match of source.matchAll(RELATIVE_SPECIFIER_RE)) found.add(match[2]);
+  return [...found];
+}
+
+function resolvesFrom(specifier, directory) {
+  try {
+    require.resolve(specifier, { paths: [directory] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function requireResolution(root, entry, original) {
+  const source = path.join(root, entry.file);
+  const originalDirectory = path.dirname(path.join(root, original));
+  const legacyDirectory = path.dirname(source);
+  return relativeSpecifiers(source).map((specifier) => ({
+    specifier,
+    fromOriginal: resolvesFrom(specifier, originalDirectory),
+    fromLegacy: resolvesFrom(specifier, legacyDirectory),
+  }));
 }
 
 // Leg (a): run the retired bytes from the path they were retired from. The
@@ -328,30 +409,43 @@ async function verify(root) {
         }
       }
       const identifiers = declaredIdentifiers(entry);
+      const resolution = original
+        ? requireResolution(root, entry, original)
+        : [];
       return {
         entry,
         identifiers,
         registered,
         atOriginal,
+        resolution,
         namedObject: namesRetiredObject(registered.output, identifiers),
       };
     },
     CONCURRENCY,
   );
   for (const run of runs) {
-    const { entry, registered, atOriginal } = run;
-    // (a) red where it lived: the move cannot be the reason for the red, and the
-    // object_absence probes (checked above) are what explains it.
-    const redWhereItLived = atOriginal !== null && atOriginal.status !== 0;
-    // (b) the failure output explicitly names the declared object.
-    const namedObject = run.namedObject;
+    const { entry, registered, atOriginal, resolution } = run;
+    // Auxiliary leg (a): red where it lived, not through a broken path, with the
+    // original-path module resolution reproduced. Never sufficient on its own.
+    const inPlaceRed = atOriginal !== null && atOriginal.status !== 0;
+    const inPlacePathBreakage = atOriginal !== null && MODULE_RESOLUTION_RE.test(atOriginal.output);
+    const requiresUnrewritten = resolution.length > 0 && resolution.every((row) => row.fromOriginal);
+    const auxLegA = inPlaceRed && !inPlacePathBreakage && requiresUnrewritten;
+    // Leg (b): the failure output explicitly names the declared object. This is
+    // the criterion's only sufficient condition.
+    const named = run.namedObject;
     console.log(
       `KDNA-RETIRED-FILE: ${entry.file} registered_rc=${registered.status} ` +
         `pass=${registered.passed ?? 'UNKNOWN'} fail=${registered.failed ?? 'UNKNOWN'} ` +
         `original_path=${atOriginal ? atOriginal.file : 'UNKNOWN'} original_rc=${atOriginal ? atOriginal.status : 'UNKNOWN'} ` +
-        `named_object=${namedObject === null ? 'no' : JSON.stringify(namedObject)} ` +
-        `criterion=${redWhereItLived ? 'a:red-where-it-lived' : namedObject === null ? 'none' : 'b:failure-names-the-object'}`,
+        `named_object=${named === null ? 'no' : JSON.stringify(named.identifier)} ` +
+        `named_line=${named === null ? '-' : named.line} ` +
+        `aux_leg_a=${atOriginal === null ? 'not-applicable' : auxLegA ? 'admissible' : 'inadmissible'} ` +
+        `criterion=${named === null ? 'none' : 'b:failure-names-the-object'}`,
     );
+    if (named !== null) {
+      console.log(`KDNA-RETIRED-EVIDENCE: ${entry.file} ${JSON.stringify(named.text.slice(0, 200))}`);
+    }
     if (registered.status === 0) {
       findings.push({
         file: entry.file,
@@ -360,13 +454,18 @@ async function verify(root) {
       });
       continue;
     }
-    if (!redWhereItLived && namedObject === null) {
+    if (named === null) {
       findings.push({
         file: entry.file,
-        check: 'retirement_red_only_because_of_the_move',
-        detail: atOriginal
-          ? `the file passes when it is run from ${atOriginal.file}, so the red comes from the move rather than from the retired object`
-          : 'the original path could not be reconstructed and the failure never names the declared object',
+        check: 'retirement_red_not_attributed_to_the_declared_object',
+        move_implicated: inPlaceRed === false,
+        detail: atOriginal === null
+          ? 'the original path could not be reconstructed and the failure never names an object this entry declares absent'
+          : atOriginal.status === 0
+            ? `the file passes when it is run from ${atOriginal.file}, so the red comes from the move rather than from the retired object`
+            : inPlacePathBreakage
+              ? `the red is a module-resolution breakage at ${atOriginal.file}, which the retirement itself produced, and the failure never names an object this entry declares absent`
+              : 'the failure never names an object this entry declares absent, so the red is not attributed to the retired object',
       });
     }
   }
@@ -384,11 +483,15 @@ async function main(argv) {
     );
     return 1;
   }
-  const redWhereItLived = runs.filter((run) => run.atOriginal !== null && run.atOriginal.status !== 0).length;
   const namedObject = runs.filter((run) => run.namedObject !== null).length;
+  const auxLegA = runs.filter((run) => {
+    if (run.atOriginal === null || run.atOriginal.status === 0) return false;
+    if (MODULE_RESOLUTION_RE.test(run.atOriginal.output)) return false;
+    return run.resolution.length > 0 && run.resolution.every((row) => row.fromOriginal);
+  }).length;
   console.log(
     `KDNA-RETIREMENT-REGISTRY: ok root=${root} entries=${entries} legacy=${legacy} ` +
-      `red_where_retired=${redWhereItLived} named_object=${namedObject}`,
+      `named_object=${namedObject} aux_leg_a=${auxLegA}`,
   );
   return 0;
 }
@@ -397,4 +500,4 @@ if (require.main === module) {
   main(process.argv.slice(2)).then((code) => { process.exitCode = code; });
 }
 
-module.exports = { declaredIdentifiers, namesRetiredObject, originalPathOf, probeFindings, verify, walk };
+module.exports = { declaredIdentifiers, evidenceLines, namesRetiredObject, originalPathOf, probeFindings, requireResolution, verify, walk };

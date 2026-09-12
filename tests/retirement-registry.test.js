@@ -11,12 +11,25 @@ const { spawnSync } = require('node:child_process');
 // could be moved under tests/legacy/ and registered, an unregistered legacy
 // file was ignored, and a retired_object declaration was never checked.
 //
-// The first three fixtures below are the shapes the criterion has to tell
-// apart. `RED_TEST` is red everywhere. `RELOCATION_LOSS_TEST` passes on the
-// committed graph and only turns red because the move into tests/legacy/ broke
-// its relative require - retiring it deletes coverage, so the gate must refuse
-// it. `NAMED_OBJECT_TEST` fails with a message that spells out a declared
-// absent object, which is the fallback leg (b) of the criterion.
+// The criterion has one sufficient leg (b): the failure output has to name an
+// object the entry declares absent. The fixtures below are the shapes it has to
+// tell apart, and all three of the hostile shapes are refused:
+//
+//   1. `RELOCATION_LOSS_TEST` still passes, and is only moved (`git mv`, no
+//      require touched). It turns red under tests/legacy/ because the move broke
+//      `../src/live.js`.
+//   2. `MIXED_DEPTH_TEST` still passes, and the move rewrites exactly one of its
+//      relative requires to the new depth - the shape an independent review
+//      reproduced against the previous rule. Both the registered run and the
+//      re-run from the original path then die on `Cannot find module` with no
+//      assertion executed at all, and the probe is pointed at the broken
+//      specifier itself.
+//   3. `RED_AT_ORIGINAL_TEST` is red from the path it was retired from with its
+//      requires untouched. That is the demoted auxiliary leg (a): the gate
+//      reports it as admissible but it never accepts an entry on its own.
+//
+// `NAMED_OBJECT_TEST` fails with a message that spells out a declared absent
+// object, which is the accepting leg (b).
 
 const root = path.resolve(__dirname, '..');
 const verifier = path.join(root, 'scripts', 'verify-retirement-registry.js');
@@ -42,6 +55,16 @@ const RELOCATION_LOSS_TEST = [
   "const live = require('../src/live.js');",
   "test('still current behaviour', () => { assert.equal(live.live, true); });",
   '// c2RelocationProbe',
+  '',
+].join('\n');
+const MIXED_DEPTH_TEST = [
+  "'use strict';",
+  "const test = require('node:test');",
+  "const assert = require('node:assert/strict');",
+  "const live = require('../src/live.js');",
+  "const moved = require('../../src/live.js');",
+  "test('still current behaviour', () => { assert.equal(live.live, true); assert.equal(moved.live, true); });",
+  '// c2MixedDepthProbe',
   '',
 ].join('\n');
 const RED_AT_ORIGINAL_TEST = [
@@ -104,14 +127,22 @@ function withSandbox(options, body) {
 }
 
 test('a registry that agrees with the committed graph is green', () => {
+  const entry = baseEntry();
+  entry.object_absence = [{ kind: 'token_absent', path: 'package.json', token: 'c2NamedProbe' }];
   withSandbox(
-    { registry: [baseEntry()], files: { 'tests/legacy/probe.test.js': RED_TEST } },
+    {
+      registry: [entry],
+      files: {
+        'tests/legacy/probe.test.js': NAMED_OBJECT_TEST,
+        'tests/src/live.js': "'use strict';\nmodule.exports = { live: false };\n",
+      },
+    },
     (dir) => {
       const result = runVerifier(dir);
       assert.equal(result.status, 0, result.output);
       assert.match(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
-      assert.match(result.output, /red_where_retired=1/);
-      assert.match(result.output, /criterion=a:red-where-it-lived/);
+      assert.match(result.output, /named_object=1 aux_leg_a=0/);
+      assert.match(result.output, /criterion=b:failure-names-the-object/);
     },
   );
 });
@@ -237,12 +268,10 @@ test('a claimed absence from the shipped command help is checked by running it',
   );
 });
 
-// The three cases below are the retirement criterion itself. The first is the
-// bypass an independent review reproduced against the previous rule ("red under
-// tests/legacy/"), and the other two are the two legs that are allowed to
-// accept an entry.
+// The three cases below are the retirement criterion itself: two hostile shapes
+// that must stay red, and the one shape that is allowed to accept an entry.
 
-test('a file that only turns red because the move broke its relative require is refused', () => {
+test('a still-passing test that is only moved (no require rewritten) is refused', () => {
   const entry = baseEntry();
   // `src/live.js` is named by the probe and it is also the specifier the move
   // broke, so a gate that matched the failure text naively would accept this.
@@ -252,23 +281,49 @@ test('a file that only turns red because the move broke its relative require is 
     (dir) => {
       const result = runVerifier(dir);
       assert.equal(result.status, 1, result.output);
-      assert.match(result.output, /retirement_red_only_because_of_the_move/);
+      assert.match(result.output, /retirement_red_not_attributed_to_the_declared_object/);
+      assert.match(result.output, /named_object=no/);
+      assert.match(result.output, /criterion=none/);
       assert.match(result.output, /original_path=tests\/probe.test.js original_rc=0/);
       assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
     },
   );
 });
 
-test('a file that is red from the path it was retired from is accepted', () => {
+test('a still-passing test whose move rewrote one require is refused', () => {
+  const entry = baseEntry();
+  // The declared identity is the specifier the un-rewritten require asks for, so
+  // the failure text does contain the token - inside a module-resolution
+  // specifier, which is exactly what must not count.
+  entry.object_absence = [{ kind: 'token_absent', path: 'src/live.js', token: '../src/live.js' }];
+  withSandbox(
+    { registry: [entry], files: { 'tests/legacy/probe.test.js': MIXED_DEPTH_TEST } },
+    (dir) => {
+      const result = runVerifier(dir);
+      assert.equal(result.status, 1, result.output);
+      assert.match(result.output, /retirement_red_not_attributed_to_the_declared_object/);
+      assert.match(result.output, /named_object=no/);
+      assert.match(result.output, /original_path=tests\/probe.test.js original_rc=1/);
+      assert.match(result.output, /aux_leg_a=inadmissible/);
+      assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
+    },
+  );
+});
+
+test('a file that is red from the path it was retired from is not accepted on its own', () => {
   const entry = baseEntry();
   entry.object_absence = [{ kind: 'token_absent', path: 'src/live.js', token: 'c2RedAtOriginalProbe' }];
   withSandbox(
     { registry: [entry], files: { 'tests/legacy/probe.test.js': RED_AT_ORIGINAL_TEST } },
     (dir) => {
       const result = runVerifier(dir);
-      assert.equal(result.status, 0, result.output);
+      assert.equal(result.status, 1, result.output);
+      // The demoted leg (a) is reported as admissible, and still does not accept:
+      // the failure never names an object this entry declares absent.
       assert.match(result.output, /original_path=tests\/probe.test.js original_rc=1/);
-      assert.match(result.output, /criterion=a:red-where-it-lived/);
+      assert.match(result.output, /aux_leg_a=admissible/);
+      assert.match(result.output, /criterion=none/);
+      assert.match(result.output, /retirement_red_not_attributed_to_the_declared_object/);
     },
   );
 });

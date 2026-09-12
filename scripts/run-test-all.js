@@ -12,12 +12,14 @@ const root = path.resolve(__dirname, '..');
 // entry is announced with one explicit receipt line so the shrinkage is never
 // silent; see tests/retired.json and tests/legacy/README.md. The registry is
 // checked against reality by scripts/verify-retirement-registry.js below: it
-// requires every legacy file to be registered, evaluates each declared
-// absence probe, and requires each retirement to be justified by the retired
-// object rather than by the move: the file must be red when it is run from the
-// path it was retired from, or its failure must name an object the entry
-// declares absent. A file that is only red because `git mv` broke its relative
-// require is refused, so a test that still passes cannot be retired).
+// requires every legacy file to be registered, evaluates each declared absence
+// probe, and requires the file's own failure output to name an object the entry
+// declares absent. That is the only leg that accepts an entry; re-running the
+// bytes from their old path is reported as an auxiliary observation only, and
+// a match inside a `Cannot find module` specifier or inside a file path does not
+// count. A test that still passes cannot be retired silently: whether the move
+// left its requires untouched or rewrote one of them, the file names nothing it
+// declares absent and is refused).
 const retired = JSON.parse(
   fs.readFileSync(path.join(root, 'tests', 'retired.json'), 'utf8'),
 ).entries;

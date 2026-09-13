@@ -9,7 +9,7 @@ dist/
 # *.tgz stays ignored (the tracked runtime candidates above stay tracked).
 !vendor/*.tgz
 
-# Internal Open-line evidence and progress material: kept in the working tree,
+# Audit and delivery working notes: kept in the working tree,
 # never part of the public repository surface.
 docs/audits/
 

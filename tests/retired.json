@@ -1,7 +1,7 @@
 {
   "schema": "kdna.retired-test-registry",
   "schema_version": "3.0.0",
-  "note": "A retirement is a preservation claim, not a story about a red run. Every entry registers the retired path (file), the original path it was retired from (original_path), the sha256 of the preserved bytes (the retirement's retired_sha256), the commit the file was retired from (retired_from_commit), a free-text reason, the registration date (retired_on) and the review that accepted the retirement (review_reference). scripts/verify-retirement-registry.js reads no test output. It checks: (a) preserved - the file at the registered path hashes to the registered sha256, so the registered bytes cannot be deleted or edited; (b) complete - every file under tests/legacy/ is registered; (c) not a fake retirement - the original path does not still carry the registered bytes; (d) re-evaluable - the registered bytes are put back at the original path and run, and a passing run is named as a receipt (KDNA-RETIREMENT-RESTORABLE); an entry whose bytes cannot be run there records reeval_in_place not-possible with a reeval_note instead (tests/legacy/pd275/terminal.test.js is such an entry: the helper it requires is retired material too); (e) re-checkable - the gate computes C_last, the newest commit on HEAD whose tree still carries the file at original_path, refuses any entry that names a different commit (so a retirement cannot be anchored at an older retirement that a later one superseded) and requires the named commit to be reachable from HEAD. Only (a)-(c) and (e) decide the exit code. What a machine cannot prove is that nobody wrote the file before the move, so the gate prints it instead of judging it: KDNA-RETIREMENT-DIFF (the first retirement changed the content while moving the file, full diff), KDNA-RETIREMENT-PRIOR-WRITE (the named commit wrote the file at the original path itself, full diff), and KDNA-RETIREMENT-WINDOW (later commits in the retirement window that modified or removed the retired copy, counted as content_changed_in_window, the retirement's own rewrite included). A non-zero window or a prior write needs an independent reviewer's per-entry signature - review_signature 'no-content-change', or 'change-explained' with a review_note holding the reason - before the entry may enter a push batch; entries that still lack one are printed as KDNA-RETIREMENT-UNSIGNED. Shape five - rewrite one byte, then move the file - is rc=0 with the change exposed and unsigned, never a red gate. The copies registered here are the pre-retirement files themselves; the first move changed content once (relative requires, __dirname paths and the path to bin/kdna-studio.js were re-pointed), its diff and the window are printed and counted, and the copies were restored to the bytes their original paths carried. The suites are red against the committed graph because the objects they exercise are gone from it; that is an independent observation, not a verdict.",
+  "note": "A retirement is a preservation claim, not a story about a red run. Every entry registers the retired path (file), the original path it was retired from (original_path), the sha256 of the preserved bytes (the retirement's retired_sha256), the commit the file was retired from (retired_from_commit), a free-text reason, the registration date (retired_on) and the review that accepted the retirement (review_reference). scripts/verify-retirement-registry.js reads no test output. It checks: (a) preserved - the file at the registered path hashes to the registered sha256, so the registered bytes cannot be deleted or edited; (b) complete - every file under tests/legacy/ is registered; (c) not a fake retirement - the original path does not still carry the registered bytes; (d) re-evaluable - the registered bytes are put back at the original path and run, and a passing run is named as a receipt (KDNA-RETIREMENT-RESTORABLE); an entry whose bytes cannot be run there records reeval_in_place not-possible with a reeval_note instead (tests/legacy/pd275/terminal.test.js is such an entry: the helper it requires is retired material too); (e) re-checkable - the gate computes C_last, the newest commit on HEAD whose tree still carries the file at original_path, refuses any entry that names a different commit (so a retirement cannot be anchored at an older retirement that a later one superseded) and requires the named commit to be reachable from HEAD. Only (a)-(c) and (e) decide the exit code. What a machine cannot prove is that nobody wrote the file before the move, so the gate prints it instead of judging it: KDNA-RETIREMENT-DIFF (the first retirement changed the content while moving the file, full diff), KDNA-RETIREMENT-PRIOR-WRITE (the named commit wrote the file at the original path itself, full diff), and KDNA-RETIREMENT-WINDOW (later commits in the retirement window that modified or removed the retired copy, counted as content_changed_in_window, the retirement's own rewrite included). A non-zero window or a prior write needs an independent reviewer's per-entry signature - review_signature 'no-content-change', or 'change-explained' with a review_note holding the reason - before the entry may enter a push batch; entries that still lack one are printed as KDNA-RETIREMENT-UNSIGNED. Shape five - rewrite one byte, then move the file - is rc=0 with the change exposed and unsigned, never a red gate. Every entry here carries the independent reviewer's signature: the seven whose window changed content are 'change-explained' with the reviewer's per-entry note, and pd275/terminal.test.js, whose window is zero, is 'no-content-change'. The copies registered here are the pre-retirement files themselves; the first move changed content once (relative requires, __dirname paths and the path to bin/kdna-studio.js were re-pointed), its diff and the window are printed and counted, and the copies were restored to the bytes their original paths carried. The suites are red against the committed graph because the objects they exercise are gone from it; that is an independent observation, not a verdict. Verification installs with `npm ci --omit=optional`, which is what ci.yml and the README use: the component runtime deliberately requires the optional native addon `cbor-extract` to be absent, so a bare `npm ci` installs it and `npm test` then fails with CLI_OPTIONAL_DEPENDENCY_UNBOUND. That is a design assertion, not a cache property - a warm npm cache with `--omit=optional` is as green as an empty one. The gate reads git history, so the checkout needs `fetch-depth: 0`.",
   "entries": [
     {
       "file": "tests/legacy/cli.test.js",
@@ -12,7 +12,9 @@
       "reason": "bin/kdna-studio.js is a shim over src/terminal-workspace.js and declares only session, verify and read; the command surface this suite drives is not in the committed graph.",
       "retired_on": "2026-09-12",
       "review_reference": "review:open-retirement/2026-09-12",
-      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs, tests/current/dependency-binding.test.js"
+      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs, tests/current/dependency-binding.test.js",
+      "review_signature": "change-explained",
+      "review_note": "窗口非零已逐行核实：首次退役 3717b3c 移动时改 2 行（path.resolve(__dirname,'..')->'../..'），为路径深度调整；窗口 35c90c8(give the file back) 与 99bcbd0(revoke four retirements) 均为撤销/复原动作。核验：HEAD 副本 sha256 d9dc4e905dbf == 首次退役前 3717b3c^:tests/cli.test.js 的 sha256 == 登记 sha256，净内容变化 0；退役对象（pre-component-semantics CLI 命令面 project/card/identity/migrate/export/llm config）仍不在已提交图，理由不变。"
     },
     {
       "file": "tests/legacy/creation-agent-cli.test.js",
@@ -23,7 +25,9 @@
       "reason": "The creation CLI commands and the creation engine they call belong to the pre-component-semantics graph; the current CLI exposes the session / verify / read surface instead, and the retired creation CLI implementation is outside the shipped tarball surface.",
       "retired_on": "2026-09-12",
       "review_reference": "review:open-retirement/2026-09-12",
-      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs"
+      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs",
+      "review_signature": "change-explained",
+      "review_note": "首次退役 3717b3c 移动时改 12 行，均为 '../src/...'、'../kdna/...'、'../kdna-studio-core/...' 与 ROOT/path.resolve(__dirname,'..') 的路径深度调整；窗口 35c90c8/99bcbd0 为撤销/复原。核验：HEAD 副本 sha256 67b688398320 == 首次退役前字节 == 登记 sha256，净内容变化 0；退役对象（Agent 创建型 CLI 命令面）仍不在已提交图，理由不变。"
     },
     {
       "file": "tests/legacy/current/shared-evidence.test.js",
@@ -34,7 +38,9 @@
       "reason": "It drives the retired session harness and asserts the retired 3.1.0-rc compiler coordinate. The current evidence format is format2, and the generation-1 producer marker is gone from the session source.",
       "retired_on": "2026-09-12",
       "review_reference": "review:open-retirement/2026-09-12",
-      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs (format2 evidence assertions)"
+      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs (format2 evidence assertions)",
+      "review_signature": "change-explained",
+      "review_note": "首次退役 3717b3c 移动时改 2 行（path.resolve(__dirname,'../../fixtures/...')->'../../../fixtures/...'），为路径深度调整；窗口 35c90c8/99bcbd0 为撤销/复原。核验：HEAD 副本 sha256 547f37c6ca7e == 首次退役前字节 == 登记 sha256，净内容变化 0；退役对象（shared creation-evidence format 1 生产者路径）仍不在已提交图，理由不变。"
     },
     {
       "file": "tests/legacy/e2e-export-completeness.test.js",
@@ -45,7 +51,9 @@
       "reason": "The export path it drives (create, card add, card approve, export, validate, load) is replaced by the current packed Studio save/readback flow and its complete.json version 2 bundle contract.",
       "retired_on": "2026-09-12",
       "review_reference": "review:open-retirement/2026-09-12",
-      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs (export leg)"
+      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs (export leg)",
+      "review_signature": "change-explained",
+      "review_note": "首次退役 3717b3c 移动时改 2 行（path.join(__dirname,'..','bin',...)->'../..'），为路径深度调整；窗口 35c90c8/99bcbd0 为撤销/复原。核验：HEAD 副本 sha256 b40cd129a0cd == 首次退役前字节 == 登记 sha256，净内容变化 0；退役对象（export completeness 管线）仍不在已提交图，理由不变。"
     },
     {
       "file": "tests/legacy/pd275/session-harness.js",
@@ -56,7 +64,9 @@
       "reason": "Helper module, not a test: it defines no test of its own and is kept because the retired pd275 suites require it as './session-harness'. Its (d) receipt passes because running a helper module executes nothing, not because a retired test came back. It stays retired with the suites that require it.",
       "retired_on": "2026-09-12",
       "review_reference": "review:open-retirement/2026-09-12",
-      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs"
+      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs",
+      "review_signature": "change-explained",
+      "review_note": "首次退役 3717b3c 移动时改 2 行（BIN 的 path.resolve(__dirname,'../../bin/...')->'../../../bin/...'），为路径深度调整；窗口 35c90c8 为撤销动作。核验：HEAD 副本 sha256 dbe64f9cac91 == 首次退役前字节 == 登记 sha256，净内容变化 0；退役对象（pre-component-semantics CLI 会话 harness）仍不在已提交图，理由不变。另：门打印 KDNA-RETIREMENT-RESTORABLE（放回原路径可跑通），是 (d) 回执的独立提示，按 root 口径单独处置，不影响本窗口签字。"
     },
     {
       "file": "tests/legacy/pd275/session-termination.test.js",
@@ -67,7 +77,9 @@
       "reason": "The harness expects session events and channel kinds that the current session protocol does not emit, so the surviving assertions read retired event names.",
       "retired_on": "2026-09-12",
       "review_reference": "review:open-retirement/2026-09-12",
-      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs"
+      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs",
+      "review_signature": "change-explained",
+      "review_note": "首次退役 3717b3c 移动时改 2 行，为 BIN 路径深度调整；窗口 35c90c8 为撤销动作。核验：HEAD 副本 sha256 fb01b892dd8c == 首次退役前字节 == 登记 sha256，净内容变化 0；退役对象（依赖已退役 session-harness 的会话协议）仍不在已提交图，理由不变。"
     },
     {
       "file": "tests/legacy/pd275/terminal.test.js",
@@ -80,7 +92,9 @@
       "reason": "The harness expects session events and material kinds the current session protocol does not emit, and the retired material-admission code it asserts is gone from the session source.",
       "retired_on": "2026-09-12",
       "review_reference": "review:open-retirement/2026-09-12",
-      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs"
+      "coverage_inherited_by": "tests/current-components/terminal-session.test.cjs",
+      "review_signature": "no-content-change",
+      "review_note": "无内容变化：首次退役 3717b3c 是本条的逐字节搬迁（未改写），此后本条再未被任何提交触碰，故 content_changed_in_window=0、无 KDNA-RETIREMENT-DIFF、无窗口提交。核验：HEAD 副本 sha256 009e2bc16fcc == 首次退役前 3717b3c^:tests/pd275/terminal.test.js 的 sha256 == 登记 sha256。本条 reeval_in_place=not-possible 且门已打印 REEVAL-NOTE，本轮不据此改判。"
     },
     {
       "file": "tests/legacy/protocol-producer.test.js",
@@ -91,7 +105,9 @@
       "reason": "The producer transport it asserts is not part of the current graph; the file stops on retired public APIs before any product assertion, because @aikdna/kdna-core now exports admitBytes only and @aikdna/kdna-studio-core now exports createSession / verifyCreationEvidence only.",
       "retired_on": "2026-09-12",
       "review_reference": "review:open-retirement/2026-09-12",
-      "coverage_inherited_by": "none (recorded as uncovered; re-wire required if a producer path returns)"
+      "coverage_inherited_by": "none (recorded as uncovered; re-wire required if a producer path returns)",
+      "review_signature": "change-explained",
+      "review_note": "首次退役 3717b3c 移动时改 6 行，均为 '../scripts/...' 与 BIN 的 path.resolve(__dirname,'..') 路径深度调整；窗口 35c90c8 为撤销动作。核验：HEAD 副本 sha256 85fb4619a96c == 首次退役前字节 == 登记 sha256，净内容变化 0；退役对象（protocol producer transport）仍不在已提交图，理由不变。"
     },
     {
       "file": "tests/legacy/public-package-surface.test.js",
@@ -102,7 +118,9 @@
       "reason": "The packed surface is now the files[] list in package.json; the guarded members this suite requires no longer ship.",
       "retired_on": "2026-09-12",
       "review_reference": "review:open-retirement/2026-09-12",
-      "coverage_inherited_by": ".github/workflows/public-surface.yml + scripts/check-public-surface.mjs"
+      "coverage_inherited_by": ".github/workflows/public-surface.yml + scripts/check-public-surface.mjs",
+      "review_signature": "change-explained",
+      "review_note": "首次退役 3717b3c 移动时改 2 行（ROOT=path.resolve(__dirname,'..')->'../..'），为路径深度调整；窗口 35c90c8 为撤销动作。核验：HEAD 副本 sha256 deeadf6855a6 == 首次退役前字节 == 登记 sha256，净内容变化 0；退役对象（如 src/ai/distill.js 的打包成员）仍不在已提交图，理由不变。"
     }
   ]
 }

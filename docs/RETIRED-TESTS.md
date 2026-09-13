@@ -126,6 +126,14 @@ The exit code is about (a)-(c) and (e). (e) reads git history, so the checkout
 that runs the gate has to carry it: `.github/workflows/ci.yml` fetches the full
 history (`fetch-depth: 0`) rather than the default shallow clone.
 
+Install with `npm ci --omit=optional`, which is what `.github/workflows/ci.yml`
+and the README use. The component runtime deliberately requires the optional
+native addon `cbor-extract` to be absent - a bare `npm ci` installs it and
+`npm test` then fails with `CLI_OPTIONAL_DEPENDENCY_UNBOUND`. That is a design
+assertion, not a cache property: a warm npm cache with `--omit=optional` is as
+green as an empty one, and neither the gate nor the test run depends on the cache
+being cold.
+
 `scripts/run-test-all.js` prints one `KDNA-CI-NOT-RUN:` receipt per registered
 entry and fails the run if the registry does not hold. Re-activating an entry
 starts by re-pointing the file at current objects and registering the move, not

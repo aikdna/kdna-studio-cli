@@ -20,7 +20,11 @@ const {
   validateArtifact,
   validatePackReport,
 } = require('../scripts/release-evidence');
-const { STABLE_VERSION_RE, validateReleaseContext } = require('../scripts/release-policy');
+const { validateReleaseContext } = require('../scripts/release-policy');
+const {
+  registeredNotRunFor,
+  unavailabilityCodes,
+} = require('../scripts/ci-leg-definitions');
 const {
   assertReproduciblePackBytes,
   generateReleaseEvidence,
@@ -47,6 +51,26 @@ const {
 
 const ROOT = path.resolve(__dirname, '..');
 const HASH = 'a'.repeat(40);
+
+// A receipt is printed only when fixtures/runtime-candidates/leg-registry.json registers
+// this leg AND the unavailability codes recomputed from the committed bytes are exactly
+// the registered codes, compared in both directions. The test itself decides nothing:
+// scripts/verify-ci-leg-receipts.js re-derives the same codes and refuses a receipt whose
+// registration no longer holds, so this can never be a silent skip of a leg that could
+// run.
+function registeredReceipt(label) {
+  const { codes, detail } = unavailabilityCodes(ROOT, label);
+  const registration = registeredNotRunFor(ROOT, label, codes);
+  if (!registration) return null;
+  console.log(
+    `KDNA-CI-NOT-RUN: ${label} reason=${registration.reason} ` +
+      `object=${registration.object} unavailable=${codes.join(',')}`,
+  );
+  return {
+    registration,
+    detail: `${label} is registered at not_run (${codes.join(', ')}); registry detail: ${JSON.stringify(detail)}`,
+  };
+}
 
 test('authoritative Git selects a Git-compatible null device on every platform', () => {
   assert.equal(authoritativeGitNullDevice('win32'), 'NUL');
@@ -539,20 +563,9 @@ test('current binding rejects stale evidence before registry lookup', () => {
 });
 
 test('pack evidence independently parses a real npm tgz and rejects changed bytes', (t) => {
-  // The release policy only produces evidence for stable canonical SemVer
-  // (scripts/release-policy.js:17-18). The committed graph is a release
-  // candidate, so this leg is explicitly not run here instead of going red;
-  // it runs for real again the moment the committed version is stable.
-  const committedVersion = JSON.parse(
-    fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'),
-  ).version;
-  if (!STABLE_VERSION_RE.test(committedVersion)) {
-    console.log(
-      'KDNA-CI-NOT-RUN: release-pack-evidence ' +
-        `reason=committed_version_is_prerelease version=${committedVersion} ` +
-        'policy=scripts/release-policy.js:17 STABLE_VERSION_RE',
-    );
-    t.skip(`committed version ${committedVersion} is not a stable canonical SemVer release coordinate`);
+  const receipt = registeredReceipt('release-pack-evidence');
+  if (receipt) {
+    t.skip(receipt.detail);
     return;
   }
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-release-pack-test-'));

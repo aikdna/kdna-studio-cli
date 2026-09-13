@@ -1,25 +1,49 @@
 {
   "schema": "kdna.ci-leg-registry",
   "schema_version": "1.0.0",
-  "note": "A leg may only report not_run when it is registered here AND the recomputed condition still holds on the committed graph. Deleting an entry re-runs the leg; the registration can never make a leg permanently not_run. review_by is an expiry: scripts/verify-ci-leg-receipts.js fails once it has passed.",
+  "note": "The only authority that may hold a leg or a registered test receipt at not_run. A receipt may only be printed when the recomputed unavailability codes it names are exactly the codes this file registers, compared in both directions: a code the gate computes but this file does not name, or a code named here that is no longer true, makes the real leg run instead. Deleting an entry re-runs the leg; a registration can never make a leg permanently not_run. review_by is an expiry: scripts/verify-ci-leg-receipts.js fails once it has passed.",
   "entries": [
     {
       "leg": "candidate-sources",
       "class": "not_run",
-      "reason": "retired_runtime_candidate_authority",
+      "reason": "candidate_leg_verifier_enforces_retired_registry_coordinate_policy",
       "object": "runtime candidate authority that matches the shipped dependency graph",
-      "condition": "authority_coordinates != shipped_coordinates",
-      "trigger": "the runtime candidate authority is re-pinned to the shipped graph (then the leg runs and must reproduce both checked candidate artifacts)",
+      "condition": "recomputed_unavailability_codes == unavailable_codes",
+      "unavailable_codes": [
+        "aikdna_direct_coordinates_are_not_registry_semver",
+        "candidate_authority_differs_from_installed_graph"
+      ],
+      "basis": "scripts/verify-runtime-candidate-sources.js runs scripts/runtime-candidate-binding.js, which refuses any direct @aikdna dependency that is not an exact SemVer registry coordinate and any file: lock package outside the candidate binding. The committed graph declares every @aikdna dependency as a vendored file: coordinate, so the leg's verifier stops on the committed graph before it can reproduce either candidate artifact - the coordinate mismatch alone is necessary but not sufficient. Observed: the direct verifier exits 1 on a clean clone with an empty cache.",
+      "trigger": "scripts/runtime-candidate-binding.js accepts the committed vendored file: coordinate policy (then the gate runs the leg and it must reproduce both checked candidate artifacts from their pinned clean sources) AND the runtime candidate authority is re-pinned to the shipped graph",
       "owner": "kdna-open",
       "review_by": "2027-03-31"
     },
     {
       "leg": "candidate-chain",
       "class": "not_run",
-      "reason": "retired_runtime_candidate_authority",
+      "reason": "candidate_leg_verifier_enforces_retired_registry_coordinate_policy",
       "object": "runtime candidate authority that matches the shipped dependency graph",
-      "condition": "authority_coordinates != shipped_coordinates",
-      "trigger": "the runtime candidate authority is re-pinned to the shipped graph (then the leg runs and must verify the installed Runtime candidate chain)",
+      "condition": "recomputed_unavailability_codes == unavailable_codes",
+      "unavailable_codes": [
+        "aikdna_direct_coordinates_are_not_registry_semver",
+        "candidate_authority_differs_from_installed_graph"
+      ],
+      "basis": "scripts/verify-runtime-candidate-chain.js runs the same scripts/runtime-candidate-binding.js, so it stops on the committed vendored file: graph for the same reason before it can verify the installed Runtime candidate chain. Observed: the direct verifier exits 1 on a clean clone with an empty cache.",
+      "trigger": "scripts/runtime-candidate-binding.js accepts the committed vendored file: coordinate policy (then the gate runs the leg and it must verify the installed Runtime candidate chain from an empty cache) AND the runtime candidate authority is re-pinned to the shipped graph",
+      "owner": "kdna-open",
+      "review_by": "2027-03-31"
+    },
+    {
+      "leg": "release-pack-evidence",
+      "class": "not_run",
+      "reason": "committed_version_is_prerelease",
+      "object": "the packed release artifact evidence of the committed release coordinate",
+      "condition": "recomputed_unavailability_codes == unavailable_codes",
+      "unavailable_codes": [
+        "committed_version_is_not_stable_semver"
+      ],
+      "basis": "scripts/release-policy.js only produces release coordinates and pack evidence for a stable canonical SemVer version (STABLE_VERSION_RE). The committed version is a release candidate, so the assertion that packs the tarball and parses its evidence cannot run against the committed graph. Observed: tests/publish-hardening.test.js skips exactly this assertion and prints this receipt.",
+      "trigger": "the committed version becomes a stable canonical SemVer reissue (then tests/publish-hardening.test.js packs the tarball and parses the evidence for real, and this receipt stops being printed)",
       "owner": "kdna-open",
       "review_by": "2027-03-31"
     }

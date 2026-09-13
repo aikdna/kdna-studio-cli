@@ -6,64 +6,51 @@
 // Exactly three outcomes are allowed, and they are distinguishable:
 //   * required configuration missing  -> KDNA-CI-CONFIG-MISSING on stderr, exit 2,
 //     and no receipt is printed;
-//   * object registered as retired and unavailable -> exactly one
+//   * the recomputed unavailability codes are exactly the codes the registration in
+//     fixtures/runtime-candidates/leg-registry.json names -> exactly one
 //     `KDNA-CI-NOT-RUN: <leg> ...` line plus one machine-readable
 //     `KDNA-CI-RECEIPT: {...}` line, exit 0;
-//   * object available                -> the real leg command is executed and its
-//     exit status becomes this process's exit status, with one `run` receipt.
+//   * otherwise -> the real leg command is executed and its exit status becomes this
+//     process's exit status, with one `run` receipt.
 //
-// A not_run outcome requires BOTH an explicit registration in
-// fixtures/runtime-candidates/leg-registry.json AND the recomputed coordinate
-// mismatch that registration describes. A gate cannot manufacture a permanent
-// not_run out of its own condition: with no registration, or with the
-// registered mismatch actually gone, the real leg command runs.
+// A not_run outcome requires BOTH an explicit registration AND the recomputed codes,
+// compared in both directions. The gate cannot manufacture a condition of its own: a code
+// it computes but the registration does not name, or a registered code that is no longer
+// true, makes the real leg run instead - so a red committed graph can never be hidden
+// behind a coordinate mismatch that describes a different problem.
 //
 // Every receipt carries the sha256 digests of the exact input files it read, so
-// scripts/verify-ci-leg-receipts.js can tell a receipt produced from the
-// committed bytes apart from a stubbed or replayed one.
+// scripts/verify-ci-leg-receipts.js can tell a receipt produced from the committed bytes
+// apart from a stubbed or replayed one.
 
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
-const { BINDING_PATH, LEGS, LOCK_PATH, REGISTRY_PATH } = require('./ci-leg-definitions');
+const {
+  BINDING_PATH,
+  LEGS,
+  LOCK_PATH,
+  PACKAGE_PATH,
+  REGISTRY_PATH,
+  registrationFor,
+  registeredNotRunFor,
+  unavailabilityCodes,
+} = require('./ci-leg-definitions');
 
 const root = path.resolve(__dirname, '..');
-
-function coordinates(entries) {
-  return entries
-    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-    .map(([name, version]) => `${name}@${version}`)
-    .join(',');
-}
-
-function authorityCoordinates() {
-  const binding = JSON.parse(fs.readFileSync(path.join(root, BINDING_PATH), 'utf8'));
-  return coordinates(binding.packages.map(({ name, version }) => [name, version]));
-}
-
-function shippedCoordinates() {
-  const lock = JSON.parse(fs.readFileSync(path.join(root, LOCK_PATH), 'utf8'));
-  const entries = Object.entries(lock.packages)
-    .filter(([key]) => key.startsWith('node_modules/@aikdna/'))
-    .map(([key, entry]) => [key.slice('node_modules/'.length), entry.version]);
-  return coordinates(entries);
-}
+const DIGEST_INPUTS = Object.freeze([BINDING_PATH, LOCK_PATH, PACKAGE_PATH, REGISTRY_PATH]);
 
 function sha256(relative) {
   return crypto.createHash('sha256').update(fs.readFileSync(path.join(root, relative))).digest('hex');
 }
 
 function inputDigests() {
-  return { [BINDING_PATH]: sha256(BINDING_PATH), [LOCK_PATH]: sha256(LOCK_PATH) };
+  return Object.fromEntries(DIGEST_INPUTS.map((relative) => [relative, sha256(relative)]));
 }
 
 function legRegistry() {
   return JSON.parse(fs.readFileSync(path.join(root, REGISTRY_PATH), 'utf8'));
-}
-
-function registrationFor(leg) {
-  return (legRegistry().entries ?? []).find((entry) => entry.leg === leg);
 }
 
 function receipt(payload) {
@@ -82,13 +69,12 @@ function main(argv) {
     console.error(`KDNA-CI-CONFIG-MISSING: ${leg} missing=${missing.join(',')}`);
     return 2;
   }
-  const authority = authorityCoordinates();
-  const shipped = shippedCoordinates();
-  const registration = registrationFor(leg);
-  if (registration?.class === 'not_run' && authority !== shipped) {
+  const computed = unavailabilityCodes(root, leg);
+  const registration = registeredNotRunFor(root, leg, computed.codes);
+  if (registration) {
     console.log(
       `KDNA-CI-NOT-RUN: ${leg} reason=${registration.reason} ` +
-        `object=${registration.object} authority=${authority} shipped=${shipped}`,
+        `object=${registration.object} unavailable=${computed.codes.join(',')}`,
     );
     console.log(
       receipt({
@@ -96,8 +82,8 @@ function main(argv) {
         class: 'not_run',
         reason: registration.reason,
         object: registration.object,
-        authority,
-        shipped,
+        unavailable_codes: [...computed.codes].sort(),
+        code_detail: computed.detail,
         inputs: inputDigests(),
       }),
     );
@@ -116,6 +102,7 @@ function main(argv) {
       class: 'run',
       command: [...definition.command],
       status: result.status,
+      unavailable_codes: [...computed.codes].sort(),
       inputs: inputDigests(),
     }),
   );
@@ -126,9 +113,8 @@ if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
 module.exports = {
   LEGS,
-  authorityCoordinates,
   inputDigests,
   legRegistry,
   registrationFor,
-  shippedCoordinates,
+  unavailabilityCodes,
 };

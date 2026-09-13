@@ -134,6 +134,14 @@ assertion, not a cache property: a warm npm cache with `--omit=optional` is as
 green as an empty one, and neither the gate nor the test run depends on the cache
 being cold.
 
+**This gate's green is stated against `npm ci --omit=optional`**, the install
+that `ci.yml` and the README use, and against the absence of the optional native
+addon `cbor-extract`, which is a design assertion
+(`CLI_OPTIONAL_DEPENDENCY_UNBOUND` here, `CREATION_OPTIONAL_DEPENDENCY_UNBOUND` in
+the core) rather than a defect. An empty npm cache is the discipline for judging
+whether `npm ci` really installed from the committed bytes; it does not apply to
+stating this gate's green, and it is not a condition of it.
+
 `scripts/run-test-all.js` prints one `KDNA-CI-NOT-RUN:` receipt per registered
 entry and fails the run if the registry does not hold. Re-activating an entry
 starts by re-pointing the file at current objects and registering the move, not

@@ -94,6 +94,27 @@ test('the authentic generator satisfies the independent consumer', () => {
   });
 });
 
+test('registered test receipts must be actual unique TAP stdout lines', () => {
+  for (const mutation of ['silence', 'duplicate', 'quoted', 'title']) {
+    withSandbox({}, (sandbox) => {
+      const file = path.join(sandbox, 'tests/publish-hardening.test.js');
+      const source = fs.readFileSync(file, 'utf8');
+      const receipt = source.match(/console\.log\('([^']+)'\);/u)[1];
+      const changed = {
+        silence: "'use strict';\n",
+        duplicate: source + `console.log(${JSON.stringify(receipt)});\n`,
+        quoted: `console.log(${JSON.stringify('# ' + receipt)});\n`,
+        title: `require('node:test')(${JSON.stringify(receipt)}, () => {});\n`,
+      }[mutation];
+      assert.notEqual(changed, source);
+      fs.writeFileSync(file, changed);
+      const result = runConsumer(sandbox);
+      assert.equal(result.status, 1, `${mutation}: ${result.stdout}${result.stderr}`);
+      assert.match(result.stdout, /test_receipt_line/);
+    });
+  }
+});
+
 test('a generator that always prints success makes the gate red', () => {
   withSandbox({}, (sandbox) => {
     fs.writeFileSync(

@@ -244,9 +244,13 @@ function checkTestReceipt(root, leg, definition, registration, computed, finding
   try {
     // One committed test file can carry more than one registered receipt, so the check is
     // "exactly one receipt line for this leg", not "one receipt line in the run".
+    // The command pins TAP on every supported Node line. Its child stdout is
+    // one TAP comment per line; remove only that exact framing, never a test
+    // title, a skip reason, arbitrary whitespace or a nested quoted receipt.
     const lines = result.stdout
       .split('\n')
-      .filter((candidate) => candidate.startsWith(`${NOT_RUN_PREFIX} ${leg} `));
+      .filter((candidate) => candidate.startsWith(`# ${NOT_RUN_PREFIX} ${leg} `))
+      .map((candidate) => candidate.slice(2));
     assert.equal(lines.length, 1, `expected exactly one ${leg} receipt line, got ${lines.length}`);
     [line] = lines;
   } catch (error) {

@@ -54,7 +54,7 @@ const TEST_RECEIPTS = Object.freeze({
   'release-pack-evidence': {
     object: 'the packed release artifact evidence of the committed release coordinate',
     emitted_by: path.join('tests', 'publish-hardening.test.js'),
-    command: Object.freeze(['--test', path.join('tests', 'publish-hardening.test.js')]),
+    command: Object.freeze(['--test', '--test-reporter=tap', path.join('tests', 'publish-hardening.test.js')]),
   },
 });
 

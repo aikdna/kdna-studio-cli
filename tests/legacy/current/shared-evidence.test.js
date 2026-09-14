@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { ROOT, invoke, prepare, save } = require('../pd275/session-harness');
+const { ROOT, invoke, prepare, save } = require('../numeric-fidelity/session-harness');
 const legacyRoot = path.resolve(__dirname, '../../fixtures/legacy-shared-evidence');
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const corePin = 'b2cecb761e599d8711114d7288d6caf627b1aa01620699ecb1fca49ac3bb6ba0';

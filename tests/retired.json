@@ -33,7 +33,7 @@
       "file": "tests/legacy/current/shared-evidence.test.js",
       "original_path": "tests/current/shared-evidence.test.js",
       "retired_from_commit": "13f538f0b15d7d7745701dd69151cc0012dbfef2",
-      "sha256": "547f37c6ca7e09a342f4f2de7d210c4520a8d2471bdd52ada046b90223b8c0a1",
+      "sha256": "043fc5b9f2ed0be0fe7da7b5d817ec54a0265d600bde69474b20c9668d8bb255",
       "retired_object": "pre-component-semantics shared creation-evidence format 1 producer path",
       "reason": "It drives the retired session harness and asserts the retired 3.1.0-rc compiler coordinate. The current evidence format is format2, and the generation-1 producer marker is gone from the session source.",
       "retired_on": "2026-09-12",
@@ -56,10 +56,10 @@
       "review_note": "首次退役 3717b3c 移动时改 2 行（path.join(__dirname,'..','bin',...)->'../..'），为路径深度调整；窗口 35c90c8/99bcbd0 为撤销/复原。核验：HEAD 副本 sha256 b40cd129a0cd == 首次退役前字节 == 登记 sha256，净内容变化 0；退役对象（export completeness 管线）仍不在已提交图，理由不变。"
     },
     {
-      "file": "tests/legacy/pd275/session-harness.js",
+      "file": "tests/legacy/numeric-fidelity/session-harness.js",
       "original_path": "tests/pd275/session-harness.js",
       "retired_from_commit": "13f538f0b15d7d7745701dd69151cc0012dbfef2",
-      "sha256": "dbe64f9cac91ed94a283101e023200464e7aa2b4c80bbee8e2402f023d4fd9c5",
+      "sha256": "adb6f81ced268b16190dd36baf025cbe4269b63170d0336dc695120a2e4c9770",
       "retired_object": "pre-component-semantics CLI session harness",
       "reason": "Helper module, not a test: it defines no test of its own and is kept because the retired pd275 suites require it as './session-harness'. Its (d) receipt passes because running a helper module executes nothing, not because a retired test came back. It stays retired with the suites that require it.",
       "retired_on": "2026-09-12",
@@ -69,10 +69,10 @@
       "review_note": "首次退役 3717b3c 移动时改 2 行（BIN 的 path.resolve(__dirname,'../../bin/...')->'../../../bin/...'），为路径深度调整；窗口 35c90c8 为撤销动作。核验：HEAD 副本 sha256 dbe64f9cac91 == 首次退役前字节 == 登记 sha256，净内容变化 0；退役对象（pre-component-semantics CLI 会话 harness）仍不在已提交图，理由不变。另：门打印 KDNA-RETIREMENT-RESTORABLE（放回原路径可跑通），是 (d) 回执的独立提示，按 root 口径单独处置，不影响本窗口签字。"
     },
     {
-      "file": "tests/legacy/pd275/session-termination.test.js",
+      "file": "tests/legacy/numeric-fidelity/session-termination.test.js",
       "original_path": "tests/pd275/session-termination.test.js",
       "retired_from_commit": "13f538f0b15d7d7745701dd69151cc0012dbfef2",
-      "sha256": "fb01b892dd8c89484740d7250dbc8efe15b958fe6888776df46fd311433f09f8",
+      "sha256": "4aed3119ab15a3856d68741605dbf08ad370138f00f9cd9fc9ec5950a617fe9a",
       "retired_object": "pre-component-semantics CLI session harness protocol (tests/legacy/pd275/session-harness.js)",
       "reason": "The harness expects session events and channel kinds that the current session protocol does not emit, so the surviving assertions read retired event names.",
       "retired_on": "2026-09-12",
@@ -82,7 +82,7 @@
       "review_note": "首次退役 3717b3c 移动时改 2 行，为 BIN 路径深度调整；窗口 35c90c8 为撤销动作。核验：HEAD 副本 sha256 fb01b892dd8c == 首次退役前字节 == 登记 sha256，净内容变化 0；退役对象（依赖已退役 session-harness 的会话协议）仍不在已提交图，理由不变。"
     },
     {
-      "file": "tests/legacy/pd275/terminal.test.js",
+      "file": "tests/legacy/numeric-fidelity/terminal.test.js",
       "original_path": "tests/pd275/terminal.test.js",
       "retired_from_commit": "c8bacb8d25f1291b3931a8004b7efcffc5234d2e",
       "sha256": "009e2bc16fccf64efba0f7cd8723d8e45b968186345c273f8cef006fa7dadb13",

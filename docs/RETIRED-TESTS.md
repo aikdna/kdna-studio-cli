@@ -22,10 +22,10 @@ Nine files are registered:
 - `tests/legacy/creation-agent-cli.test.js`
 - `tests/legacy/current/shared-evidence.test.js`
 - `tests/legacy/e2e-export-completeness.test.js`
-- `tests/legacy/pd275/session-harness.js` (the helper module the pd275 suites
+- `tests/legacy/numeric-fidelity/session-harness.js` (the helper module the pd275 suites
   require as `./session-harness`)
-- `tests/legacy/pd275/session-termination.test.js`
-- `tests/legacy/pd275/terminal.test.js`
+- `tests/legacy/numeric-fidelity/session-termination.test.js`
+- `tests/legacy/numeric-fidelity/terminal.test.js`
 - `tests/legacy/protocol-producer.test.js`
 - `tests/legacy/public-package-surface.test.js`
 
@@ -42,7 +42,7 @@ retirement exists; the gate records it as an observation and never reads it -
 see the delivery report's section on why these suites are red, which is an
 observation rather than a verdict.
 
-`pd275/session-harness.js` is a helper module rather than a test, so its (d)
+`numeric-fidelity/session-harness.js` is a helper module rather than a test, so its (d)
 receipt reports a pass because running a module with no test in it executes
 nothing. Its reason records that; it stays retired with the suites that require
 it.
@@ -119,8 +119,8 @@ the object store:
   An entry whose bytes cannot be run where they used to live records that
   explicitly: `reeval_in_place: "not-possible"` with a `reeval_note` holding the
   reason, and the gate prints `KDNA-RETIREMENT-REEVAL-NOTE` instead of reporting a
-  run it cannot make. `tests/legacy/pd275/terminal.test.js` is such an entry: the
-  helper it requires is retired material too, so `tests/pd275/` does not exist.
+  run it cannot make. `tests/legacy/numeric-fidelity/terminal.test.js` is such an entry: the
+  helper it requires is retired material too, so the original path does not exist.
 
 The exit code is about (a)-(c) and (e). (e) reads git history, so the checkout
 that runs the gate has to carry it: `.github/workflows/ci.yml` fetches the full

@@ -6,7 +6,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { spawn } = require('node:child_process');
 const readline = require('node:readline');
-const ROOT = fs.mkdtempSync(path.join(process.env.KDNA_CLI_TEST_ROOT || os.tmpdir(), 'pd308-termination-'));
+const ROOT = fs.mkdtempSync(path.join(process.env.KDNA_CLI_TEST_ROOT || os.tmpdir(), 'numeric308-termination-'));
 const BIN = process.env.KDNA_CLI_TEST_BIN || path.resolve(__dirname, '../../bin/kdna-studio.js');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const PRELOAD = path.join(ROOT, 'observe.cjs');
@@ -14,45 +14,45 @@ fs.writeFileSync(PRELOAD, `
 const fs = require('node:fs');
 const events = [];
 for (const name of ['end','close','error']) process.stdin.on(name, error => events.push({event:name,at:new Date().toISOString(),code:error?.code}));
-if (process.env.PD308_INPUT_FAULT) {
+if (process.env.NUMERIC308_INPUT_FAULT) {
   let injected = false;
-  const stream = process.env.PD308_INPUT_FAULT_STAGE === 'human' ? process.stderr : process.stdout;
+  const stream = process.env.NUMERIC308_INPUT_FAULT_STAGE === 'human' ? process.stderr : process.stdout;
   const write = stream.write;
   stream.write = function(chunk, ...rest) {
     const result = write.call(this, chunk, ...rest);
     let trigger = stream === process.stderr;
     if (!trigger) {
       const value = JSON.parse(String(chunk));
-      const stage = process.env.PD308_INPUT_FAULT_STAGE;
+      const stage = process.env.NUMERIC308_INPUT_FAULT_STAGE;
       trigger = stage === 'interpret' ? value.event === 'human_reply' : stage === 'confirmed' ? Boolean(value.result?.final_decision?.artifact_digest) : Boolean(value.result?.directory);
     }
     if (!injected && trigger) {
       injected = true;
-      queueMicrotask(() => process.stdin.destroy(process.env.PD308_INPUT_FAULT === 'error' ? Object.assign(new Error('synthetic native input error'), {code:'PD308_INJECTED_INPUT'}) : undefined));
+      queueMicrotask(() => process.stdin.destroy(process.env.NUMERIC308_INPUT_FAULT === 'error' ? Object.assign(new Error('synthetic native input error'), {code:'NUMERIC308_INJECTED_INPUT'}) : undefined));
     }
     return result;
   };
 }
-process.once('beforeExit', code => fs.writeFileSync(process.env.PD308_EXIT_FILE, JSON.stringify({
+process.once('beforeExit', code => fs.writeFileSync(process.env.NUMERIC308_EXIT_FILE, JSON.stringify({
   code,pid:process.pid,events,inputs:process._getActiveHandles().filter(x=>x!==process.stdout&&x!==process.stderr).map(x=>({type:x.constructor.name,fd:x.fd})),
   requests:process._getActiveRequests().map(x=>x.constructor.name)
 })));
 `);
 const material = path.join(ROOT, 'notes.md');
-fs.writeFileSync(material, 'PD308全新合成材料：借阅归还时间不清楚时保留原登记，核对借阅人和登记记录后再补充。');
+fs.writeFileSync(material, 'NUMERIC308全新合成材料：借阅归还时间不清楚时保留原登记，核对借阅人和登记记录后再补充。');
 let number = 0;
 function bounded(promise) {
   let timer;
-  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('PD308_TEST_OBSERVATION_BOUND')), 5000); })]).finally(() => clearTimeout(timer));
+  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('NUMERIC308_TEST_OBSERVATION_BOUND')), 5000); })]).finally(() => clearTimeout(timer));
 }
 class Session {
   constructor(fault, faultStage = 'human') {
     this.name = 'case-' + (++number); this.output = path.join(ROOT, this.name + '-bundle');
     this.exitFile = path.join(ROOT, this.name + '-exit.json'); this.records = []; this.events = []; this.errors = [];
     this.stdout = ''; this.stderr = ''; this.id = 0; this.start = new Date().toISOString(); this.parentHumanEndRequested = false;
-    const env = { ...process.env, PD308_EXIT_FILE: this.exitFile };
-    if (fault) { env.PD308_INPUT_FAULT = fault; env.PD308_INPUT_FAULT_STAGE = faultStage; }
-    this.argv = ['-i', ...Object.entries(env).map(([k,v])=>k+'='+v), '/bin/sh', '-c', 'exec "$@"', 'pd308-child',
+    const env = { ...process.env, NUMERIC308_EXIT_FILE: this.exitFile };
+    if (fault) { env.NUMERIC308_INPUT_FAULT = fault; env.NUMERIC308_INPUT_FAULT_STAGE = faultStage; }
+    this.argv = ['-i', ...Object.entries(env).map(([k,v])=>k+'='+v), '/bin/sh', '-c', 'exec "$@"', 'numeric308-child',
       process.execPath, '--require', PRELOAD, BIN, 'session', '--out', this.output, '--text', material, '--human-fd', '3', '--synthetic-fixture'];
     this.child = spawn('/usr/bin/env', this.argv, {stdio:['pipe','pipe','pipe','pipe']});
     for (const [stream,name] of [[this.child.stdin,'agent-writer'],[this.child.stdio[3],'human-writer']]) stream.on('error', error=>this.errors.push({name,code:error.code}));
@@ -62,12 +62,12 @@ class Session {
   }
   async next() { const next = await bounded(this.lines.next()); assert.equal(next.done,false,this.stderr); const event=JSON.parse(next.value);this.events.push(event);return event; }
   raw(bytes) { this.records.push({at:new Date().toISOString(),channel:'agent',bytes:Buffer.byteLength(bytes)}); this.child.stdin.write(bytes); }
-  send(op,data={}) { const frame={id:'pd308-'+(++this.id),op,data};this.records.push({channel:'agent-frame',frame});this.child.stdin.write(JSON.stringify(frame)+'\n'); }
+  send(op,data={}) { const frame={id:'numeric308-'+(++this.id),op,data};this.records.push({channel:'agent-frame',frame});this.child.stdin.write(JSON.stringify(frame)+'\n'); }
   async op(op,data) { this.send(op,data);const event=await this.next();assert.equal(event.status,'ok');return event.result; }
   human(text) { this.records.push({channel:'synthetic-human',text});this.child.stdio[3].write(text+'\n'); }
   endHuman() { this.parentHumanEndRequested = true; this.records.push({event:'parent-human-end-request'}); this.child.stdio[3].end(); }
   async prompt(kind) {
-    if (kind==='interview') this.send('interview',{title:'终止相位合成访谈',question:'PD308 请描述保留登记的方法。'});
+    if (kind==='interview') this.send('interview',{title:'终止相位合成访谈',question:'NUMERIC308 请描述保留登记的方法。'});
     else this.send('review');
     await bounded((async()=>{while(!this.stderr)await delay(5);})());
   }
@@ -142,17 +142,17 @@ for(const phase of ['interview','review']) {
     await s.finish(2,malformed==='partial'?'CLI_FRAME_INCOMPLETE':'CLI_UTF8_INVALID');
   }));
   for(const fault of ['error','close']) test('native Agent '+fault+' cancels '+phase,()=>run(async s=>{
-    await s.prompt(phase);const capture=await s.finish(2,fault==='error'?'PD308_INJECTED_INPUT':'CLI_AGENT_CHANNEL_CLOSED');
+    await s.prompt(phase);const capture=await s.finish(2,fault==='error'?'NUMERIC308_INJECTED_INPUT':'CLI_AGENT_CHANNEL_CLOSED');
     assert.ok(capture.observation.events.some(x=>x.event===fault));
   },fault));
 }
 for(const fault of ['error','close']) {
   test('native Agent '+fault+' ends interpretation wait',()=>run(async s=>{
     await s.prompt('review');s.human('合成审查意见，不是导出授权。');assert.equal((await s.next()).event,'human_reply');
-    await s.finish(2,fault==='error'?'PD308_INJECTED_INPUT':'CLI_AGENT_CHANNEL_CLOSED');
+    await s.finish(2,fault==='error'?'NUMERIC308_INJECTED_INPUT':'CLI_AGENT_CHANNEL_CLOSED');
   },fault,'interpret'));
   test('native Agent '+fault+' after confirmation prevents a later export',()=>run(async s=>{
-    await s.prepare();await s.finish(2,fault==='error'?'PD308_INJECTED_INPUT':'CLI_AGENT_CHANNEL_CLOSED');
+    await s.prepare();await s.finish(2,fault==='error'?'NUMERIC308_INJECTED_INPUT':'CLI_AGENT_CHANNEL_CLOSED');
   },fault,'confirmed'));
   test('native Agent '+fault+' after committed export does not undo the bundle',()=>run(async s=>{
     await s.prepare();assert.equal((await s.op('export')).verification.status,'consistent');await s.finish(0,undefined,true);
@@ -191,4 +191,4 @@ test('completed export remains complete after caller Agent end',()=>run(async s=
   await s.prepare();const result=await s.op('export');assert.equal(result.verification.status,'consistent');
   if(!s.child.stdin.destroyed)await s.endAgent();await s.finish(0,undefined,true);
 }));
-test.after(()=>console.log(JSON.stringify({pd308_evidence_root:ROOT,scenarios:number,observation_bound_is_not_public_timeout:true})));
+test.after(()=>console.log(JSON.stringify({numeric308_evidence_root:ROOT,scenarios:number,observation_bound_is_not_public_timeout:true})));

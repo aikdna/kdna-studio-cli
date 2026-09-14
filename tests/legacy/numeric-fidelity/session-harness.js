@@ -11,7 +11,7 @@ let sequence = 0;
 function save(name, value) { fs.writeFileSync(path.join(ROOT, `${++sequence}-${name}.json`), JSON.stringify(value, null, 2) + '\n'); }
 function isolated(command) {
   return ['-i', ...Object.entries(process.env).map(([key, value]) => key + '=' + value),
-    '/bin/sh', '-c', 'exec "$@"', 'pd308-existing-test', ...command];
+    '/bin/sh', '-c', 'exec "$@"', 'numeric308-existing-test', ...command];
 }
 function invoke(args) {
   const start = new Date().toISOString();

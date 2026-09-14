@@ -22,7 +22,7 @@ Nine files are registered:
 - `tests/legacy/creation-agent-cli.test.js`
 - `tests/legacy/current/shared-evidence.test.js`
 - `tests/legacy/e2e-export-completeness.test.js`
-- `tests/legacy/numeric-fidelity/session-harness.js` (the helper module the pd275 suites
+- `tests/legacy/numeric-fidelity/session-harness.js` (the helper module the retired numeric-fidelity suites
   require as `./session-harness`)
 - `tests/legacy/numeric-fidelity/session-termination.test.js`
 - `tests/legacy/numeric-fidelity/terminal.test.js`

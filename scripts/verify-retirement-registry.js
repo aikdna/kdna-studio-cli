@@ -155,58 +155,76 @@ function parentOf(root, commit) {
   return result.stdout.toString('utf8').trim();
 }
 
-// Every commit on HEAD's history that removed the path from its original
-// location, newest first. `--no-renames` makes a `git mv` count as a removal of
-// the old path rather than as a rename.
-function removalCandidates(root, originalPath) {
-  const output = gitBytes(root, ['log', '--no-renames', '--diff-filter=D', '--format=%H', '--', originalPath])
-    .toString('utf8')
-    .trim();
-  return output === '' ? [] : output.split('\n');
+// Enumerate the complete DAG before inspecting paths. Path-limited history can
+// prune a whole branch at a tree-same merge, including real removals and edits.
+// The cache belongs to this invocation, never to a repository name or HEAD ref.
+function historyGraph(root) {
+  const output = gitBytes(root, ['rev-list', '--topo-order', '--parents', 'HEAD']).toString('utf8').trim();
+  const commits = output === '' ? [] : output.split('\n').map((line) => {
+    const [commit, ...parents] = line.split(' ');
+    return { commit, parents };
+  });
+  const trees = new Map();
+  return {
+    commits,
+    state(commit, relative) {
+      if (!trees.has(commit)) {
+        const entries = new Map();
+        // Include directory entries too, and bind names as raw bytes. Decode
+        // only Git's ASCII mode/type/object header, never normalize a path.
+        const output = gitBytes(root, ['ls-tree', '-r', '-t', '-z', commit]);
+        let start = 0;
+        for (let end = output.indexOf(0); end !== -1; end = output.indexOf(0, start)) {
+          const record = output.subarray(start, end);
+          const tab = record.indexOf(9);
+          entries.set(record.subarray(tab + 1).toString('hex'), record.subarray(0, tab).toString('ascii'));
+          start = end + 1;
+        }
+        trees.set(commit, entries);
+      }
+      return trees.get(commit).get(Buffer.from(relative, 'utf8').toString('hex')) ?? null;
+    },
+  };
 }
 
-// The commit where the file was last seen in its original location: the newest
-// commit on HEAD whose tree still carries it. The registry has to name this
-// commit verbatim, so an entry cannot anchor at a retirement that a later
-// retirement superseded.
-function lastAppearanceCommit(root, originalPath) {
-  // A path-limited log omits later unrelated commits and simplifies merges.
-  // Enumerate the full ordered ancestry before looking at each actual tree.
-  const output = gitBytes(root, ['rev-list', '--topo-order', 'HEAD']).toString('utf8').trim();
-  if (output === '') return null;
-  for (const commit of output.split('\n')) {
-    if (blobAt(root, commit, originalPath) !== null) return commit;
-  }
-  return null;
+// Every reachable commit with a present-to-absent parent edge, newest first in
+// the defined topological order. A merge can remove a path from a later parent;
+// neither first-parent traversal nor path simplification is sufficient.
+function removalCandidates(root, originalPath, graph = historyGraph(root)) {
+  return graph.commits.filter(({ commit, parents }) =>
+    graph.state(commit, originalPath) === null &&
+    parents.some((parent) => graph.state(parent, originalPath) !== null),
+  ).map(({ commit }) => commit);
 }
 
-// The retirement window: from the first commit that took the file out of its
-// original location to HEAD. Every commit in that window that touched the
-// retired copy's content is a change the owner has to see and sign.
-function retirementWindow(root, originalPath, retiredFile) {
-  const removals = removalCandidates(root, originalPath);
+// The newest tree containing the original path, including unrelated commits.
+function lastAppearanceCommit(root, originalPath, graph = historyGraph(root)) {
+  return graph.commits.find(({ commit }) => graph.state(commit, originalPath) !== null)?.commit ?? null;
+}
+
+// The window covers the full ancestry range after the earliest removal. A
+// modification/deletion needs an existing parent entry. A merge adopting one
+// parent's entry adds no new content event: the changes on *all* its branches
+// are already inspected. A resolution different from every parent is exposed. Modes remain part of the
+// state, so a mode-only modification is not silently dropped.
+function retirementWindow(root, originalPath, retiredFile, graph = historyGraph(root)) {
+  const removals = removalCandidates(root, originalPath, graph);
   if (removals.length === 0) return null;
   const first = removals[removals.length - 1];
-  const output = gitBytes(root, [
-    'log',
-    '--format=%H%x09%s',
-    '--diff-filter=MD',
-    `${first}..HEAD`,
-    '--',
-    retiredFile,
-  ])
-    .toString('utf8')
-    .trim();
-  return {
-    first,
-    commits:
-      output === ''
-        ? []
-        : output.split('\n').map((line) => {
-            const [commit, ...rest] = line.split('\t');
-            return { commit, subject: rest.join('\t') };
-          }),
-  };
+  const inWindow = new Set(gitBytes(root, ['rev-list', `${first}..HEAD`]).toString('utf8').trim().split('\n'));
+  const commits = graph.commits.filter(({ commit, parents }) => {
+    if (!inWindow.has(commit)) return false;
+    const current = graph.state(commit, retiredFile);
+    const previous = parents.map((parent) => graph.state(parent, retiredFile));
+    return previous.some((blob) => blob !== null) && previous.every((blob) => blob !== current);
+  }).map(({ commit }) => ({
+    commit,
+    subject: gitBytes(root, ['show', '--no-patch', '--format=%s', commit]).toString('utf8').trimEnd(),
+  }));
+  const parents = graph.commits.find(({ commit }) => commit === first).parents
+    .map((commit, index) => ({ commit, suffix: index === 0 ? '^' : `^${index + 1}` }))
+    .filter(({ commit }) => graph.state(commit, originalPath) !== null);
+  return { first, parents, commits };
 }
 
 function blobText(root, commit, relative) {
@@ -468,6 +486,7 @@ async function verify(root) {
     if (!legacyFiles.includes(file)) findings.push({ file, check: 'registered_file_missing' });
   }
 
+  const graph = historyGraph(root);
   const rows = await runWithConcurrency(
     entries.filter((entry) => typeof entry.file === 'string' && legacyFiles.includes(entry.file)),
     async (entry) => {
@@ -531,7 +550,7 @@ async function verify(root) {
       row.signed = null;
       if (commitIsUsable && pathIsUsable) {
         try {
-          row.lastAppearance = lastAppearanceCommit(root, row.originalPath);
+          row.lastAppearance = lastAppearanceCommit(root, row.originalPath, graph);
           row.retirementCarriesOriginalPath = blobAt(root, row.retiredFromCommit, row.originalPath) !== null;
           if (row.retirementCarriesOriginalPath) {
             // The named commit wrote the file itself: that write is also a way a
@@ -549,26 +568,30 @@ async function verify(root) {
               );
             }
           }
-          const window = retirementWindow(root, row.originalPath, entry.file);
+          const window = retirementWindow(root, row.originalPath, entry.file, graph);
           if (window !== null) {
             row.firstRetirement = window.first;
             row.windowCommits = window.commits;
-            // Did the first retirement itself change the bytes while moving them?
-            const beforeMove = blobText(root, `${window.first}^`, row.originalPath);
+            // Compare every parent that carried the original, including later
+            // merge parents. Preserve one complete, labelled diff per changed
+            // parent; the retirement itself still counts as one content event.
             const afterMove = blobText(root, window.first, entry.file);
-            if (beforeMove !== null && afterMove !== null) {
-              row.retirementRewroteContent = beforeMove !== afterMove;
-              if (row.retirementRewroteContent) {
-                row.retirementRewriteDiff = lineDiff(
+            if (afterMove !== null) {
+              row.retirementRewroteContent = false;
+              for (const parent of window.parents) {
+                const beforeMove = blobText(root, parent.commit, row.originalPath);
+                if (beforeMove === afterMove) continue;
+                row.retirementRewroteContent = true;
+                row.retirementRewriteDiff.push(...lineDiff(
                   beforeMove,
                   afterMove,
-                  `${window.first.slice(0, 12)}^:${row.originalPath}`,
+                  `${window.first.slice(0, 12)}${parent.suffix}:${row.originalPath}`,
                   `${window.first.slice(0, 12)}:${entry.file}`,
-                );
-                row.retirementRewriteLines = row.retirementRewriteDiff.filter(
-                  (line) => (line.startsWith('-') || line.startsWith('+')) && !line.startsWith('---') && !line.startsWith('+++'),
-                ).length;
+                ));
               }
+              row.retirementRewriteLines = row.retirementRewriteDiff.filter(
+                (line) => (line.startsWith('-') || line.startsWith('+')) && !line.startsWith('---') && !line.startsWith('+++'),
+              ).length;
             }
           }
           row.signed = signatureCovers(
@@ -782,6 +805,7 @@ module.exports = {
   blobText,
   fieldFindings,
   historicalSha256,
+  historyGraph,
   lastAppearanceCommit,
   lineDiff,
   overlayAtOriginalPath,

@@ -1,3 +1,26 @@
+## 0.13.0-rc.components.1
+
+Typed alternative groups and explicit human/delegated-Agent channels now drive Studio format2. Export performs actual saved-byte completion; current verification and Read use one exact component graph. Old bundles are explicitly noncurrent.
+
+## 0.12.0-rc.shared-evidence.3 — unpublished candidate
+
+- Correct the current terminal guide coordinate by referring to this candidate; retain exact package coordinates in package metadata and the Creator archive binding.
+- Runtime, helpers and dependency graph are unchanged.
+
+## 0.12.0-rc.shared-evidence.2 — unpublished candidate
+
+- Keep reusable public dependency and Creator bindings free of transient implementation acceptance state.
+- Preserve the exact runtime and dependency graph from RC.1; version and documentation advance together.
+
+## 0.12.0-rc.shared-evidence.1 — unpublished candidate
+
+- Consume the current exact Core/Read graph and sealed Studio shared-evidence RC.
+- Check bound dependency contents and resolution before code/material access,
+  preserving the public terminal operations and single Core instance.
+- Forward new and legacy Studio evidence without creating a parser or authority.
+- Keep prior transport observations and limits; joint Studio and consumer
+  independent acceptance are still required before landing.
+
 # Changelog
 
 ## Unreleased

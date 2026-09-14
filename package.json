@@ -1,47 +1,40 @@
 {
   "name": "@aikdna/kdna-studio-cli",
-  "version": "0.11.0",
-  "description": "Official KDNA Studio command-line authoring entry for creating, reviewing, compiling, and exporting .kdna judgment assets through the KDNA toolchain.",
+  "version": "0.13.0-rc.components.1",
+  "description": "Terminal Host for current typed Studio creation and separate human or authorized Agent adoption channels.",
   "type": "commonjs",
   "bin": {
     "kdna-studio": "bin/kdna-studio.js"
   },
   "files": [
     "bin/kdna-studio.js",
-    "src/ai/index.js",
-    "src/ai/distill.js",
-    "src/ai/filter.js",
-    "src/ai/interview.js",
-    "src/creation-cli.js",
-    "src/application-host.js",
-    "src/llm/",
+    "src/terminal-workspace.js",
+    "src/public-bindings.json",
     "docs/CREATION_COMMAND_CONTRACT.md",
     "docs/TERMINAL_AGENT_CREATION.md",
     "LICENSE",
     "NOTICE",
-    "README.md"
+    "README.md",
+    "src/component-operations.js"
   ],
   "scripts": {
-    "lint": "node scripts/run-lint.js",
-    "pretest": "node scripts/acquire-trusted-npm-release.js",
-    "test": "node --test tests/*.test.js",
+    "lint": "node --check bin/kdna-studio.js && node --check src/terminal-workspace.js && node --check src/component-operations.js",
+    "test": "node --test tests/current-components/*.test.cjs tests/current/*.test.js",
     "test:all": "node scripts/run-test-all.js",
-    "test:runtime": "node scripts/run-product-tests.js",
     "test:candidate-chain": "node scripts/verify-runtime-candidate-chain.js",
     "verify:candidate-sources": "node scripts/verify-runtime-candidate-sources.js",
     "check:protocol-names": "node scripts/check-current-protocol-names.js",
+    "check:publish-coordinates": "node scripts/check-publish-coordinates.js",
     "release:check": "node scripts/release-check.js",
     "release:generate-evidence": "node scripts/generate-release-evidence.js",
     "release:publish-verified": "node scripts/publish-verified-artifact.js",
-    "prepublishOnly": "node scripts/run-test-all.js && node scripts/verify-runtime-candidate-chain.js && node scripts/release-check.js"
+    "prepublishOnly": "node scripts/check-publish-coordinates.js && node scripts/run-test-all.js && node scripts/verify-runtime-candidate-chain.js && node scripts/release-check.js"
   },
   "keywords": [
     "kdna",
-    "kdna-studio",
-    "kdna-studio-cli",
-    "authoring",
-    "provenance",
-    "judgment-cards"
+    "agent-native",
+    "creation",
+    "terminal"
   ],
   "license": "Apache-2.0",
   "repository": {
@@ -56,17 +49,21 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@aikdna/kdna-core": "0.21.0",
-    "@aikdna/kdna-studio-core": "3.0.0",
-    "ajv": "^8.20.0",
-    "ajv-formats": "^3.0.1",
-    "cbor-x": "^1.6.5"
+    "@aikdna/kdna-core": "file:vendor/aikdna-kdna-core-0.24.0-rc.component-semantics.2.tgz",
+    "@aikdna/kdna-read": "file:vendor/aikdna-kdna-read-0.3.0-rc.component-semantics.2.tgz",
+    "@aikdna/kdna-studio-core": "file:vendor/aikdna-kdna-studio-core-4.0.0-rc.components.1.tgz"
   },
   "directories": {
     "test": "tests"
   },
   "author": "",
   "overrides": {
-    "fast-uri": "3.1.5"
+    "fast-uri": "3.1.7",
+    "@aikdna/kdna-core": "$@aikdna/kdna-core",
+    "@aikdna/kdna-read": "$@aikdna/kdna-read",
+    "@aikdna/kdna-studio-core": "$@aikdna/kdna-studio-core"
+  },
+  "exports": {
+    "./package.json": "./package.json"
   }
 }

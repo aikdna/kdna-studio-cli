@@ -1,0 +1,790 @@
+{
+  "kind": "studio-blank-material-evidence",
+  "session_id": "session:5c16ed5a-2045-4567-ba61-f4b0b8c031d4",
+  "synthetic_fixture": true,
+  "agent": {
+    "name": "synthetic-cross-provider-agent 😀 é",
+    "version": "fixture-1"
+  },
+  "compiler": {
+    "name": "@aikdna/kdna-studio-core",
+    "version": "3.0.0"
+  },
+  "revision": 9,
+  "materials": [
+    {
+      "id": "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+      "type": "text",
+      "title": "Text é / é",
+      "content": "Synthetic claim: review support. Quotes \" and slash /, backslash \\, controls \b\t\n\f\r, separators   , emoji 😀.",
+      "coordinate": "synthetic://cross-provider/text#one",
+      "content_hash": "sha256:89c0e2ccc6fb4e92a7cbfc38397d96d48db6fb11d84c805d9625260badc01661",
+      "imported_at": "2026-09-10T05:56:45.455Z"
+    },
+    {
+      "id": "ev_45596792-19ad-4253-ac90-fba7c91f14c8",
+      "type": "interview",
+      "title": "Synthetic interview",
+      "content": "Synthetic respondent requests that a revised assertion is reviewed again.",
+      "coordinate": "synthetic://cross-provider/interview#one",
+      "content_hash": "sha256:87e6bb6e2e45896c6a6ad917a098617abc76a00c96c58f847f2e13ca580b1157",
+      "imported_at": "2026-09-10T05:56:45.455Z"
+    }
+  ],
+  "candidates": [
+    {
+      "ref": "candidate:1899e8a3-a2a8-44b6-b76c-4d7ea42c7b5d",
+      "revision": 2,
+      "title": "Trace support",
+      "subject": "A fictional assertion",
+      "scope": "Synthetic evidence exercise",
+      "statement": "Revise unsupported assertions and review the revision before sharing.",
+      "rationale": "Traceable support allows a second review.",
+      "material_refs": [
+        "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+        "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+      ],
+      "status": "selected",
+      "revision_request": null
+    },
+    {
+      "ref": "candidate:c7d6677d-8b8e-4d9a-a8a6-28664a993c12",
+      "revision": 1,
+      "title": "Overbroad option",
+      "subject": "A fictional assertion",
+      "scope": "Synthetic evidence exercise",
+      "statement": "Every assertion is ready to share.",
+      "rationale": "Traceable support allows a second review.",
+      "material_refs": [
+        "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+        "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+      ],
+      "status": "rejected",
+      "revision_request": null
+    }
+  ],
+  "human_messages": [
+    {
+      "id": "synthetic-message-1",
+      "role": "human",
+      "channel": "synthetic-human-channel",
+      "review_id": "review:afa202dd-f28c-4f8a-a887-c974259ca94d",
+      "text": "合成审阅：reject",
+      "interpreted_by": {
+        "name": "synthetic-cross-provider-agent 😀 é",
+        "version": "fixture-1"
+      },
+      "interpretation": {
+        "kind": "reject",
+        "candidateRefs": [
+          "candidate:c7d6677d-8b8e-4d9a-a8a6-28664a993c12"
+        ]
+      },
+      "revision": 5,
+      "review": {
+        "review_id": "review:afa202dd-f28c-4f8a-a887-c974259ca94d",
+        "session_id": "session:5c16ed5a-2045-4567-ba61-f4b0b8c031d4",
+        "revision": 5,
+        "brief": {
+          "title": "Synthetic traceable review 😀",
+          "scope": "Fictional editorial exercise only."
+        },
+        "candidates": [
+          {
+            "ref": "candidate:1899e8a3-a2a8-44b6-b76c-4d7ea42c7b5d",
+            "revision": 1,
+            "title": "Trace support",
+            "subject": "A fictional assertion",
+            "scope": "Synthetic evidence exercise",
+            "statement": "Review an assertion when its support cannot be traced.",
+            "rationale": "Traceable support allows a second review.",
+            "material_refs": [
+              "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+              "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+            ],
+            "status": "proposed",
+            "revision_request": null
+          },
+          {
+            "ref": "candidate:c7d6677d-8b8e-4d9a-a8a6-28664a993c12",
+            "revision": 1,
+            "title": "Overbroad option",
+            "subject": "A fictional assertion",
+            "scope": "Synthetic evidence exercise",
+            "statement": "Every assertion is ready to share.",
+            "rationale": "Traceable support allows a second review.",
+            "material_refs": [
+              "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+              "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+            ],
+            "status": "proposed",
+            "revision_request": null
+          }
+        ],
+        "compiled": null
+      },
+      "identity_verification": "not_verified"
+    },
+    {
+      "id": "synthetic-message-2",
+      "role": "human",
+      "channel": "synthetic-human-channel",
+      "review_id": "review:7933da03-00f2-4125-9b2c-0bf21dfdecf8",
+      "text": "合成审阅：revise",
+      "interpreted_by": {
+        "name": "synthetic-cross-provider-agent 😀 é",
+        "version": "fixture-1"
+      },
+      "interpretation": {
+        "kind": "revise",
+        "candidateRefs": [
+          "candidate:1899e8a3-a2a8-44b6-b76c-4d7ea42c7b5d"
+        ]
+      },
+      "revision": 6,
+      "review": {
+        "review_id": "review:7933da03-00f2-4125-9b2c-0bf21dfdecf8",
+        "session_id": "session:5c16ed5a-2045-4567-ba61-f4b0b8c031d4",
+        "revision": 6,
+        "brief": {
+          "title": "Synthetic traceable review 😀",
+          "scope": "Fictional editorial exercise only."
+        },
+        "candidates": [
+          {
+            "ref": "candidate:1899e8a3-a2a8-44b6-b76c-4d7ea42c7b5d",
+            "revision": 1,
+            "title": "Trace support",
+            "subject": "A fictional assertion",
+            "scope": "Synthetic evidence exercise",
+            "statement": "Review an assertion when its support cannot be traced.",
+            "rationale": "Traceable support allows a second review.",
+            "material_refs": [
+              "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+              "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+            ],
+            "status": "proposed",
+            "revision_request": null
+          },
+          {
+            "ref": "candidate:c7d6677d-8b8e-4d9a-a8a6-28664a993c12",
+            "revision": 1,
+            "title": "Overbroad option",
+            "subject": "A fictional assertion",
+            "scope": "Synthetic evidence exercise",
+            "statement": "Every assertion is ready to share.",
+            "rationale": "Traceable support allows a second review.",
+            "material_refs": [
+              "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+              "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+            ],
+            "status": "rejected",
+            "revision_request": null
+          }
+        ],
+        "compiled": null
+      },
+      "identity_verification": "not_verified"
+    },
+    {
+      "id": "synthetic-message-3",
+      "role": "human",
+      "channel": "synthetic-human-channel",
+      "review_id": "review:1019b2f8-7ab9-4b1e-b7b3-5b4df9297188",
+      "text": "合成审阅：select",
+      "interpreted_by": {
+        "name": "synthetic-cross-provider-agent 😀 é",
+        "version": "fixture-1"
+      },
+      "interpretation": {
+        "kind": "select",
+        "candidateRefs": [
+          "candidate:1899e8a3-a2a8-44b6-b76c-4d7ea42c7b5d"
+        ]
+      },
+      "revision": 8,
+      "review": {
+        "review_id": "review:1019b2f8-7ab9-4b1e-b7b3-5b4df9297188",
+        "session_id": "session:5c16ed5a-2045-4567-ba61-f4b0b8c031d4",
+        "revision": 8,
+        "brief": {
+          "title": "Synthetic traceable review 😀",
+          "scope": "Fictional editorial exercise only."
+        },
+        "candidates": [
+          {
+            "ref": "candidate:1899e8a3-a2a8-44b6-b76c-4d7ea42c7b5d",
+            "revision": 2,
+            "title": "Trace support",
+            "subject": "A fictional assertion",
+            "scope": "Synthetic evidence exercise",
+            "statement": "Revise unsupported assertions and review the revision before sharing.",
+            "rationale": "Traceable support allows a second review.",
+            "material_refs": [
+              "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+              "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+            ],
+            "status": "proposed",
+            "revision_request": null
+          },
+          {
+            "ref": "candidate:c7d6677d-8b8e-4d9a-a8a6-28664a993c12",
+            "revision": 1,
+            "title": "Overbroad option",
+            "subject": "A fictional assertion",
+            "scope": "Synthetic evidence exercise",
+            "statement": "Every assertion is ready to share.",
+            "rationale": "Traceable support allows a second review.",
+            "material_refs": [
+              "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+              "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+            ],
+            "status": "rejected",
+            "revision_request": null
+          }
+        ],
+        "compiled": null
+      },
+      "identity_verification": "not_verified"
+    },
+    {
+      "id": "synthetic-message-4",
+      "role": "human",
+      "channel": "synthetic-human-channel",
+      "review_id": "review:d68a15f4-048f-4958-bb28-0216fc64cade",
+      "text": "确认当前展示的修改稿，导出合成测试文件。",
+      "interpreted_by": {
+        "name": "synthetic-cross-provider-agent 😀 é",
+        "version": "fixture-1"
+      },
+      "interpretation": {
+        "kind": "confirm"
+      },
+      "revision": 9,
+      "review": {
+        "review_id": "review:d68a15f4-048f-4958-bb28-0216fc64cade",
+        "session_id": "session:5c16ed5a-2045-4567-ba61-f4b0b8c031d4",
+        "revision": 9,
+        "brief": {
+          "title": "Synthetic traceable review 😀",
+          "scope": "Fictional editorial exercise only."
+        },
+        "candidates": [
+          {
+            "ref": "candidate:1899e8a3-a2a8-44b6-b76c-4d7ea42c7b5d",
+            "revision": 2,
+            "title": "Trace support",
+            "subject": "A fictional assertion",
+            "scope": "Synthetic evidence exercise",
+            "statement": "Revise unsupported assertions and review the revision before sharing.",
+            "rationale": "Traceable support allows a second review.",
+            "material_refs": [
+              "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+              "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+            ],
+            "status": "selected",
+            "revision_request": null
+          },
+          {
+            "ref": "candidate:c7d6677d-8b8e-4d9a-a8a6-28664a993c12",
+            "revision": 1,
+            "title": "Overbroad option",
+            "subject": "A fictional assertion",
+            "scope": "Synthetic evidence exercise",
+            "statement": "Every assertion is ready to share.",
+            "rationale": "Traceable support allows a second review.",
+            "material_refs": [
+              "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+              "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+            ],
+            "status": "rejected",
+            "revision_request": null
+          }
+        ],
+        "compiled": {
+          "session_id": "session:5c16ed5a-2045-4567-ba61-f4b0b8c031d4",
+          "revision": 9,
+          "artifact_digest": "sha256:c7818eada62db00633647b670c03d0aaff0afc37a68677488ff3c4cb779d9200",
+          "title": "Synthetic traceable review 😀",
+          "scope": "Fictional editorial exercise only.",
+          "judgments": [
+            {
+              "candidate_ref": "candidate:1899e8a3-a2a8-44b6-b76c-4d7ea42c7b5d",
+              "title": "Trace support",
+              "subject": "A fictional assertion",
+              "scope": "Synthetic evidence exercise",
+              "statement": "Revise unsupported assertions and review the revision before sharing.",
+              "rationale": "Traceable support allows a second review."
+            }
+          ],
+          "format_valid": true,
+          "creation_accepted": "not_evaluated"
+        }
+      },
+      "identity_verification": "not_verified"
+    }
+  ],
+  "history": [
+    {
+      "sequence": 1,
+      "revision": 1,
+      "event": "brief_recorded",
+      "at": "2026-09-10T05:56:45.454Z",
+      "detail": {
+        "title": "Synthetic traceable review 😀",
+        "scope": "Fictional editorial exercise only."
+      },
+      "previous_digest": null,
+      "digest": "sha256:141863746cda4ce4d5da2e49f41291d5599d5cbbc083745ccd5233f8a2f4276c"
+    },
+    {
+      "sequence": 2,
+      "revision": 2,
+      "event": "material_recorded",
+      "at": "2026-09-10T05:56:45.455Z",
+      "detail": {
+        "id": "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+        "type": "text",
+        "title": "Text é / é",
+        "content": "Synthetic claim: review support. Quotes \" and slash /, backslash \\, controls \b\t\n\f\r, separators   , emoji 😀.",
+        "coordinate": "synthetic://cross-provider/text#one",
+        "content_hash": "sha256:89c0e2ccc6fb4e92a7cbfc38397d96d48db6fb11d84c805d9625260badc01661",
+        "imported_at": "2026-09-10T05:56:45.455Z"
+      },
+      "previous_digest": "sha256:141863746cda4ce4d5da2e49f41291d5599d5cbbc083745ccd5233f8a2f4276c",
+      "digest": "sha256:8889022576799391ae39acca8c04d224ce64a3197347a6125c262a4601084449"
+    },
+    {
+      "sequence": 3,
+      "revision": 3,
+      "event": "material_recorded",
+      "at": "2026-09-10T05:56:45.455Z",
+      "detail": {
+        "id": "ev_45596792-19ad-4253-ac90-fba7c91f14c8",
+        "type": "interview",
+        "title": "Synthetic interview",
+        "content": "Synthetic respondent requests that a revised assertion is reviewed again.",
+        "coordinate": "synthetic://cross-provider/interview#one",
+        "content_hash": "sha256:87e6bb6e2e45896c6a6ad917a098617abc76a00c96c58f847f2e13ca580b1157",
+        "imported_at": "2026-09-10T05:56:45.455Z"
+      },
+      "previous_digest": "sha256:8889022576799391ae39acca8c04d224ce64a3197347a6125c262a4601084449",
+      "digest": "sha256:5a99b98813f4dc4d56c4139c8012a8df781af5319650f34fcd846356e28893d9"
+    },
+    {
+      "sequence": 4,
+      "revision": 4,
+      "event": "candidate_proposed",
+      "at": "2026-09-10T05:56:45.455Z",
+      "detail": {
+        "ref": "candidate:1899e8a3-a2a8-44b6-b76c-4d7ea42c7b5d",
+        "revision": 1,
+        "title": "Trace support",
+        "subject": "A fictional assertion",
+        "scope": "Synthetic evidence exercise",
+        "statement": "Review an assertion when its support cannot be traced.",
+        "rationale": "Traceable support allows a second review.",
+        "material_refs": [
+          "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+          "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+        ],
+        "status": "proposed",
+        "revision_request": null
+      },
+      "previous_digest": "sha256:5a99b98813f4dc4d56c4139c8012a8df781af5319650f34fcd846356e28893d9",
+      "digest": "sha256:e920daa9742a8f3c41abac259f9a52c68f6eb9a190c9f444e462cea9e2985bb9"
+    },
+    {
+      "sequence": 5,
+      "revision": 5,
+      "event": "candidate_proposed",
+      "at": "2026-09-10T05:56:45.455Z",
+      "detail": {
+        "ref": "candidate:c7d6677d-8b8e-4d9a-a8a6-28664a993c12",
+        "revision": 1,
+        "title": "Overbroad option",
+        "subject": "A fictional assertion",
+        "scope": "Synthetic evidence exercise",
+        "statement": "Every assertion is ready to share.",
+        "rationale": "Traceable support allows a second review.",
+        "material_refs": [
+          "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+          "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+        ],
+        "status": "proposed",
+        "revision_request": null
+      },
+      "previous_digest": "sha256:e920daa9742a8f3c41abac259f9a52c68f6eb9a190c9f444e462cea9e2985bb9",
+      "digest": "sha256:e9433fb9e0e44f78c8bdcace4e104de1ec150d1782fe26ebe26028d80875044b"
+    },
+    {
+      "sequence": 6,
+      "revision": 6,
+      "event": "human_reply",
+      "at": "2026-09-10T05:56:45.456Z",
+      "detail": {
+        "id": "synthetic-message-1",
+        "role": "human",
+        "channel": "synthetic-human-channel",
+        "review_id": "review:afa202dd-f28c-4f8a-a887-c974259ca94d",
+        "text": "合成审阅：reject",
+        "interpreted_by": {
+          "name": "synthetic-cross-provider-agent 😀 é",
+          "version": "fixture-1"
+        },
+        "interpretation": {
+          "kind": "reject",
+          "candidateRefs": [
+            "candidate:c7d6677d-8b8e-4d9a-a8a6-28664a993c12"
+          ]
+        },
+        "revision": 5,
+        "review": {
+          "review_id": "review:afa202dd-f28c-4f8a-a887-c974259ca94d",
+          "session_id": "session:5c16ed5a-2045-4567-ba61-f4b0b8c031d4",
+          "revision": 5,
+          "brief": {
+            "title": "Synthetic traceable review 😀",
+            "scope": "Fictional editorial exercise only."
+          },
+          "candidates": [
+            {
+              "ref": "candidate:1899e8a3-a2a8-44b6-b76c-4d7ea42c7b5d",
+              "revision": 1,
+              "title": "Trace support",
+              "subject": "A fictional assertion",
+              "scope": "Synthetic evidence exercise",
+              "statement": "Review an assertion when its support cannot be traced.",
+              "rationale": "Traceable support allows a second review.",
+              "material_refs": [
+                "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+                "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+              ],
+              "status": "proposed",
+              "revision_request": null
+            },
+            {
+              "ref": "candidate:c7d6677d-8b8e-4d9a-a8a6-28664a993c12",
+              "revision": 1,
+              "title": "Overbroad option",
+              "subject": "A fictional assertion",
+              "scope": "Synthetic evidence exercise",
+              "statement": "Every assertion is ready to share.",
+              "rationale": "Traceable support allows a second review.",
+              "material_refs": [
+                "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+                "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+              ],
+              "status": "proposed",
+              "revision_request": null
+            }
+          ],
+          "compiled": null
+        },
+        "identity_verification": "not_verified"
+      },
+      "previous_digest": "sha256:e9433fb9e0e44f78c8bdcace4e104de1ec150d1782fe26ebe26028d80875044b",
+      "digest": "sha256:3bb549a941e14d78987116ce41ebe49a6e4892fed16d6ce6d118b848c685db26"
+    },
+    {
+      "sequence": 7,
+      "revision": 7,
+      "event": "human_reply",
+      "at": "2026-09-10T05:56:45.456Z",
+      "detail": {
+        "id": "synthetic-message-2",
+        "role": "human",
+        "channel": "synthetic-human-channel",
+        "review_id": "review:7933da03-00f2-4125-9b2c-0bf21dfdecf8",
+        "text": "合成审阅：revise",
+        "interpreted_by": {
+          "name": "synthetic-cross-provider-agent 😀 é",
+          "version": "fixture-1"
+        },
+        "interpretation": {
+          "kind": "revise",
+          "candidateRefs": [
+            "candidate:1899e8a3-a2a8-44b6-b76c-4d7ea42c7b5d"
+          ]
+        },
+        "revision": 6,
+        "review": {
+          "review_id": "review:7933da03-00f2-4125-9b2c-0bf21dfdecf8",
+          "session_id": "session:5c16ed5a-2045-4567-ba61-f4b0b8c031d4",
+          "revision": 6,
+          "brief": {
+            "title": "Synthetic traceable review 😀",
+            "scope": "Fictional editorial exercise only."
+          },
+          "candidates": [
+            {
+              "ref": "candidate:1899e8a3-a2a8-44b6-b76c-4d7ea42c7b5d",
+              "revision": 1,
+              "title": "Trace support",
+              "subject": "A fictional assertion",
+              "scope": "Synthetic evidence exercise",
+              "statement": "Review an assertion when its support cannot be traced.",
+              "rationale": "Traceable support allows a second review.",
+              "material_refs": [
+                "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+                "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+              ],
+              "status": "proposed",
+              "revision_request": null
+            },
+            {
+              "ref": "candidate:c7d6677d-8b8e-4d9a-a8a6-28664a993c12",
+              "revision": 1,
+              "title": "Overbroad option",
+              "subject": "A fictional assertion",
+              "scope": "Synthetic evidence exercise",
+              "statement": "Every assertion is ready to share.",
+              "rationale": "Traceable support allows a second review.",
+              "material_refs": [
+                "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+                "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+              ],
+              "status": "rejected",
+              "revision_request": null
+            }
+          ],
+          "compiled": null
+        },
+        "identity_verification": "not_verified"
+      },
+      "previous_digest": "sha256:3bb549a941e14d78987116ce41ebe49a6e4892fed16d6ce6d118b848c685db26",
+      "digest": "sha256:b42c4c4e39f9011b5cc88f7a1a91759598fecca7b9837978d4d31727eb1a9f04"
+    },
+    {
+      "sequence": 8,
+      "revision": 8,
+      "event": "candidate_revised",
+      "at": "2026-09-10T05:56:45.456Z",
+      "detail": {
+        "previous": {
+          "ref": "candidate:1899e8a3-a2a8-44b6-b76c-4d7ea42c7b5d",
+          "revision": 1,
+          "title": "Trace support",
+          "subject": "A fictional assertion",
+          "scope": "Synthetic evidence exercise",
+          "statement": "Review an assertion when its support cannot be traced.",
+          "rationale": "Traceable support allows a second review.",
+          "material_refs": [
+            "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+            "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+          ],
+          "status": "awaiting_revision",
+          "revision_request": "synthetic-message-2"
+        },
+        "replacement": {
+          "ref": "candidate:1899e8a3-a2a8-44b6-b76c-4d7ea42c7b5d",
+          "revision": 2,
+          "title": "Trace support",
+          "subject": "A fictional assertion",
+          "scope": "Synthetic evidence exercise",
+          "statement": "Revise unsupported assertions and review the revision before sharing.",
+          "rationale": "Traceable support allows a second review.",
+          "material_refs": [
+            "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+            "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+          ],
+          "status": "proposed",
+          "revision_request": null
+        },
+        "explanation": "Synthetic human requested review after revision.",
+        "requested_by_message": "synthetic-message-2"
+      },
+      "previous_digest": "sha256:b42c4c4e39f9011b5cc88f7a1a91759598fecca7b9837978d4d31727eb1a9f04",
+      "digest": "sha256:b053366a08f125be92e3491799b90989bcbc110a76638fb1ead368ade6089d88"
+    },
+    {
+      "sequence": 9,
+      "revision": 9,
+      "event": "human_reply",
+      "at": "2026-09-10T05:56:45.457Z",
+      "detail": {
+        "id": "synthetic-message-3",
+        "role": "human",
+        "channel": "synthetic-human-channel",
+        "review_id": "review:1019b2f8-7ab9-4b1e-b7b3-5b4df9297188",
+        "text": "合成审阅：select",
+        "interpreted_by": {
+          "name": "synthetic-cross-provider-agent 😀 é",
+          "version": "fixture-1"
+        },
+        "interpretation": {
+          "kind": "select",
+          "candidateRefs": [
+            "candidate:1899e8a3-a2a8-44b6-b76c-4d7ea42c7b5d"
+          ]
+        },
+        "revision": 8,
+        "review": {
+          "review_id": "review:1019b2f8-7ab9-4b1e-b7b3-5b4df9297188",
+          "session_id": "session:5c16ed5a-2045-4567-ba61-f4b0b8c031d4",
+          "revision": 8,
+          "brief": {
+            "title": "Synthetic traceable review 😀",
+            "scope": "Fictional editorial exercise only."
+          },
+          "candidates": [
+            {
+              "ref": "candidate:1899e8a3-a2a8-44b6-b76c-4d7ea42c7b5d",
+              "revision": 2,
+              "title": "Trace support",
+              "subject": "A fictional assertion",
+              "scope": "Synthetic evidence exercise",
+              "statement": "Revise unsupported assertions and review the revision before sharing.",
+              "rationale": "Traceable support allows a second review.",
+              "material_refs": [
+                "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+                "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+              ],
+              "status": "proposed",
+              "revision_request": null
+            },
+            {
+              "ref": "candidate:c7d6677d-8b8e-4d9a-a8a6-28664a993c12",
+              "revision": 1,
+              "title": "Overbroad option",
+              "subject": "A fictional assertion",
+              "scope": "Synthetic evidence exercise",
+              "statement": "Every assertion is ready to share.",
+              "rationale": "Traceable support allows a second review.",
+              "material_refs": [
+                "ev_bd575f6b-0f69-4d96-a3de-a49b58114a0b",
+                "ev_45596792-19ad-4253-ac90-fba7c91f14c8"
+              ],
+              "status": "rejected",
+              "revision_request": null
+            }
+          ],
+          "compiled": null
+        },
+        "identity_verification": "not_verified"
+      },
+      "previous_digest": "sha256:b053366a08f125be92e3491799b90989bcbc110a76638fb1ead368ade6089d88",
+      "digest": "sha256:791f67ef5fd74f87dd5e09e76817749c798a56b6d18f5d77af1e50d54d33b4c1"
+    },
+    {
+      "sequence": 10,
+      "revision": 9,
+      "event": "compiler_preview",
+      "at": "2026-09-10T05:56:45.645Z",
+      "detail": {
+        "session_id": "session:5c16ed5a-2045-4567-ba61-f4b0b8c031d4",
+        "revision": 9,
+        "artifact_digest": "sha256:c7818eada62db00633647b670c03d0aaff0afc37a68677488ff3c4cb779d9200",
+        "title": "Synthetic traceable review 😀",
+        "scope": "Fictional editorial exercise only.",
+        "judgments": [
+          {
+            "candidate_ref": "candidate:1899e8a3-a2a8-44b6-b76c-4d7ea42c7b5d",
+            "title": "Trace support",
+            "subject": "A fictional assertion",
+            "scope": "Synthetic evidence exercise",
+            "statement": "Revise unsupported assertions and review the revision before sharing.",
+            "rationale": "Traceable support allows a second review."
+          }
+        ],
+        "format_valid": true,
+        "creation_accepted": "not_evaluated",
+        "compiler": {
+          "name": "@aikdna/kdna-studio-core",
+          "version": "3.0.0"
+        },
+        "agent": {
+          "name": "synthetic-cross-provider-agent 😀 é",
+          "version": "fixture-1"
+        }
+      },
+      "previous_digest": "sha256:791f67ef5fd74f87dd5e09e76817749c798a56b6d18f5d77af1e50d54d33b4c1",
+      "digest": "sha256:9e14345ae4ef0b5f8ab2266ad0daf7ac2fe493843a62847ea85a380afdb078b4"
+    },
+    {
+      "sequence": 11,
+      "revision": 9,
+      "event": "human_final_decision",
+      "at": "2026-09-10T05:56:45.645Z",
+      "detail": {
+        "message_id": "synthetic-message-4",
+        "channel": "synthetic-human-channel",
+        "text": "确认当前展示的修改稿，导出合成测试文件。",
+        "review_id": "review:d68a15f4-048f-4958-bb28-0216fc64cade",
+        "session_id": "session:5c16ed5a-2045-4567-ba61-f4b0b8c031d4",
+        "revision": 9,
+        "artifact_digest": "sha256:c7818eada62db00633647b670c03d0aaff0afc37a68677488ff3c4cb779d9200",
+        "confirmation": "claimed_unverified",
+        "identity_verification": "not_verified"
+      },
+      "previous_digest": "sha256:9e14345ae4ef0b5f8ab2266ad0daf7ac2fe493843a62847ea85a380afdb078b4",
+      "digest": "sha256:911f821fe439f50704a85fc5189f8cce519c0c1844aa86fe3fdc1af509a9cd0d"
+    }
+  ],
+  "final_decision": {
+    "message_id": "synthetic-message-4",
+    "channel": "synthetic-human-channel",
+    "text": "确认当前展示的修改稿，导出合成测试文件。",
+    "review_id": "review:d68a15f4-048f-4958-bb28-0216fc64cade",
+    "session_id": "session:5c16ed5a-2045-4567-ba61-f4b0b8c031d4",
+    "revision": 9,
+    "artifact_digest": "sha256:c7818eada62db00633647b670c03d0aaff0afc37a68677488ff3c4cb779d9200",
+    "confirmation": "claimed_unverified",
+    "identity_verification": "not_verified"
+  },
+  "artifact": {
+    "digest": "sha256:c7818eada62db00633647b670c03d0aaff0afc37a68677488ff3c4cb779d9200",
+    "bytes": 1738
+  },
+  "core": {
+    "status": "valid",
+    "package": "@aikdna/kdna-core",
+    "version": "0.23.0",
+    "digests": {
+      "A": {
+        "basis": "container_bytes",
+        "profile": "kdna.digest-basis.container-bytes",
+        "profile_version": "0.2.0",
+        "algorithm": "SHA-256",
+        "observed": "sha256:c7818eada62db00633647b670c03d0aaff0afc37a68677488ff3c4cb779d9200",
+        "comparison": {
+          "state": "not_compared",
+          "expected": null,
+          "expected_source": null
+        }
+      },
+      "C": {
+        "basis": "content_tree",
+        "profile": "kdna.digest-basis.content-tree",
+        "profile_version": "0.2.0",
+        "algorithm": "SHA-256",
+        "observed": "sha256:7ff7ebdaffba69af0738a1eacd48ec202e48297da6989e9f180a7b5c52119a20",
+        "comparison": {
+          "state": "not_compared",
+          "expected": null,
+          "expected_source": null
+        }
+      },
+      "E": {
+        "basis": "runtime_entry_set",
+        "profile": "kdna.digest-basis.runtime-entry-set",
+        "profile_version": "0.2.0",
+        "algorithm": "SHA-256",
+        "observed": "sha256:b667ff1c842909af7a12d31d5e65e5cf896b1bfe8007752b80b309bbbce2e3a0",
+        "comparison": {
+          "state": "not_compared",
+          "expected": null,
+          "expected_source": null
+        }
+      }
+    }
+  },
+  "creation": {
+    "requiredness": "satisfied",
+    "accepted": "not_evaluated"
+  },
+  "confirmation": "claimed_unverified",
+  "identity": "not_verified",
+  "read_permission": "not_evaluated",
+  "action_authorization": "not_evaluated"
+}

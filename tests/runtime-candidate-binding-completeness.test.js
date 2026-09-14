@@ -9,14 +9,44 @@ const { verifyCandidateBinding } = require('../scripts/runtime-candidate-binding
 
 const ROOT = path.resolve(__dirname, '..');
 
+// The candidate binding describes a *graph*, and `fixtures/runtime-candidates/
+// binding.json` is the committed description of the graph this repository binds.
+// The repository's own working graph is deliberately not a bound candidate graph
+// (the direct dependencies moved to F-INSTALL-1 `file:` coordinates, which the
+// exact-SemVer leg of the binding rejects), so the completeness baseline is
+// staged from the fixture instead of from the live package.json/package-lock.
+// The last test keeps the live-graph fact itself pinned.
 function copyFixtureRoot(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-cli-binding-completeness-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, 'fixtures/runtime-candidates'), { recursive: true });
   fs.mkdirSync(path.join(root, '.github/workflows'), { recursive: true });
-  for (const file of ['package.json', 'package-lock.json']) {
-    fs.copyFileSync(path.join(ROOT, file), path.join(root, file));
-  }
+  const binding = JSON.parse(
+    fs.readFileSync(path.join(ROOT, 'fixtures/runtime-candidates/binding.json'), 'utf8'),
+  );
+  const dependencies = Object.fromEntries(
+    binding.packages.map((entry) => [entry.name, entry.version]),
+  );
+  fs.writeFileSync(path.join(root, 'package.json'), `${JSON.stringify({
+    name: 'studio-cli-binding-completeness',
+    version: '1.0.0',
+    private: true,
+    dependencies,
+  }, null, 2)}\n`);
+  fs.writeFileSync(path.join(root, 'package-lock.json'), `${JSON.stringify({
+    name: 'studio-cli-binding-completeness',
+    version: '1.0.0',
+    lockfileVersion: 3,
+    requires: true,
+    packages: {
+      '': { name: 'studio-cli-binding-completeness', version: '1.0.0', dependencies },
+      ...Object.fromEntries(binding.packages.map((entry) => [`node_modules/${entry.name}`, {
+        version: entry.version,
+        resolved: `file:${entry.artifact}`,
+        integrity: entry.integrity,
+      }])),
+    },
+  }, null, 2)}\n`);
   for (const file of fs.readdirSync(path.join(ROOT, 'fixtures/runtime-candidates'))) {
     fs.copyFileSync(
       path.join(ROOT, 'fixtures/runtime-candidates', file),
@@ -175,5 +205,16 @@ test('candidate binding completeness rejects every unbound or non-unique runtime
       };
     },
     /AIKDNA lock package name invalid/,
+  );
+});
+
+// The repository's own graph is not a bound candidate graph, and this suite's
+// baseline comes from the fixture because of it. Pin the fact so that a silent
+// re-pin of the working graph cannot pass unnoticed - a deliberate re-pin has to
+// update this expectation and the retired registry entry at the same time.
+test('the working graph is not a bound candidate graph', () => {
+  assert.throws(
+    () => verifyCandidateBinding(ROOT),
+    /dependency spec mismatch|unbound file lock package/u,
   );
 });

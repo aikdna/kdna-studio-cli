@@ -3,3 +3,15 @@ dist/
 *.tgz
 !fixtures/runtime-candidates/*.tgz
 .DS_Store
+
+# The vendored offline dependency graph must travel with the repository so a
+# clean clone installs these exact pinned KDNA/Read/Studio bytes; every other
+# *.tgz stays ignored (the tracked runtime candidates above stay tracked).
+!vendor/*.tgz
+
+# Audit and delivery working notes: kept in the working tree,
+# never part of the public repository surface.
+docs/audits/
+
+# Current public creation test artifacts
+/tests/current-components/.artifacts/

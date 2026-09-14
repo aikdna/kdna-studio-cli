@@ -76,9 +76,11 @@ function digest(text) {
 }
 
 function entryFor(file, text, overrides = {}) {
+  const originalPath = overrides.original_path ?? `tests/${file.slice('tests/legacy/'.length)}`;
   return {
     file,
-    original_path: `tests/${file.slice('tests/legacy/'.length)}`,
+    original_path: originalPath, // Only the fixture builder sees this literal.
+    original_path_sha256: digest(originalPath),
     sha256: digest(text),
     retired_object: 'probe retired object',
     reason: 'synthetic',
@@ -158,7 +160,7 @@ function sandbox({
     git(dir, ['commit', '--quiet', '--message', 'probe: rewrite one byte, then move']);
   }
   const rewritten = git(dir, ['rev-parse', 'HEAD']);
-  const entries = registry.map((entry) =>
+  const entries = registry.map(({ original_path, ...entry }) =>
     fillCommit && entry.retired_from_commit === undefined
       ? { ...entry, retired_from_commit: fillCommitFrom === 'rewrite' ? rewritten : preRetire }
       : entry,
@@ -171,7 +173,7 @@ function sandbox({
   for (const [relative, contents] of Object.entries(files)) writeFile(dir, relative, contents);
   fs.writeFileSync(
     path.join(dir, 'tests', 'retired.json'),
-    `${JSON.stringify({ schema: 'kdna.retired-test-registry', schema_version: '3.0.0', entries }, null, 2)}\n`,
+    `${JSON.stringify({ schema: 'kdna.retired-test-registry', schema_version: '4.0.0', entries }, null, 2)}\n`,
   );
   git(dir, ['add', '--all']);
   git(dir, ['commit', '--quiet', '--message', 'probe: the retirement']);
@@ -196,6 +198,98 @@ function withSandbox(options, body) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
+
+function mutateRegistry(dir, mutate) {
+  const file = path.join(dir, 'tests', 'retired.json');
+  const registry = JSON.parse(fs.readFileSync(file, 'utf8'));
+  mutate(registry);
+  fs.writeFileSync(file, `${JSON.stringify(registry, null, 2)}\n`);
+}
+
+test('a path binding rejects malformed digests and absent paths without falling back to the basename or blob', () => {
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
+  for (const bad of ['not-a-digest', digest('tests/missing/probe.test.js'), digest(RED_TEST)]) {
+    withSandbox({ registry: [entry], files: { [entry.file]: RED_TEST } }, (dir) => {
+      mutateRegistry(dir, (registry) => { registry.entries[0].original_path_sha256 = bad; });
+      const result = runVerifier(dir);
+      assert.equal(result.status, 1, result.output);
+      assert.match(result.output, /malformed_original_path_sha256|original_path_resolution_failed/);
+      assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
+      assert.doesNotMatch(result.output, /reeval=passes|reeval=fails/);
+    });
+  }
+});
+
+test('a literal path cannot override or supplement a path digest', () => {
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
+  withSandbox({ registry: [entry], files: { [entry.file]: RED_TEST } }, (dir) => {
+    mutateRegistry(dir, (registry) => { registry.entries[0].original_path = 'tests/other.test.js'; });
+    const result = runVerifier(dir);
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.output, /literal_original_path_not_supported/);
+  });
+});
+
+test('a path digest resolves Unicode, whitespace and pathspec characters among identical basenames and blobs', () => {
+  const original = 'tests/保留 空格/[probe].test.js';
+  const other = 'tests/other/[probe].test.js';
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST, { original_path: original });
+  withSandbox({
+    registry: [entry],
+    history: { [original]: RED_TEST, [other]: RED_TEST },
+    files: { [entry.file]: RED_TEST, [other]: RED_TEST },
+  }, (dir) => {
+    const { resolveOriginalPath } = require('../scripts/verify-retirement-registry');
+    const commit = JSON.parse(fs.readFileSync(path.join(dir, 'tests/retired.json'))).entries[0].retired_from_commit;
+    assert.equal(resolveOriginalPath(dir, commit, digest(original)), original);
+    const result = runVerifier(dir);
+    assert.equal(result.status, 0, result.output);
+    assert.ok(result.output.includes(`original_path=${original}`), result.output);
+    mutateRegistry(dir, (registry) => { registry.entries[0].original_path_sha256 = digest(other); });
+    const duplicate = runVerifier(dir);
+    assert.equal(duplicate.status, 1, duplicate.output);
+    assert.match(duplicate.output, /retirement_is_a_duplicate_of_a_running_test/);
+  });
+});
+
+test('a digest cannot turn a non-test path or historical symlink into a replay target', () => {
+  const { resolveOriginalPath } = require('../scripts/verify-retirement-registry');
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
+  withSandbox({ registry: [entry], files: { [entry.file]: RED_TEST } }, (dir) => {
+    fs.symlinkSync('../src/live.js', path.join(dir, 'tests', 'linked.test.js'));
+    git(dir, ['add', 'tests/linked.test.js']);
+    git(dir, ['commit', '--quiet', '--message', 'probe: a symlink is not a historical test file']);
+    const commit = git(dir, ['rev-parse', 'HEAD']);
+    for (const relative of ['src/live.js', 'tests/linked.test.js']) {
+      assert.throws(() => resolveOriginalPath(dir, commit, digest(relative)), /unsafe historical test path/);
+    }
+  });
+});
+
+test('a later restoration and second retirement still rejects the superseded commit through the digest binding', () => {
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
+  withSandbox({ registry: [entry], files: { [entry.file]: RED_TEST } }, (dir) => {
+    writeFile(dir, 'tests/probe.test.js', RED_TEST);
+    git(dir, ['add', 'tests/probe.test.js']);
+    git(dir, ['commit', '--quiet', '--message', 'probe: restore the original test']);
+    fs.rmSync(path.join(dir, 'tests/probe.test.js'));
+    git(dir, ['add', '--all']);
+    git(dir, ['commit', '--quiet', '--message', 'probe: retire it again']);
+    const result = runVerifier(dir);
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.output, /retired_from_commit_is_not_the_last_appearance/);
+  });
+});
+
+test('the digest representation requires the matching registry schema', () => {
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
+  withSandbox({ registry: [entry], files: { [entry.file]: RED_TEST } }, (dir) => {
+    mutateRegistry(dir, (registry) => { registry.schema_version = '3.0.0'; });
+    const result = runVerifier(dir);
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.output, /unsupported_registry_schema/);
+  });
+});
 
 test('a registry that agrees with the committed files is green', () => {
   const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
@@ -302,7 +396,7 @@ test('registered bytes that pass at the original path are named, not accepted si
 test('a registration missing any of the seven fields is refused', () => {
   const fields = [
     'file',
-    'original_path',
+    'original_path_sha256',
     'sha256',
     'retired_from_commit',
     'reason',
@@ -450,7 +544,7 @@ test('a retired_from_commit whose tree lacks the original path is refused', () =
       git(dir, ['commit', '--quiet', '--message', 'probe: name the wrong commit']);
       const result = runVerifier(dir);
       assert.equal(result.status, 1, result.output);
-      assert.match(result.output, /retired_from_commit_does_not_carry_the_original_path/);
+      assert.match(result.output, /original_path_resolution_failed/);
       assert.doesNotMatch(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
     },
   );

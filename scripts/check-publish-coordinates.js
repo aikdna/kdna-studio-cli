@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// C01 publish-coordinate gate.
+// Publish-coordinate gate.
 //
 // `file:` coordinates are the offline-installable form inside this workspace,
 // but they cannot be published: a consumer that installs the packed artifact

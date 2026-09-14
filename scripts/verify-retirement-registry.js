@@ -59,7 +59,7 @@
 // signature required, not a red gate.
 //
 // Every entry carries the seven registration fields: the retired path (`file`),
-// the `original_path` it was retired from, the `sha256` of the preserved bytes
+// the `original_path_sha256` that resolves its exact historical path, the `sha256` of the preserved bytes
 // (the retirement's `retired_sha256`), the `retired_from_commit` those bytes are
 // claimed to come from, a free-text `reason`, the registration date `retired_on`,
 // and a `review_reference` that says who accepted the retirement. An entry whose
@@ -84,7 +84,7 @@ const COMMIT_RE = /^[0-9a-f]{40}$/u;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/u;
 const REQUIRED_FIELDS = [
   'file',
-  'original_path',
+  'original_path_sha256',
   'sha256',
   'retired_from_commit',
   'reason',
@@ -116,7 +116,7 @@ function sha256(file) {
 // before it reaches git, so a registry field cannot turn into an option or a
 // command.
 function gitBytes(root, args) {
-  const result = spawnSync('git', ['-C', root, ...args], { maxBuffer: 1 << 28 });
+  const result = spawnSync('git', ['--literal-pathspecs', '-C', root, ...args], { maxBuffer: 1 << 28 });
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`git ${args.join(' ')} exited ${result.status}: ${result.stderr.toString('utf8').trim()}`);
@@ -400,21 +400,54 @@ function fieldFindings(entry) {
   ) {
     findings.push({ file, check: 'malformed_review_signature', detail: String(entry.review_signature) });
   }
-  if (typeof entry.original_path === 'string') {
-    if (entry.original_path.startsWith('tests/legacy')) {
-      findings.push({ file, check: 'original_path_inside_legacy', detail: entry.original_path });
-    }
-    if (entry.original_path === entry.file) {
-      findings.push({ file, check: 'original_path_is_the_retired_path', detail: entry.original_path });
-    }
+  if (Object.hasOwn(entry, 'original_path')) {
+    findings.push({ file, check: 'literal_original_path_not_supported' });
+  }
+  if (typeof entry.original_path_sha256 === 'string' && !SHA256_RE.test(entry.original_path_sha256)) {
+    findings.push({ file, check: 'malformed_original_path_sha256' });
   }
   return findings;
+}
+
+// Resolve the exact historical pathname, never an alias for it. Hash the raw
+// path bytes from a NUL-delimited Git tree: identical blobs or basenames at
+// other locations cannot satisfy this binding. No fallback is permitted.
+function resolveOriginalPath(root, commit, expectedDigest) {
+  const matches = [];
+  const tree = gitBytes(root, ['ls-tree', '-r', '-z', commit]);
+  let offset = 0;
+  while (offset < tree.length) {
+    const end = tree.indexOf(0, offset);
+    if (end < 0) throw new Error('unterminated Git tree entry');
+    const record = tree.subarray(offset, end);
+    const tab = record.indexOf(9);
+    if (tab < 0) throw new Error('malformed Git tree entry');
+    const rawPath = record.subarray(tab + 1);
+    if (crypto.createHash('sha256').update(rawPath).digest('hex') === expectedDigest) {
+      const [mode, type] = record.subarray(0, tab).toString('ascii').split(' ');
+      const relative = rawPath.toString('utf8');
+      if (!Buffer.from(relative, 'utf8').equals(rawPath) ||
+          !['100644', '100755'].includes(mode) || type !== 'blob' ||
+          !relative.startsWith('tests/') || relative.includes('\\') ||
+          /[\x00-\x1f\x7f]/u.test(relative) ||
+          relative.split('/').some((part) => ['', '.', '..'].includes(part))) {
+        throw new Error('unsafe historical test path');
+      }
+      matches.push(relative);
+    }
+    offset = end + 1;
+  }
+  if (matches.length !== 1) throw new Error(`expected one historical path, found ${matches.length}`);
+  return matches[0];
 }
 
 async function verify(root) {
   const findings = [];
   const registry = readJson(path.join(root, 'tests', 'retired.json'));
   const entries = registry.entries ?? [];
+  if (registry.schema !== 'kdna.retired-test-registry' || registry.schema_version !== '4.0.0') {
+    findings.push({ file: 'tests/retired.json', check: 'unsupported_registry_schema' });
+  }
   const legacyRoot = path.join(root, 'tests', 'legacy');
   const legacyFiles = walk(legacyRoot).map((file) => path.relative(root, file).split(path.sep).join('/'));
   const registered = entries.filter((entry) => typeof entry.file === 'string').map((entry) => entry.file);
@@ -441,23 +474,34 @@ async function verify(root) {
       // (a) preservation.
       row.actualSha256 = SHA256_RE.test(entry.sha256 ?? '') ? sha256(target) : null;
       row.preserved = row.actualSha256 !== null && row.actualSha256 === entry.sha256;
-      // (c) not a fake retirement.
-      const original = typeof entry.original_path === 'string' ? path.join(root, entry.original_path) : null;
+      row.retiredFromCommit = typeof entry.retired_from_commit === 'string' ? entry.retired_from_commit : null;
+      const commitIsUsable = row.retiredFromCommit !== null && COMMIT_RE.test(row.retiredFromCommit);
+      row.originalPath = null;
+      row.pathResolutionError = null;
+      if (commitIsUsable && SHA256_RE.test(entry.original_path_sha256 ?? '')) {
+        try {
+          row.originalPath = resolveOriginalPath(root, row.retiredFromCommit, entry.original_path_sha256);
+        } catch (error) {
+          row.pathResolutionError = error.message;
+        }
+      }
+      if (row.originalPath !== null && row.originalPath.startsWith('tests/legacy')) {
+        findings.push({ file: entry.file, check: 'original_path_inside_legacy' });
+      }
+      if (row.originalPath === entry.file) {
+        findings.push({ file: entry.file, check: 'original_path_is_the_retired_path' });
+      }
+      const pathIsUsable = row.originalPath !== null && !row.originalPath.startsWith('tests/legacy');
+      // (c) and (d) use the real historical path, never the digest as a path.
+      const original = pathIsUsable ? path.join(root, row.originalPath) : null;
       row.originalExists = original !== null && fs.existsSync(original);
       row.originalSameBytes = row.originalExists && sha256(original) === entry.sha256;
-      // (e) zero rewrite, from the object store rather than the working tree.
-      row.retiredFromCommit = typeof entry.retired_from_commit === 'string' ? entry.retired_from_commit : null;
       row.historicalSha256 = null;
       row.historicalError = null;
-      row.ancestorOfHead = null;
-      const commitIsUsable = row.retiredFromCommit !== null && COMMIT_RE.test(row.retiredFromCommit);
-      const pathIsUsable =
-        typeof entry.original_path === 'string' &&
-        entry.original_path.length > 0 &&
-        !entry.original_path.startsWith('-');
+      row.ancestorOfHead = commitIsUsable ? ancestorOfHead(root, row.retiredFromCommit) : null;
       if (commitIsUsable && pathIsUsable) {
         try {
-          row.historicalSha256 = historicalSha256(root, row.retiredFromCommit, entry.original_path);
+          row.historicalSha256 = historicalSha256(root, row.retiredFromCommit, row.originalPath);
         } catch (error) {
           row.historicalError = error.message;
         }
@@ -485,30 +529,30 @@ async function verify(root) {
       row.signed = null;
       if (commitIsUsable && pathIsUsable) {
         try {
-          row.lastAppearance = lastAppearanceCommit(root, entry.original_path);
-          row.retirementCarriesOriginalPath = blobAt(root, row.retiredFromCommit, entry.original_path) !== null;
+          row.lastAppearance = lastAppearanceCommit(root, row.originalPath);
+          row.retirementCarriesOriginalPath = blobAt(root, row.retiredFromCommit, row.originalPath) !== null;
           if (row.retirementCarriesOriginalPath) {
             // The named commit wrote the file itself: that write is also a way a
             // retirement can carry content that is not the file's older state,
             // and it is printed too.
-            const earlierBlob = blobAt(root, `${row.retiredFromCommit}^`, entry.original_path);
-            const atCommitBlob = blobAt(root, row.retiredFromCommit, entry.original_path);
+            const earlierBlob = blobAt(root, `${row.retiredFromCommit}^`, row.originalPath);
+            const atCommitBlob = blobAt(root, row.retiredFromCommit, row.originalPath);
             row.priorWriteChanged = earlierBlob !== null && earlierBlob !== atCommitBlob;
             if (row.priorWriteChanged) {
               row.priorWriteDiffLines = lineDiff(
-                blobText(root, `${row.retiredFromCommit}^`, entry.original_path),
-                blobText(root, row.retiredFromCommit, entry.original_path),
-                `${row.retiredFromCommit.slice(0, 12)}^:${entry.original_path}`,
-                `${row.retiredFromCommit.slice(0, 12)}:${entry.original_path}`,
+                blobText(root, `${row.retiredFromCommit}^`, row.originalPath),
+                blobText(root, row.retiredFromCommit, row.originalPath),
+                `${row.retiredFromCommit.slice(0, 12)}^:${row.originalPath}`,
+                `${row.retiredFromCommit.slice(0, 12)}:${row.originalPath}`,
               );
             }
           }
-          const window = retirementWindow(root, entry.original_path, entry.file);
+          const window = retirementWindow(root, row.originalPath, entry.file);
           if (window !== null) {
             row.firstRetirement = window.first;
             row.windowCommits = window.commits;
             // Did the first retirement itself change the bytes while moving them?
-            const beforeMove = blobText(root, `${window.first}^`, entry.original_path);
+            const beforeMove = blobText(root, `${window.first}^`, row.originalPath);
             const afterMove = blobText(root, window.first, entry.file);
             if (beforeMove !== null && afterMove !== null) {
               row.retirementRewroteContent = beforeMove !== afterMove;
@@ -516,7 +560,7 @@ async function verify(root) {
                 row.retirementRewriteDiff = lineDiff(
                   beforeMove,
                   afterMove,
-                  `${window.first.slice(0, 12)}^:${entry.original_path}`,
+                  `${window.first.slice(0, 12)}^:${row.originalPath}`,
                   `${window.first.slice(0, 12)}:${entry.file}`,
                 );
                 row.retirementRewriteLines = row.retirementRewriteDiff.filter(
@@ -545,10 +589,10 @@ async function verify(root) {
         // (the helper they require is retired material too, say). That is a
         // recorded fact, not a silent skip, and it needs the reason.
         row.reeval = 'not_possible';
-      } else if (original !== null && typeof entry.original_path === 'string' && entry.original_path.startsWith('tests/')) {
-        const overlay = overlayAtOriginalPath(root, entry.original_path, target);
+      } else if (original !== null) {
+        const overlay = overlayAtOriginalPath(root, row.originalPath, target);
         try {
-          const run = await runTestFile(overlay, entry.original_path);
+          const run = await runTestFile(overlay, row.originalPath);
           row.reeval = run.status === 0 ? 'passes' : 'fails';
           row.reevalRc = run.status;
         } finally {
@@ -562,6 +606,9 @@ async function verify(root) {
 
   for (const row of rows) {
     const { entry } = row;
+    if (row.pathResolutionError !== null) {
+      findings.push({ file: entry.file, check: 'original_path_resolution_failed', detail: row.pathResolutionError });
+    }
     if (row.actualSha256 !== null && !row.preserved) {
       findings.push({
         file: entry.file,
@@ -573,14 +620,14 @@ async function verify(root) {
       findings.push({
         file: entry.file,
         check: 'retirement_is_a_duplicate_of_a_running_test',
-        detail: `${entry.original_path} still carries the registered bytes, so the file still runs as a current test`,
+        detail: `${row.originalPath} still carries the registered bytes, so the file still runs as a current test`,
       });
     }
     if (row.historicalError !== null) {
       findings.push({
         file: entry.file,
         check: 'retired_from_commit_unreadable',
-        detail: `${entry.retired_from_commit}:${entry.original_path ?? 'MISSING'}: ${row.historicalError}`,
+        detail: `${entry.retired_from_commit}:${row.originalPath ?? 'MISSING'}: ${row.historicalError}`,
       });
     }
     if (row.ancestorOfHead === false) {
@@ -601,14 +648,14 @@ async function verify(root) {
         file: entry.file,
         check: 'retired_from_commit_does_not_carry_the_original_path',
         detail:
-          `${entry.retired_from_commit} does not carry ${entry.original_path}, so it is not the commit ` +
+          `${entry.retired_from_commit} does not carry ${row.originalPath}, so it is not the commit ` +
           `the file was retired from`,
       });
     } else if (row.retirementCarriesOriginalPath === true && row.moveCommit === null) {
       findings.push({
         file: entry.file,
         check: 'retirement_move_commit_not_found',
-        detail: `no commit on HEAD has ${entry.retired_from_commit} as its parent and removes ${entry.original_path}`,
+        detail: `no commit on HEAD has ${entry.retired_from_commit} as its parent and removes ${row.originalPath}`,
       });
     }
     if (row.lastAppearance !== null && row.retiredFromCommit !== row.lastAppearance) {
@@ -616,7 +663,7 @@ async function verify(root) {
         file: entry.file,
         check: 'retired_from_commit_is_not_the_last_appearance',
         detail:
-          `the file was last at ${entry.original_path} in ${row.lastAppearance}, but the entry names ` +
+          `the file was last at ${row.originalPath} in ${row.lastAppearance}, but the entry names ` +
           `${entry.retiredFromCommit}, so it anchors at a retirement that was superseded`,
       });
     }
@@ -631,7 +678,7 @@ async function verify(root) {
       });
     }
     console.log(
-      `KDNA-RETIREMENT-ENTRY: ${entry.file} original_path=${entry.original_path ?? 'MISSING'} ` +
+      `KDNA-RETIREMENT-ENTRY: ${entry.file} original_path=${row.originalPath ?? 'MISSING'} ` +
         `sha256=${typeof entry.sha256 === 'string' ? entry.sha256.slice(0, 12) : 'MISSING'} ` +
         `preserved=${row.preserved} original_carries_same_bytes=${row.originalSameBytes} ` +
         `retired_on=${entry.retired_on ?? 'MISSING'} review_reference=${JSON.stringify(entry.review_reference ?? '')} ` +
@@ -663,13 +710,13 @@ async function verify(root) {
     }
     if (row.reeval === 'not_possible') {
       console.log(
-        `KDNA-RETIREMENT-REEVAL-NOTE: ${entry.file} cannot be re-run at ${entry.original_path}: ${row.reevalNote}`,
+        `KDNA-RETIREMENT-REEVAL-NOTE: ${entry.file} cannot be re-run at ${row.originalPath}: ${row.reevalNote}`,
       );
     }
     if (row.priorWriteChanged === true) {
       console.log(
         `KDNA-RETIREMENT-PRIOR-WRITE: ${entry.file} retired_from_commit=${row.retiredFromCommit.slice(0, 12)} ` +
-          `wrote the file at ${entry.original_path} itself; the file was still a current test then`,
+          `wrote the file at ${row.originalPath} itself; the file was still a current test then`,
       );
       for (const line of row.priorWriteDiffLines) console.log(`  ${line}`);
     }
@@ -684,7 +731,7 @@ async function verify(root) {
     }
     if (row.reeval === 'passes') {
       console.log(
-        `KDNA-RETIREMENT-RESTORABLE: ${entry.file} original_path=${entry.original_path} rc=0 ` +
+        `KDNA-RETIREMENT-RESTORABLE: ${entry.file} original_path=${row.originalPath} rc=0 ` +
           `the registered bytes pass where the file used to run, so this entry is not stale: ` +
           `restore it or record why it stays retired`,
       );
@@ -738,6 +785,7 @@ module.exports = {
   overlayAtOriginalPath,
   parentOf,
   removalCandidates,
+  resolveOriginalPath,
   retirementWindow,
   runTestFile,
   sha256,

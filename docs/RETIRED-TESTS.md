@@ -5,7 +5,7 @@ themselves live under `tests/legacy/`. None of it runs in `npm test`,
 `npm run test:all`, `.github/workflows/ci.yml`, or
 `.github/workflows/publish.yml`.
 
-**Every copy registered here is the pre-retirement file, byte for byte.** The
+**The registry preserves the reviewed bytes and discloses earlier changes.** The
 eight that had been rewritten on the way into `tests/legacy/` - relative
 requires, `__dirname` paths and the path to `bin/kdna-studio.js` re-pointed to
 the new depth - were restored to the bytes their original paths carried, and
@@ -56,11 +56,26 @@ script.
 ## What a retirement has to register
 
 A retirement is a **preservation** claim, not a story about a red run. Every
-entry registers the retired path (`file`), the original path it was retired from
-(`original_path`), the `sha256` of the preserved bytes (the retirement's
+entry registers the retired path (`file`), the SHA256 of its exact original Git
+path bytes (`original_path_sha256`), the `sha256` of the preserved bytes (the retirement's
 `retired_sha256`), the commit those bytes are claimed to come from
 (`retired_from_commit`), a free-text `reason`, the registration date
 (`retired_on`) and the review that accepted it (`review_reference`).
+
+Registry schema `4.0.0` resolves `original_path_sha256` by hashing the raw path
+bytes in the NUL-delimited Git tree at `retired_from_commit`. Exactly one
+regular file under `tests/` must match. The resolved path, including its original
+spelling, is then used for every historical blob, last-appearance, duplicate and
+in-place replay check. This changes the registry representation, not history:
+no neutral alias is substituted for a historical pathname. Literal
+`original_path` fields, malformed digests, missing matches and unsafe paths are
+rejected. Neither an equal basename nor an equal file-content digest can serve
+as a substitute.
+
+The session helper and session termination copies were previously changed only
+to neutralize their synthetic labels; the registry keeps their reviewed hashes
+and the existing per-entry explanation of those changes. This representation
+migration does not change any preserved file bytes or add an acceptance claim.
 
 `scripts/verify-retirement-registry.js` reads **no test output**. Earlier
 revisions tried to decide, from the judged artifact's own output, whether a run
@@ -87,7 +102,7 @@ the object store:
   First, the copy under `tests/legacy/` hashes to the registered `sha256`, so the
   registered bytes cannot be deleted or edited. Second, `retired_from_commit` is
   the commit the file was retired from: the gate computes `C_last`, the newest
-  commit on HEAD whose tree still carries the file at `original_path`, and
+  commit on HEAD whose tree still carries the file at the resolved original path, and
   refuses any entry that names a different one - so a retirement cannot be
   anchored at an older retirement that a later one superseded - and the named
   commit has to be reachable from HEAD.

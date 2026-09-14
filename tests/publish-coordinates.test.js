@@ -7,7 +7,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { findingsFor } = require('../scripts/check-publish-coordinates');
 
-// C01: a non-private package may not carry `file:` coordinates into a publish.
+// A non-private package may not carry `file:` coordinates into a publish.
 // The committed kdna-studio-cli manifest is non-private and is still on the
 // vendored graph, so this gate is expected to be RED today and has to be green
 // before any push/publish batch: the finding is the record, not a suppression.

@@ -44,7 +44,7 @@ jobs:
       # survive into a published artifact - a registry consumer has no vendor/
       # next to it. The gate is expected to be red until the publish
       # coordinates are switched to exact registry versions.
-      - name: Refuse to publish a file: coordinate from a non-private package
+      - name: "Refuse to publish a file: coordinate from a non-private package"
         run: node scripts/check-publish-coordinates.js
       - name: Verify release event, tag, commit, package, and changelog
         run: node scripts/run-trusted-npm.js run release:check

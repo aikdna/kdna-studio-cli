@@ -2,14 +2,6 @@ name: public-surface
 
 on:
   pull_request:
-    paths:
-      - 'docs/**'
-      - 'specs/**'
-      - 'showcase/**'
-      - 'CHANGELOG.md'
-      - 'README.md'
-      - 'README.zh.md'
-      - 'ecosystem-manifest.json'
   push:
     branches: [main]
 

@@ -11,7 +11,7 @@ Key points:
 
 ## Repository-specific notes
 - The Studio CLI depends on `@aikdna/kdna-studio-core` for compilation and export.
-- Card type definitions live in the Studio Core, not here.
+- Typed creation values and session rules belong to the current Studio Core contract; historical project/card APIs are outside this CLI entry.
 - The `bin/kdna-studio.js` file is the CLI entry point.
 
 ## Developer Certificate of Origin (DCO)

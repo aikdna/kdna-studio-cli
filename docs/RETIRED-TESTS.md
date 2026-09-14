@@ -167,3 +167,18 @@ The current verification surface lives in `tests/current-components/` and
 suites (driven by `npm run test:all`).
 
 The last-appearance traversal examines every ancestor tree, including unrelated changes and merges. Descendants precede ancestors; incomparable branch commits use the order emitted by Git `--topo-order`. This defined ancestry order does not claim wall-clock recency. A path-limited log cannot establish this boundary.
+
+First-retirement and window evidence also traverse the complete ancestor graph,
+without path-limited history simplification. A removal is a commit whose tree
+lacks the original path and whose parent tree contains it. The first retirement
+is the oldest such event in the same defined topological order; when it is a
+merge, its move diff compares every parent carrying the original path.
+
+The window visits every ancestor in `first-retirement..HEAD` and records each
+modification or deletion of an existing retired copy. A merge that adopts an
+existing parent tree entry does not count that change twice: changes on every branch
+remain visible. A merge resolution differing from all parent entries counts as a
+new change. Tree-entry comparison includes file mode as well as object identity,
+so mode-only modifications remain disclosed. Adding a previously absent retired path is not itself a modification
+or deletion under this count. A merge with the same tree must preserve earlier
+retirement disclosures, not merely the gate's successful exit code.

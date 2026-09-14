@@ -115,6 +115,32 @@ test('registered test receipts must be actual unique TAP stdout lines', () => {
   }
 });
 
+test('registered test receipts require exact complete fields', () => {
+  for (const mutation of ['reason-suffix', 'reason-prefix', 'duplicate-reason', 'wrong-object', 'wrong-code', 'duplicate-code', 'missing-code', 'unknown-field', 'trailing-space']) {
+    withSandbox({}, (sandbox) => {
+      const file = path.join(sandbox, 'tests/publish-hardening.test.js');
+      const source = fs.readFileSync(file, 'utf8');
+      const receipt = source.match(/console\.log\('([^']+)'\);/u)[1];
+      const changed = {
+        'reason-suffix': receipt.replace(/(reason=[^ ]+)/u, '$1-NOT-THE-REGISTERED-REASON'),
+        'reason-prefix': receipt.replace('reason=', 'reason=wrong-'),
+        'duplicate-reason': receipt + ' reason=wrong',
+        'wrong-object': receipt.replace('object=', 'object=wrong-'),
+        'wrong-code': receipt.replace('unavailable=', 'unavailable=WRONG_'),
+        'duplicate-code': receipt.replace(/(unavailable=)([^ ]+)$/u, '$1$2,$2'),
+        'missing-code': receipt.replace(/ unavailable=.*$/u, ''),
+        'unknown-field': receipt + ' extra=unregistered',
+        'trailing-space': receipt + ' ',
+      }[mutation];
+      assert.notEqual(changed, receipt);
+      fs.writeFileSync(file, `console.log(${JSON.stringify(changed)});\n`);
+      const result = runConsumer(sandbox);
+      assert.equal(result.status, 1, `${mutation}: ${result.stdout}${result.stderr}`);
+      assert.match(result.stdout, /test_receipt_fields/);
+    });
+  }
+});
+
 test('a generator that always prints success makes the gate red', () => {
   withSandbox({}, (sandbox) => {
     fs.writeFileSync(

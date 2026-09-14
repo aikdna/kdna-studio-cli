@@ -32,8 +32,8 @@
 //   (e) re-checkable: the copy under tests/legacy/ hashes to the registered
 //       sha256, and `retired_from_commit` is the commit the file was retired
 //       from. The gate computes that commit itself - `C_last`, the newest commit
-//       on HEAD whose tree still carries the file at its original path (`git log
-//       --format=%H -- <original_path>`, first hit whose tree has it) - and
+//       reachable from HEAD whose tree still carries the file at its original path
+//       (`git rev-list --topo-order HEAD`, first tree containing it) - and
 //       refuses any entry that names a different commit, so a retirement cannot
 //       be anchored at an older retirement that a later one superseded. It also
 //       derives the move: the commit whose parent is `retired_from_commit` and
@@ -170,7 +170,9 @@ function removalCandidates(root, originalPath) {
 // commit verbatim, so an entry cannot anchor at a retirement that a later
 // retirement superseded.
 function lastAppearanceCommit(root, originalPath) {
-  const output = gitBytes(root, ['log', '--format=%H', '--', originalPath]).toString('utf8').trim();
+  // A path-limited log omits later unrelated commits and simplifies merges.
+  // Enumerate the full ordered ancestry before looking at each actual tree.
+  const output = gitBytes(root, ['rev-list', '--topo-order', 'HEAD']).toString('utf8').trim();
   if (output === '') return null;
   for (const commit of output.split('\n')) {
     if (blobAt(root, commit, originalPath) !== null) return commit;
@@ -664,7 +666,7 @@ async function verify(root) {
         check: 'retired_from_commit_is_not_the_last_appearance',
         detail:
           `the file was last at ${row.originalPath} in ${row.lastAppearance}, but the entry names ` +
-          `${entry.retiredFromCommit}, so it anchors at a retirement that was superseded`,
+          `${row.retiredFromCommit}, so it anchors at a retirement that was superseded`,
       });
     }
     if (

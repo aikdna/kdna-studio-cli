@@ -261,8 +261,12 @@ function checkTestReceipt(root, leg, definition, registration, computed, finding
     });
     return;
   }
-  if (!line.includes(`reason=${registration.reason}`)) {
-    findings.push({ leg, check: 'test_receipt_reason', detail: line.slice(0, 200) });
+  // Compare the complete canonical record. A reason substring cannot prove
+  // agreement: suffixes, duplicate fields and altered objects/codes must fail.
+  const expectedLine = `${NOT_RUN_PREFIX} ${leg} reason=${registration.reason} ` +
+    `object=${registration.object} unavailable=${computed.codes.join(',')}`;
+  if (line !== expectedLine) {
+    findings.push({ leg, check: 'test_receipt_fields', detail: line.slice(0, 200) });
   }
 }
 

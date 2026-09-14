@@ -123,6 +123,7 @@ function sandbox({
   withGate = false,
   fillCommit = true,
   fillCommitFrom = 'pre',
+  beforeMove = null,
 }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-retirement-registry-'));
   fs.mkdirSync(path.join(dir, 'tests', 'legacy'), { recursive: true });
@@ -160,9 +161,24 @@ function sandbox({
     git(dir, ['commit', '--quiet', '--message', 'probe: rewrite one byte, then move']);
   }
   const rewritten = git(dir, ['rev-parse', 'HEAD']);
+  if (beforeMove !== null) {
+    const branch = git(dir, ['branch', '--show-current']);
+    if (beforeMove === 'merge') git(dir, ['checkout', '--quiet', '-b', 'probe-side']);
+    writeFile(dir, 'unrelated.txt', 'unrelated change\n');
+    git(dir, ['add', 'unrelated.txt']);
+    git(dir, ['commit', '--quiet', '--message', 'probe: unrelated change']);
+    if (beforeMove === 'merge') {
+      git(dir, ['checkout', '--quiet', branch]);
+      writeFile(dir, 'another.txt', 'another change\n');
+      git(dir, ['add', 'another.txt']);
+      git(dir, ['commit', '--quiet', '--message', 'probe: another unrelated change']);
+      git(dir, ['merge', '--quiet', '--no-ff', 'probe-side', '--message', 'probe: merge before retirement']);
+    }
+  }
+  const latest = git(dir, ['rev-parse', 'HEAD']);
   const entries = registry.map(({ original_path, ...entry }) =>
     fillCommit && entry.retired_from_commit === undefined
-      ? { ...entry, retired_from_commit: fillCommitFrom === 'rewrite' ? rewritten : preRetire }
+      ? { ...entry, retired_from_commit: fillCommitFrom === 'latest' ? latest : fillCommitFrom === 'rewrite' ? rewritten : preRetire }
       : entry,
   );
   // The move itself: a path the retirement did not leave at its original place
@@ -662,4 +678,19 @@ test('the gate still runs through an absolute symlinked invocation path', () => 
       fs.rmSync(linkDirectory, { recursive: true, force: true });
     }
   });
+});
+
+
+test('last appearance includes unrelated commits and merge trees', () => {
+  const entry = entryFor('tests/legacy/probe.test.js', RED_TEST);
+  for (const beforeMove of ['unrelated', 'merge']) {
+    for (const fillCommitFrom of ['latest', 'pre']) {
+      withSandbox({registry: [entry], files: {[entry.file]: RED_TEST}, beforeMove, fillCommitFrom}, (dir) => {
+        const result = runVerifier(dir);
+        assert.equal(result.status, fillCommitFrom === 'latest' ? 0 : 1, `${beforeMove}/${fillCommitFrom}: ${result.output}`);
+        if (fillCommitFrom === 'latest') assert.match(result.output, /KDNA-RETIREMENT-REGISTRY: ok/);
+        else assert.match(result.output, /retired_from_commit_is_not_the_last_appearance/);
+      });
+    }
+  }
 });

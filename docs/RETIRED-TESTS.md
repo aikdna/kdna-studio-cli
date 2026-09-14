@@ -165,3 +165,5 @@ by deleting the receipt.
 The current verification surface lives in `tests/current-components/` and
 `tests/current/` (driven by `npm test`) and the top-level `tests/*.test.js`
 suites (driven by `npm run test:all`).
+
+The last-appearance traversal examines every ancestor tree, including unrelated changes and merges. Descendants precede ancestors; incomparable branch commits use the order emitted by Git `--topo-order`. This defined ancestry order does not claim wall-clock recency. A path-limited log cannot establish this boundary.

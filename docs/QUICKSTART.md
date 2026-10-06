@@ -1,7 +1,7 @@
 # Quick start
 
-Coordinate scope: this candidate is `@aikdna/kdna-studio-cli@0.13.0-rc.components.1`
-on Studio `4.0.0-rc.components.1`. The published `latest` of this package is
+Coordinate scope: this candidate is `@aikdna/kdna-studio-cli@0.13.0-rc.components.2`
+on Studio `4.0.0-rc.components.2`. The published `latest` of this package is
 `0.11.0`, which belongs to the earlier Studio line; an upgrade is not implied,
 and only the documented session/verify/read commands below are supported here.
 

@@ -1,3 +1,7 @@
+## 0.13.0-rc.components.2
+
+The vendored dependency graph moves to the current R2 stable line: Core 0.36.0, Read 0.11.0 and Studio 4.0.0-rc.components.2 (container 0.5.0, payload 0.5.1). The session command gains a protected export: with `--password-fd N` the delivered `asset.kdna` is a `kdna.envelope.aead` container (password argon2id plus recovery scrypt-sha256), the saved-byte completion runs on the unprotected bytes in an isolated transient area, plaintext never lands at the delivery position, the recovery code is displayed exactly once on stderr, and a protection failure fails the whole export. Password discipline: read once from the pipe fd, never from argv or the Agent stream; bounded 64 KiB; strict UTF-8; TTY refused. The brief operation now carries the authored `highest_question`, and component authoring follows the bound Core's published method kinds and role families. Command-contract and terminal-guide documents updated.
+
 ## 0.13.0-rc.components.1
 
 Typed alternative groups and explicit human/delegated-Agent channels now drive Studio format2. Export performs actual saved-byte completion; current verification and Read use one exact component graph. Old bundles are explicitly noncurrent.

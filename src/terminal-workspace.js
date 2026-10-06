@@ -5,11 +5,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const net = require('node:net');
+const os = require('node:os');
 const tty = require('node:tty');
 const { TextDecoder } = require('node:util');
 const { createRequire } = require('node:module');
 const bindings = require('./public-bindings.json');
 const LIMIT = 1024 * 1024;
+const PASSWORD_LIMIT = 64 * 1024;
 function fail(code) { throw Object.assign(new Error(code), { code }); }
 function record(value, keys) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail('CLI_INPUT_INVALID');
@@ -173,18 +175,23 @@ function dependencies() {
     if (scoped.resolve('@aikdna/kdna-core') !== corePath || scoped('@aikdna/kdna-core') !== core) fail('CLI_MULTIPLE_CORE_INSTANCES');
   }
   if (Object.keys(studio).sort().join(',') !== 'createSession,verifyCreationEvidence') fail('CLI_STUDIO_SURFACE_MISMATCH');
-  return { studio, core, read };
+  let protection;
+  try { protection = require('@aikdna/kdna-studio-core/protected-export'); }
+  catch { fail('CLI_PROTECTION_UNAVAILABLE'); }
+  if (!protection || typeof protection.protectExportedContainer !== 'function') fail('CLI_PROTECTION_UNAVAILABLE');
+  return { studio, core, read, protectExportedContainer: protection.protectExportedContainer };
 }
 
 function options(argv) {
   const command = argv[0] || 'help';
   if (!['help', '--help', '--version', 'session', 'verify', 'read'].includes(command)) fail('CLI_COMMAND_UNSUPPORTED');
   const opts = { command, materials: [] };
-  const allowed = command === 'session' ? ['--out', '--human-fd', '--agent-adoption-fd', '--delegation-record', '--text', '--interview', '--synthetic-fixture'] :
+  const allowed = command === 'session' ? ['--out', '--human-fd', '--agent-adoption-fd', '--delegation-record', '--text', '--interview', '--synthetic-fixture', '--password-fd'] :
     ['verify', 'read'].includes(command) ? ['--bundle', ...(command === 'read' ? ['--allow-read', '--budget', '--judgment'] : [])] : [];
   const seen = new Set();
   for (let i = 1; i < argv.length; i++) {
     const flag = argv[i];
+    if (flag === '--password' || flag.startsWith('--password=')) fail('CLI_PASSWORD_ARGV_FORBIDDEN');
     if (!allowed.includes(flag)) fail('CLI_OPTION_UNSUPPORTED');
     if (!['--text', '--interview'].includes(flag) && seen.has(flag)) fail('CLI_OPTION_REPEATED');
     seen.add(flag);
@@ -200,6 +207,8 @@ function options(argv) {
   if (opts['--agent-adoption-fd'] && (!/^\d+$/.test(opts['--agent-adoption-fd']) || Number(opts['--agent-adoption-fd']) < 3)) fail('CLI_AGENT_ADOPTION_CHANNEL_INVALID');
   if (Boolean(opts['--agent-adoption-fd']) !== Boolean(opts['--delegation-record']) || (opts['--agent-adoption-fd'] && opts['--human-fd'])) fail('CLI_ADOPTION_OPTIONS_INVALID');
   if (opts['--judgment'] && (!/^[1-9]\d*$/.test(opts['--judgment']) || !Number.isSafeInteger(Number(opts['--judgment'])))) fail('CLI_SELECTION_INVALID');
+  if (opts['--password-fd'] && (!/^\d+$/.test(opts['--password-fd']) || Number(opts['--password-fd']) < 3)) fail('CLI_PASSWORD_FD_INVALID');
+  if (opts['--password-fd'] && (opts['--password-fd'] === opts['--human-fd'] || opts['--password-fd'] === opts['--agent-adoption-fd'])) fail('CLI_PASSWORD_FD_INVALID');
   return opts;
 }
 
@@ -245,35 +254,94 @@ function humanReview(review) {
   return (review.kind === 'delegated_agent_editorial' ? 'Authorized Agent editorial review (identity not verified):' : 'Human-declared review (identity not verified):') + '\n' + JSON.stringify(review, null, 2);
 }
 
-function writeExport(session, destination) {
+function readPasswordFd(fd) {
+  // One-shot bounded secret read from a dedicated pipe fd (never argv, never
+  // the agent stream). The buffer is zeroized on every exit path.
+  const storage = Buffer.alloc(PASSWORD_LIMIT + 1);
+  let length = 0;
+  try {
+    try { fs.fstatSync(fd); } catch { fail('CLI_PASSWORD_UNAVAILABLE'); }
+    if (tty.isatty(fd)) fail('CLI_PASSWORD_TTY_FORBIDDEN');
+    try {
+      while (length < storage.length) {
+        const count = fs.readSync(fd, storage, length, storage.length - length, null);
+        if (count === 0) break;
+        length += count;
+      }
+    } finally { try { fs.closeSync(fd); } catch (error) { if (error.code !== 'EBADF') throw error; } }
+    if (length === 0) fail('CLI_PASSWORD_UNAVAILABLE');
+    if (length > PASSWORD_LIMIT) fail('CLI_PASSWORD_TOO_LARGE');
+    let decoded;
+    try { decoded = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(storage.subarray(0, length)); }
+    catch { fail('CLI_PASSWORD_ENCODING_INVALID'); }
+    if (decoded.endsWith('\r\n')) decoded = decoded.slice(0, -2);
+    else if (decoded.endsWith('\n')) decoded = decoded.slice(0, -1);
+    if (!decoded.length) fail('CLI_PASSWORD_UNAVAILABLE');
+    return decoded;
+  } finally { storage.fill(0); }
+}
+
+function displayRecoveryCode(code) {
+  // Display-once belongs to this Host: the code is shown here and nowhere else.
+  process.stderr.write('Recovery code (shown exactly once; store it now, it cannot be retrieved later):\n' + code + '\n');
+}
+
+async function writeExport(session, destination, password, protectExportedContainer) {
   const parent = fs.realpathSync(path.dirname(path.resolve(destination)));
   const target = path.join(parent, path.basename(destination));
   fs.mkdirSync(target, { mode: 0o700 }); // exclusive reservation, never replace an existing bundle
   const created = [];
+  let isolation = null;
   try {
     const result = session.exportAsset();
-    const files = [['asset.kdna', result.bytes], ['creation-evidence.json', Buffer.from(json(result.evidence))],
-      ['binding.json', Buffer.from(json(result.binding))]];
-    for (const [name, bytes] of files) {
-      const file = path.join(target, name);
-      fs.writeFileSync(file, bytes, { flag: 'wx', mode: 0o400 }); created.push(file);
+    let bytes = result.bytes;
+    let verification;
+    let protection = null;
+    let recoveryCode = null;
+    if (password) {
+      // The saved-byte completion binds the unprotected bytes in an isolated
+      // area only: plaintext never lands at the delivery position, and the
+      // protected container is a deterministic post-verification derivative.
+      isolation = fs.mkdtempSync(path.join(os.tmpdir(), 'kdna-studio-protected-export-'));
+      const isolatedAsset = path.join(isolation, 'asset.kdna');
+      fs.writeFileSync(isolatedAsset, result.bytes, { flag: 'wx', mode: 0o400 });
+      const readback = capture(isolatedAsset, 16 * LIMIT);
+      verification = session.completeSave(readback);
+      const produced = await protectExportedContainer(result.bytes, { password });
+      if (!produced || produced.status !== 'produced' || !(produced.bytes instanceof Uint8Array) ||
+        typeof produced.recoveryCode !== 'string' ||
+        !/^kdna-recover-(?:[0-9A-F]{4}-){15}[0-9A-F]{4}$/.test(produced.recoveryCode)) fail('CLI_PROTECTION_FAILED');
+      bytes = Buffer.from(produced.bytes);
+      recoveryCode = produced.recoveryCode;
+      protection = { profile: 'kdna.envelope.aead', slots: ['password', 'recovery'], verification_basis: 'pre_protection_plaintext' };
     }
-    const readback = capture(path.join(target, 'asset.kdna'), 16 * LIMIT);
-    const verification = session.completeSave(readback);
+    const files = [['asset.kdna', bytes], ['creation-evidence.json', Buffer.from(json(result.evidence))],
+      ['binding.json', Buffer.from(json(result.binding))]];
+    for (const [name, fileBytes] of files) {
+      const file = path.join(target, name);
+      fs.writeFileSync(file, fileBytes, { flag: 'wx', mode: 0o400 }); created.push(file);
+    }
+    if (!password) {
+      const readback = capture(path.join(target, 'asset.kdna'), 16 * LIMIT);
+      verification = session.completeSave(readback);
+    }
     const verificationFile = path.join(target, 'verification.json');
     fs.writeFileSync(verificationFile, json(verification), {flag:'wx',mode:0o400});created.push(verificationFile);
     const complete = path.join(target, 'complete.json');
-    fs.writeFileSync(complete, json({ kind: 'private-studio-export-bundle', version: 2 }), { flag: 'wx', mode: 0o400 });
+    fs.writeFileSync(complete, json({ kind: 'private-studio-export-bundle', version: 2, ...(protection ? { protection } : {}) }), { flag: 'wx', mode: 0o400 });
     created.push(complete); fs.chmodSync(target, 0o500);
+    if (recoveryCode) displayRecoveryCode(recoveryCode);
     return { directory: target, binding: result.binding, verification };
   } catch (error) {
     for (const file of created.reverse()) fs.unlinkSync(file);
     fs.rmdirSync(target); throw error;
+  } finally {
+    if (isolation) fs.rmSync(isolation, { recursive: true, force: true });
   }
 }
 
 async function session(opts) {
-  const { studio } = dependencies();
+  const { studio, protectExportedContainer } = dependencies();
   const kind = opts['--agent-adoption-fd'] ? 'delegated_agent_editorial' : 'human_claim_unverified';
   const authorization = kind === 'delegated_agent_editorial' ? parse(decode(capture(opts['--delegation-record']))) : null;
   if (authorization) {record(authorization,['coordinate','statement']);text(authorization.coordinate);text(authorization.statement);}
@@ -336,7 +404,11 @@ async function session(opts) {
         case 'review': record(value.data, []); phase = 'human'; result = await workspace.receiveAdoptionReply(); currentReview = null; break;
         case 'preview': record(value.data, []); result = workspace.agent.compilePreview(); break;
         case 'status': record(value.data, []); result = workspace.inspect(); break;
-        case 'export': record(value.data, []); input.check(); result = writeExport(workspace, opts['--out']); input.complete(); break;
+        case 'export': {
+          record(value.data, []); input.check();
+          const password = opts['--password-fd'] ? readPasswordFd(Number(opts['--password-fd'])) : null;
+          result = await writeExport(workspace, opts['--out'], password, protectExportedContainer); input.complete(); break;
+        }
         default: fail('CLI_OPERATION_UNSUPPORTED');
       }
       input.check();
@@ -394,7 +466,8 @@ async function main(argv) {
   const opts = options(argv);
   if (opts.command === '--version') { process.stdout.write(require('../package.json').version + '\n'); return; }
   if (['help', '--help'].includes(opts.command)) {
-    process.stdout.write('kdna-studio session --out NEW_DIRECTORY [--text FILE] [--interview FILE] [--human-fd 3 | --agent-adoption-fd 3 --delegation-record FILE]\n' +
+    process.stdout.write('kdna-studio session --out NEW_DIRECTORY [--text FILE] [--interview FILE] [--human-fd 3 | --agent-adoption-fd 3 --delegation-record FILE] [--password-fd N]\n' +
+      '--password-fd N exports the bundle as a password-protected container; the password is read once from pipe fd N (never argv or the agent stream), and the recovery code is displayed exactly once on stderr.\n' +
       'kdna-studio verify --bundle DIRECTORY\nkdna-studio read --bundle DIRECTORY [--allow-read] [--judgment 1] [--budget BYTES]\n' +
       'Agent operation JSONL uses stdin/stdout. Adoption replies use the terminal or a separate human/authorized-Agent fd, with explicit channel kind.\n' +
       'Ordinary and component-rich alternatives use the same current live creation graph. See docs/TERMINAL_AGENT_CREATION.md.\n'); return;

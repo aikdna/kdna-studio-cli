@@ -1,6 +1,6 @@
 # KDNA Studio CLI — typed current creation
 
-The terminal Host consumes Studio 4.0.0-rc.components.1, Core 0.24.0-rc.component-semantics.2 and Read 0.3.0-rc.component-semantics.2. Ordinary prose and supported mechanism structures share the same current graph. Installation acceptance is a separate Host decision; exact content checks do not authenticate a provider process.
+The terminal Host consumes Studio 4.0.0-rc.components.2, Core 0.36.0 and Read 0.11.0. Ordinary prose and supported mechanism structures share the same current graph. Installation acceptance is a separate Host decision; exact content checks do not authenticate a provider process.
 
 An external Agent records materials and proposes judgment groups with at least two meaningful alternatives. Selection and final adoption arrive through a separately owned live channel. Human-declared review and expressly delegated Agent editorial adoption are distinct modes:
 

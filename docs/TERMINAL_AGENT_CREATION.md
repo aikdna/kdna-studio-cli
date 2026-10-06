@@ -8,18 +8,18 @@ Each newline-terminated Agent frame has unique `id`, `op`, and `data`. Wait for 
 
 | op | data |
 | --- | --- |
-| brief | `{title,scope}` |
+| brief | `{title,scope,highest_question}`; the one authored question this judgment answers |
 | interview | `{title,question}` |
 | propose | `{localKey,alternatives:[alternative,alternative,...]}` |
 | revise | `{localKey,baseRevision,alternatives,explanation}` |
 | review | `{}`; request actual selection or final adoption |
 | preview | `{}`; show complete current mapping before final adoption |
 | status | `{}` |
-| export | `{}`; save, re-capture and complete once, then exit |
+| export | `{}`; save, re-capture and complete once, then exit; with `--password-fd` the delivered `asset.kdna` is the protected container |
 
 Each alternative has `{localKey,title,subject,scope,statement,rationale,materials:[1]}`. At least two substantive alternatives are required. Optional fields are `method`, `formationRule`, `publicSources`, `publicNotices`; all other fields reject. `materials` is the only CLI adapter, converted to Studio material references. Never send protocol IDs, public profile definitions, native carriers, evidence digests or compiler context.
 
-`method` is `{method:{term},components?,bindings?}`. A component has `{localKey,type,content,statement?}`; content uses the exact current public item/edge/discriminator types. Types are taxonomy, candidate-set and discriminator-set. The latter uses `candidateSetLocalKey` within this judgment. A binding is `{componentLocalKey,role}` and targets this judgment. Missing method is valid when no method applies. Missing own arrays mean undeclared; explicit `[]` means declared empty; null and owned undefined reject. Core alone determines content interpretation and valid shared grammar.
+`method` is `{method:{term},components?,bindings?}`. Its term must be one of the bound Core's published method kinds. A component has `{localKey,type,method:{term},role,content,statement}`; the component's declared basic method equals the judgment term, its role lies in that kind's published role family, and required roles must be covered by non-empty typed content. Content uses the exact current public item/edge/discriminator types. Types are taxonomy, candidate-set and discriminator-set; the latter uses `candidateSetLocalKey` within this judgment. `bindings` remains declared-empty on this path: native bindings are typed edges owned by the graph, not authored links back to the judgment. A missing method rejects (`CREATION_METHOD_REQUIRED`); missing own arrays mean undeclared; explicit `[]` means declared empty; null and owned undefined reject. Core alone determines content interpretation and valid shared grammar.
 
 `formationRule:{conditions:[{kind:'interpreted',statement}]}` makes the authored statement a formation rule rather than an invented fixed result. An explicit empty condition set stays empty. Do not AND candidate-specific conditions into a global prerequisite. Public sources/notices are explicitly authored public identity and notice records, documented by Studio; private source paths and interview bodies must not be automatically published.
 

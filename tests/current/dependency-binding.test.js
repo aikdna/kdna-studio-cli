@@ -56,12 +56,19 @@ test('exact dependency declarations reject content drift and unbound providers b
       fs.writeFileSync(nested + '/@aikdna/kdna-core/package.json', JSON.stringify({ name: '@aikdna/kdna-core', version: '0.23.0' }));
       invoke('nested same-version Core', 'CLI_DEPENDENCY_PATHSET_MISMATCH');
     } finally { fs.rmSync(nested, { recursive: true }); }
+    // A package manager installs optional dependencies by default. The
+    // runtime must keep working, and it must never load the accelerator: every
+    // CBOR operation uses the pure-JS entry in the bound packages.
     const optional = root + '/node_modules/cbor-extract';
+    const optionalMarker = root + '/optional-provider-executed.marker';
     try {
       fs.mkdirSync(optional); fs.writeFileSync(optional + '/package.json', JSON.stringify({ name: 'cbor-extract', version: '0.0.0-test', main: 'index.js' }));
-      fs.writeFileSync(optional + '/index.js', 'throw new Error("unbound provider executed");');
-      invoke('unbound optional provider', 'CLI_OPTIONAL_DEPENDENCY_UNBOUND');
-    } finally { fs.rmSync(optional, { recursive: true }); }
+      fs.writeFileSync(optional + '/index.js', `require('node:fs').writeFileSync(${JSON.stringify(optionalMarker)}, 'executed'); throw new Error('optional provider executed');`);
+      // The ordinary missing-bundle answer proves the dependency binding ran to
+      // completion with the accelerator present.
+      invoke('installed optional accelerator is ignored', 'ENOENT');
+      assert.equal(fs.existsSync(optionalMarker), false, 'the optional accelerator must never be loaded');
+    } finally { fs.rmSync(optional, { recursive: true, force: true }); }
     assert.match(invoke('help', null, ['--help']).stdout, /kdna-studio session/);
     assert.equal(invoke('version', null, ['--version']).stdout.trim(), pkg.version);
   } finally {

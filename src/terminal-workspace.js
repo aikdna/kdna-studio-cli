@@ -158,9 +158,15 @@ function dependencies() {
     }
     for (const name of Object.keys(archive.optionalDependencies)) {
       if (roots.has(name)) continue;
+      // Package managers install optional dependencies by default, so a
+      // consumer that simply ran `npm install` has cbor-x's optional native
+      // accelerator next to this graph. The CLI never requires it: every CBOR
+      // operation goes through the pure-JS entry in the bound packages. Its
+      // presence must therefore not turn a working install into a refusal, and
+      // an injected module is never executed because nothing resolves it for
+      // use. Resolution is probed only to surface a broken optional entry.
       try { scoped.resolve(name); }
       catch (error) { if (error.code === 'MODULE_NOT_FOUND') continue; throw error; }
-      fail('CLI_OPTIONAL_DEPENDENCY_UNBOUND');
     }
   }
   for (const [name, version] of Object.entries(bindings.packages)) {

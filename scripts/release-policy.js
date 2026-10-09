@@ -2,6 +2,7 @@
 
 const EXPECTED_PACKAGE_NAME = '@aikdna/kdna-studio-cli';
 const COMMIT_RE = /^[0-9a-f]{40}$/;
+const CANDIDATE_VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*$/u;
 const STABLE_VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 function assert(condition, message) {
@@ -40,7 +41,22 @@ function validateReleaseContext({ pkg, changelog, env, git }) {
   return Object.freeze({ name: pkg.name, version, tag, ref, commit: git.head });
 }
 
+
+// Candidate preparation is deliberately not a release event, tag or permission.
+// Stable publication still uses validateReleaseContext and rejects every RC.
+function validateCandidateCoordinate({ pkg, changelog }) {
+  assert(pkg?.name === EXPECTED_PACKAGE_NAME, 'candidate package name mismatch');
+  assert(CANDIDATE_VERSION_RE.test(pkg.version || ''), 'candidate must have an exact canonical prerelease coordinate');
+  const heading = new RegExp(`^## ${escapeRegExp(pkg.version)}(?: \\(\\d{4}-\\d{2}-\\d{2}\\))?$`, 'gm');
+  assert([...changelog.matchAll(heading)].length === 1, 'candidate CHANGELOG coordinate missing or duplicated');
+  const first = changelog.match(/^## (.+)$/m)?.[0];
+  assert(first && new RegExp(heading.source).test(first), 'candidate must be first CHANGELOG entry');
+  return Object.freeze({ name: pkg.name, version: pkg.version, status: 'candidate_preflight_only' });
+}
+
 module.exports = {
+  CANDIDATE_VERSION_RE,
+  validateCandidateCoordinate,
   COMMIT_RE,
   EXPECTED_PACKAGE_NAME,
   STABLE_VERSION_RE,

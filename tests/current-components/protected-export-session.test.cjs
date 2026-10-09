@@ -7,7 +7,8 @@
 //   argv value / fd collision / invalid fd number / empty / oversize / bad UTF-8.
 const test = require("node:test"), assert = require("node:assert/strict"), { spawn } = require("node:child_process");
 const fs = require("node:fs"), path = require("node:path"), os = require("node:os");
-const base = path.resolve(__dirname, "../.."), bin = path.join(base, "bin/kdna-studio.js");
+const base = path.resolve(process.env.STUDIO_TEST_PACKAGE_ROOT || path.resolve(__dirname, "../..")), bin = path.join(base, "bin/kdna-studio.js");
+const packageRequire = require("node:module").createRequire(path.join(base, "package.json"));
 const root = path.resolve(process.env.STUDIO_TEST_ARTIFACT_ROOT || path.join(__dirname, ".artifacts", String(process.pid)));
 fs.mkdirSync(root, { recursive: true });
 let serial = 0;
@@ -79,7 +80,7 @@ test("protected export delivers a dual-slot container and displays the recovery 
   assert.deepEqual(complete.protection, { profile: "kdna.envelope.aead", slots: ["password", "recovery"], verification_basis: "pre_protection_plaintext" });
   // delivery position carries the protected container, not a plain ZIP
   const delivered = fs.readFileSync(path.join(bundle, "asset.kdna"));
-  const { openSourceBytes } = require("@aikdna/kdna-core/authoring-node");
+  const { openSourceBytes } = packageRequire("@aikdna/kdna-core/authoring-node");
   assert.notEqual(openSourceBytes(delivered).status, "accepted");
   assert.equal(delivered.includes(Buffer.from("PRIVATE_CLI_SOURCE_TEXT_")), false);
   // recovery code: exactly once, on stderr, never on stdout
@@ -89,7 +90,7 @@ test("protected export delivers a dual-slot container and displays the recovery 
   assert.match(recoveryCode, /^kdna-recover-(?:[0-9A-F]{4}-){15}[0-9A-F]{4}$/);
   assert.equal(result.out.includes(recoveryCode), false);
   // both slots unlock via Core protected admission; wrong credential rejects
-  const { admitProtectedNode } = require("@aikdna/kdna-core/protection-node");
+  const { admitProtectedNode } = packageRequire("@aikdna/kdna-core/protection-node");
   const policy = { signaturePolicy: { requireSignature: false, expectedPublicKeyHex: null } };
   const provider = { kind: "local", clock: () => Date.now() };
   const slot0 = await admitProtectedNode(delivered, { credential: { kind: "password", password: Buffer.from(PASSWORD), slotIndex: 0 }, ...policy }, provider);

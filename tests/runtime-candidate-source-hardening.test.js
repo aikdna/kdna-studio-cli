@@ -121,7 +121,7 @@ test('candidate source equivalence rejects install-byte drift', () => {
   );
 });
 
-test('CI binds both exact candidate sources and runs trusted tooling across active LTS runtimes', () => {
+test('historical candidates retain exact source authority and current CI runs trusted active LTS tooling', () => {
   const pinned = readPinnedCandidateCommits(ROOT);
   assert.deepEqual([...pinned.keys()].sort(), CANDIDATE_AUTHORITIES.map(({ name }) => name).sort());
   const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/ci.yml'), 'utf8');

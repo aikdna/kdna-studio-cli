@@ -29,6 +29,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const {
   BINDING_PATH,
+  DIGEST_INPUTS,
   LEGS,
   LOCK_PATH,
   PACKAGE_PATH,
@@ -39,7 +40,6 @@ const {
 } = require('./ci-leg-definitions');
 
 const root = path.resolve(__dirname, '..');
-const DIGEST_INPUTS = Object.freeze([BINDING_PATH, LOCK_PATH, PACKAGE_PATH, REGISTRY_PATH]);
 
 function sha256(relative) {
   return crypto.createHash('sha256').update(fs.readFileSync(path.join(root, relative))).digest('hex');

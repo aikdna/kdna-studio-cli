@@ -31,6 +31,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const {
   BINDING_PATH,
+  DIGEST_INPUTS,
   LEGS,
   LOCK_PATH,
   PACKAGE_PATH,
@@ -44,7 +45,6 @@ const {
 
 const RECEIPT_PREFIX = 'KDNA-CI-RECEIPT: ';
 const NOT_RUN_PREFIX = 'KDNA-CI-NOT-RUN:';
-const DIGEST_INPUTS = Object.freeze([BINDING_PATH, LOCK_PATH, PACKAGE_PATH, REGISTRY_PATH]);
 const GATE_SCRIPTS = Object.freeze([
   'ci-leg-receipt.js',
   'ci-leg-definitions.js',
@@ -104,6 +104,10 @@ function environmentWithout(definition) {
 function checkRegistrationShape(leg, registration, findings) {
   if (!registration) {
     findings.push({ leg, check: 'leg_not_registered' });
+    return;
+  }
+  if (registration.class === 'run') {
+    if (!Array.isArray(registration.unavailable_codes) || registration.unavailable_codes.length) findings.push({ leg, check: 'run_has_unavailability_codes' });
     return;
   }
   if (registration.class !== 'not_run') findings.push({ leg, check: 'registration_class', detail: String(registration.class) });
@@ -232,11 +236,8 @@ function checkTestReceipt(root, leg, definition, registration, computed, finding
   const result = runCache.get(cacheKey);
   if (result.error) throw result.error;
   if (expected !== 'not_run') {
-    findings.push({
-      leg,
-      check: 'test_receipt_registration_no_longer_holds',
-      detail: `the committed test must run for real now (status=${result.status})`,
-    });
+    if (result.status !== 0) findings.push({ leg, check: 'test_run_exit', detail: String(result.status) });
+    if (result.stdout.includes(`${NOT_RUN_PREFIX} ${leg} `)) findings.push({ leg, check: 'run_test_printed_not_run' });
     return;
   }
   if (result.status !== 0) findings.push({ leg, check: 'test_receipt_exit', detail: String(result.status) });

@@ -1,6 +1,6 @@
 # KDNA Studio CLI — typed current creation
 
-The terminal Host consumes Studio 4.0.0-rc.components.2, Core 0.36.0 and Read 0.11.0. Ordinary prose and supported mechanism structures share the same current graph. Installation acceptance is a separate Host decision; exact content checks do not authenticate a provider process.
+The terminal Host consumes Studio 4.0.0-rc.components.2, Core 0.37.1-rc.browser.1 and Read 0.11.2-rc.browser.1. Ordinary prose and supported mechanism structures share container `0.5.0` / Read grammar `0.6.4`. Core/Read package versions identify implementation bytes and do not establish interchange with NativeSections container `0.6.0` / Read `0.7.0`, or import/reuse of another CLI's output. Installation acceptance is a separate Host decision; exact content checks do not authenticate a provider process.
 
 An external Agent records materials and proposes judgment groups with at least two meaningful alternatives. Selection and final adoption arrive through a separately owned live channel. Human-declared review and expressly delegated Agent editorial adoption are distinct modes:
 
@@ -42,3 +42,23 @@ A direct declaration is either an exact SemVer or an integrity-locked `file:` co
 Before publishing a release from this repository every `file:` coordinate must be replaced by the **exact registry version**, because a consumer that installs the packed artifact from a registry has no `vendor/` directory next to it. `npm run check:publish-coordinates` reports the coordinates that are still local; the publish workflow runs that gate before a package can be pushed.
 
 See [command contract](docs/CREATION_COMMAND_CONTRACT.md) and [Agent integration](docs/TERMINAL_AGENT_CREATION.md). Their JSONL is private transport, not a KDNA asset format. Historical project/card commands and runtime adapters stay outside the packed and default surface.
+
+
+## Current candidate preflight
+
+The checked dependency graph binds Core `0.37.1-rc.browser.1`, Read
+`0.11.2-rc.browser.1` and `fast-uri` `3.1.8`. The current source ledger is
+`fixtures/runtime-candidates/current-sources.json`; `npm run verify:candidate-sources`
+rebuilds its exact Git package trees and compares every installed tar member.
+`npm run check:current-bindings` independently recomputes the complete dependency
+member receipt. These checks execute for the current candidate; historical
+registry fixtures and their retired API remain separate test material.
+
+From a clean source checkpoint, `npm run candidate:generate-evidence -- --out
+<outside-repository-evidence.json> --artifact <outside-repository-package.tgz>`
+creates two byte-identical packs from exact committed blobs and validates their
+independently parsed contents. Its candidate evidence schema cannot enter the
+stable publisher. Candidate preflight does not establish registry availability,
+verified editorial identity, real human acceptance or permission to publish.
+The stable release event/tag policy and exact registry-coordinate gate remain
+required before publication.

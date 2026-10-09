@@ -5,6 +5,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { LEGS, DIGEST_INPUTS } = require('../scripts/ci-leg-definitions');
+const LEG = 'candidate-sources';
+const REQUIRED = Object.fromEntries(LEGS[LEG].requires.map(name => [name, 'x']));
 
 // The receipt mechanism is only worth as much as the gate that consumes it.
 // These cases replace the receipt generator with stubs and require
@@ -18,16 +21,12 @@ const generator = path.join(root, 'scripts', 'ci-leg-receipt.js');
 
 function sandboxTree({ removeRegisteredCodes = false } = {}) {
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-leg-receipts-'));
-  const files = [
-    'package.json',
-    'package-lock.json',
-    'fixtures/runtime-candidates/binding.json',
-    'fixtures/runtime-candidates/leg-registry.json',
-  ];
+  const files = DIGEST_INPUTS;
   for (const relative of files) {
     fs.mkdirSync(path.dirname(path.join(sandbox, relative)), { recursive: true });
     fs.copyFileSync(path.join(root, relative), path.join(sandbox, relative));
   }
+  fs.copyFileSync(path.join(root, 'fixtures/runtime-candidates/history/leg-registry-before-current-graph.json'), path.join(sandbox, 'fixtures/runtime-candidates/leg-registry.json'));
   fs.mkdirSync(path.join(sandbox, 'scripts'), { recursive: true });
   for (const name of ['ci-leg-receipt.js', 'ci-leg-definitions.js', 'release-policy.js']) {
     fs.copyFileSync(path.join(root, 'scripts', name), path.join(sandbox, 'scripts', name));
@@ -254,5 +253,26 @@ test('a leg that is not registered cannot be suppressed', () => {
     assert.equal(generatorRun.status, 0);
     assert.doesNotMatch(generatorRun.stdout, /KDNA-CI-NOT-RUN/);
     assert.match(generatorRun.stdout, /KDNA-CI-RECEIPT: .*"class":"run"/);
+  });
+});
+
+// Current run registrations must propagate actual failure and can never print not_run.
+test('current candidate run registrations propagate a failed child without suppression', () => {
+  withSandbox({}, sandbox => {
+    fs.copyFileSync(path.join(root, 'fixtures/runtime-candidates/leg-registry.json'), path.join(sandbox, 'fixtures/runtime-candidates/leg-registry.json'));
+    fs.writeFileSync(path.join(sandbox, 'scripts/run-trusted-npm.js'), "'use strict';\nprocess.exit(7);\n");
+    const result = spawnSync(process.execPath, [path.join(sandbox, 'scripts/ci-leg-receipt.js'), LEG],
+      { cwd: sandbox, env: { ...process.env, ...REQUIRED }, encoding: 'utf8' });
+    assert.equal(result.status, 7);
+    assert.doesNotMatch(result.stdout, /KDNA-CI-NOT-RUN/);
+    assert.match(result.stdout, /"class":"run"/);
+    assert.match(result.stdout, /"status":7/);
+    const current = JSON.parse(fs.readFileSync(path.join(sandbox, 'fixtures/runtime-candidates/current-sources.json')));
+    current.packages[0].sha256 = '0'.repeat(64);
+    fs.writeFileSync(path.join(sandbox, 'fixtures/runtime-candidates/current-sources.json'), JSON.stringify(current));
+    const changed = spawnSync(process.execPath, [path.join(sandbox, 'scripts/ci-leg-receipt.js'), LEG],
+      { cwd: sandbox, env: { ...process.env, ...REQUIRED }, encoding: 'utf8' });
+    const receipt = value => JSON.parse(value.stdout.split('\n').find(line => line.startsWith('KDNA-CI-RECEIPT: ')).slice('KDNA-CI-RECEIPT: '.length));
+    assert.notEqual(receipt(result).inputs['fixtures/runtime-candidates/current-sources.json'], receipt(changed).inputs['fixtures/runtime-candidates/current-sources.json']);
   });
 });

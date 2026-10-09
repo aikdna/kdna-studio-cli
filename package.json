@@ -21,14 +21,16 @@
     "lint": "node --check bin/kdna-studio.js && node --check src/terminal-workspace.js && node --check src/component-operations.js",
     "test": "node --test tests/current-components/*.test.cjs tests/current/*.test.js",
     "test:all": "node scripts/run-test-all.js",
-    "test:candidate-chain": "node scripts/verify-runtime-candidate-chain.js",
-    "verify:candidate-sources": "node scripts/verify-runtime-candidate-sources.js",
+    "test:candidate-chain": "node scripts/verify-current-candidate-chain.js",
+    "verify:candidate-sources": "node scripts/verify-current-candidate-sources.js",
     "check:protocol-names": "node scripts/check-current-protocol-names.js",
     "check:publish-coordinates": "node scripts/check-publish-coordinates.js",
     "release:check": "node scripts/release-check.js",
     "release:generate-evidence": "node scripts/generate-release-evidence.js",
     "release:publish-verified": "node scripts/publish-verified-artifact.js",
-    "prepublishOnly": "node scripts/check-publish-coordinates.js && node scripts/run-test-all.js && node scripts/verify-runtime-candidate-chain.js && node scripts/release-check.js"
+    "prepublishOnly": "node scripts/check-publish-coordinates.js && node scripts/run-test-all.js && node scripts/verify-current-candidate-chain.js && node scripts/release-check.js",
+    "check:current-bindings": "node scripts/generate-current-bindings.js",
+    "candidate:generate-evidence": "node scripts/generate-candidate-evidence.js"
   },
   "keywords": [
     "kdna",
@@ -49,8 +51,8 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@aikdna/kdna-core": "file:vendor/aikdna-kdna-core-0.36.0.tgz",
-    "@aikdna/kdna-read": "file:vendor/aikdna-kdna-read-0.11.0.tgz",
+    "@aikdna/kdna-core": "file:vendor/aikdna-kdna-core-0.37.1-rc.browser.1.tgz",
+    "@aikdna/kdna-read": "file:vendor/aikdna-kdna-read-0.11.2-rc.browser.1.tgz",
     "@aikdna/kdna-studio-core": "file:vendor/aikdna-kdna-studio-core-4.0.0-rc.components.2.tgz"
   },
   "directories": {
@@ -58,7 +60,7 @@
   },
   "author": "",
   "overrides": {
-    "fast-uri": "3.1.7",
+    "fast-uri": "3.1.8",
     "@aikdna/kdna-core": "$@aikdna/kdna-core",
     "@aikdna/kdna-read": "$@aikdna/kdna-read",
     "@aikdna/kdna-studio-core": "$@aikdna/kdna-studio-core"

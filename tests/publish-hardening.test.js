@@ -19,8 +19,10 @@ const {
   parseTarFiles,
   validateArtifact,
   validatePackReport,
+  validateCandidatePackReport,
+  validateCandidateArtifact,
 } = require('../scripts/release-evidence');
-const { validateReleaseContext } = require('../scripts/release-policy');
+const { STABLE_VERSION_RE, validateReleaseContext, validateCandidateCoordinate } = require('../scripts/release-policy');
 const {
   registeredNotRunFor,
   unavailabilityCodes,
@@ -155,6 +157,9 @@ test('Studio CLI pack members are fail-closed and package metadata has no librar
     () => assertStudioCliPackMembers([...files, { path: 'index.js', size: 1 }]),
     /phantom library entry/,
   );
+  for (const retired of ['src/ai/index.js', 'src/llm/index.js']) {
+    assert.throws(() => assertStudioCliPackMembers([...files, { path: retired, size: 1 }]), /retired provider entry/);
+  }
 });
 
 function releaseInput(overrides = {}) {
@@ -596,24 +601,34 @@ test('pack evidence independently parses a real npm tgz and rejects changed byte
   const [report] = JSON.parse(packed.stdout);
   const bytes = fs.readFileSync(path.join(temp, report.filename));
   const currentPackage = require('../package.json');
-  const evidence = validatePackReport({
+  const isStable = STABLE_VERSION_RE.test(require('../package.json').version);
+  const validateCurrentPack = isStable ? validatePackReport : validateCandidatePackReport;
+  const validateCurrentArtifact = isStable ? validateArtifact : validateCandidateArtifact;
+  const evidence = validateCurrentPack({
     reportText: packed.stdout,
     tarball: bytes,
     pkg: { name: currentPackage.name, version: currentPackage.version },
-    source: { ref: `refs/tags/${currentPackage.version}`, commit: HASH },
+    source: { ref: STABLE_VERSION_RE.test(currentPackage.version) ? `refs/tags/${currentPackage.version}` : `candidate:${HASH}`, commit: HASH },
   });
-  assert.equal(validateArtifact(evidence, bytes), evidence);
-  assert.throws(() => validateArtifact(evidence, Buffer.from('changed')), /size|integrity|shasum/);
+  assert.equal(validateCurrentArtifact(evidence, bytes), evidence);
+  if (!isStable) {
+    let lookupCalls = 0, publishCalls = 0;
+    assert.throws(() => validateArtifact(evidence, bytes), /schema mismatch/);
+    assert.throws(() => publishCandidate({ evidence, tarball: bytes, artifactPath: path.join(temp, report.filename),
+      bindCurrent: () => evidence, lookup: () => { lookupCalls++; }, publish: () => { publishCalls++; } }), /schema mismatch/);
+    assert.equal(lookupCalls, 0); assert.equal(publishCalls, 0);
+  }
+  assert.throws(() => validateCurrentArtifact(evidence, Buffer.from('changed')), /size|integrity|shasum/);
   assert.throws(
     () =>
-      validateArtifact(
+      validateCurrentArtifact(
         { ...evidence, artifact: { ...evidence.artifact, unpacked_size: evidence.artifact.unpacked_size + 1 } },
         bytes,
       ),
     /unpacked size mismatch/,
   );
   assert.throws(
-    () => validateArtifact({ ...evidence, artifact: { ...evidence.artifact, filename: '../release.tgz' } }, bytes),
+    () => validateCurrentArtifact({ ...evidence, artifact: { ...evidence.artifact, filename: '../release.tgz' } }, bytes),
     /filename mismatch/,
   );
 });
@@ -783,4 +798,17 @@ test('registry lookup and publication use the official registry and the exact ta
     '--registry=https://registry.npmjs.org/',
     '--@aikdna:registry=https://registry.npmjs.org/',
   ]);
+});
+
+test('candidate coordinate preparation rejects malformed or misleading headings', () => {
+  const pkg = { name: require('../package.json').name, version: '1.2.3-rc.1' };
+  const changelog = '# Changelog\n\n## 1.2.3-rc.1 (2026-10-09)\n';
+  assert.equal(validateCandidateCoordinate({ pkg, changelog }).status, 'candidate_preflight_only');
+  for (const version of ['01.2.3-rc.1', '1.2.3-rc.01', '1.2.3', '1.2.3-rc..1']) {
+    assert.throws(() => validateCandidateCoordinate({ pkg: { ...pkg, version }, changelog }));
+  }
+  for (const invalid of [changelog + '## 1.2.3-rc.1\n', changelog.replace('rc.1 (', 'rc.10 ('),
+    '# Changelog\n## 1.2.3-rc.2\n## 1.2.3-rc.1\n', changelog.replace('2026-10-09', 'anything')]) {
+    assert.throws(() => validateCandidateCoordinate({ pkg, changelog: invalid }));
+  }
 });

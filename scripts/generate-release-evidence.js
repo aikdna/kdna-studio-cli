@@ -202,4 +202,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { assertReproduciblePackBytes, generateReleaseEvidence, main };
+module.exports = { packIsolatedSource, assertReproduciblePackBytes, generateReleaseEvidence, main };

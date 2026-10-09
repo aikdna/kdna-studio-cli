@@ -280,7 +280,7 @@ function readTarFileEntriesFromBytes(compressed, label = 'candidate tar') {
   assert(Buffer.isBuffer(compressed), `${label} bytes must be a Buffer`);
   let archive;
   try {
-    archive = zlib.gunzipSync(compressed, { maxOutputLength: 64 * 1024 * 1024 });
+    archive = zlib.gunzipSync(compressed, { maxOutputLength: 256 * 1024 * 1024 });
   } catch {
     throw new Error(`${label} gzip stream is invalid`);
   }

@@ -17,3 +17,14 @@ Stdout is private machine JSON and may contain materials, evidence and disclosed
 Studio format `kdna.studio-creation-evidence/2` and the exact current graph are required. The CLI does not implement another evidence canonicalizer, component interpreter or legacy branch. Static consistency cannot restore `accepted_with_live_context`: static status retains `creation_accepted:not_evaluated`, `live_context:unavailable`, `identity:not_verified` and `action_authorization:not_evaluated`. Role-specific adoption records do not authenticate a person or Agent.
 
 Before executing dependencies, the Host checks every member, path set, package version, mandatory resolution and unbound optional package against `src/public-bindings.json`. Archive equality is a local content observation; installation approval and process-origin trust remain external. Tests use explicit synthetic channels and do not prove actual Agent editorial decisions or publication readiness.
+
+
+## Container support
+
+Studio session output uses container `0.5.0` and Read grammar `0.6.4`.
+The pinned Core/Read implementation versions also contain other public routes;
+sharing their package coordinates does not establish container interchange.
+NativeSections container `0.6.0` / Read `0.7.0` input, another CLI's output,
+persistent import and resume are not supported by this entry. Revisions operate
+on the current live Studio session before final confirmation. `verify` and
+`read` consume this entry's completed bundle under the boundaries above.

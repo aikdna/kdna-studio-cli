@@ -23,6 +23,8 @@ const BINDING_PATH = path.join('fixtures', 'runtime-candidates', 'binding.json')
 const LOCK_PATH = 'package-lock.json';
 const PACKAGE_PATH = 'package.json';
 const REGISTRY_PATH = path.join('fixtures', 'runtime-candidates', 'leg-registry.json');
+const DIGEST_INPUTS = Object.freeze([BINDING_PATH, LOCK_PATH, PACKAGE_PATH, REGISTRY_PATH,
+  'fixtures/runtime-candidates/current-sources.json', 'src/public-bindings.json']);
 
 const CODE_DIRECT_COORDINATES_NOT_REGISTRY_SEMVER =
   'aikdna_direct_coordinates_are_not_registry_semver';
@@ -112,6 +114,7 @@ function committedVersionIsNotStableSemver(root) {
 
 /** Recompute, from the committed bytes alone, the unavailability codes of one receipt. */
 function unavailabilityCodes(root, leg) {
+  if (registrationFor(root, leg)?.class === 'run') return { codes: [], detail: { policy: 'current_candidate_checks_execute' } };
   const codes = [];
   const detail = {};
   const registry = new Map([
@@ -163,6 +166,7 @@ function registeredNotRunFor(root, leg, codes) {
 }
 
 module.exports = {
+  DIGEST_INPUTS,
   BINDING_PATH,
   CODE_AUTHORITY_DIFFERS_FROM_INSTALLED_GRAPH,
   CODE_COMMITTED_VERSION_IS_NOT_STABLE_SEMVER,

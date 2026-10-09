@@ -3,7 +3,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const CANDIDATE_WORKFLOW_PATH = path.join('.github', 'workflows', 'ci.yml');
+// Historical source authority for the preserved registry fixtures only.
+const CANDIDATE_WORKFLOW_PATH = path.join('fixtures', 'runtime-candidates', 'history', 'ci-before-current-graph.yml');
 const CANDIDATE_AUTHORITIES = Object.freeze([
   Object.freeze({
     name: '@aikdna/kdna-core',

@@ -121,6 +121,14 @@ test("the password fd must be a distinct pipe channel", async () => {
   const collide = await run(["session", "--out", path.join(root, "never-collide"), "--human-fd", "3", "--password-fd", "3"], "fd-collide");
   assert.equal(collide.exit, 2);
   assert.match(collide.err, /CLI_PASSWORD_FD_INVALID/);
+  // A leading zero names the same descriptor; the duplication check compares
+  // the normalized number rather than the raw argument text.
+  const padded = await run(["session", "--out", path.join(root, "never-collide-padded"), "--human-fd", "3", "--password-fd", "03"], "fd-collide-padded");
+  assert.equal(padded.exit, 2);
+  assert.match(padded.err, /CLI_PASSWORD_FD_INVALID/);
+  const paddedAdoption = await run(["session", "--out", path.join(root, "never-collide-adoption"), "--agent-adoption-fd", "3", "--delegation-record", path.join(root, "never-collide-adoption.json"), "--password-fd", "03"], "fd-collide-adoption-padded");
+  assert.equal(paddedAdoption.exit, 2);
+  assert.match(paddedAdoption.err, /CLI_PASSWORD_FD_INVALID/);
   const low = await run(["session", "--out", path.join(root, "never-low"), "--password-fd", "2"], "fd-low");
   assert.equal(low.exit, 2);
   assert.match(low.err, /CLI_PASSWORD_FD_INVALID/);

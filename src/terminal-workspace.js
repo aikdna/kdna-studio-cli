@@ -208,7 +208,14 @@ function options(argv) {
   if (Boolean(opts['--agent-adoption-fd']) !== Boolean(opts['--delegation-record']) || (opts['--agent-adoption-fd'] && opts['--human-fd'])) fail('CLI_ADOPTION_OPTIONS_INVALID');
   if (opts['--judgment'] && (!/^[1-9]\d*$/.test(opts['--judgment']) || !Number.isSafeInteger(Number(opts['--judgment'])))) fail('CLI_SELECTION_INVALID');
   if (opts['--password-fd'] && (!/^\d+$/.test(opts['--password-fd']) || Number(opts['--password-fd']) < 3)) fail('CLI_PASSWORD_FD_INVALID');
-  if (opts['--password-fd'] && (opts['--password-fd'] === opts['--human-fd'] || opts['--password-fd'] === opts['--agent-adoption-fd'])) fail('CLI_PASSWORD_FD_INVALID');
+  // Compare the normalized descriptor numbers: `03` and `3` name the same fd,
+  // and a leading zero must not slip past the duplication check.
+  if (opts['--password-fd']) {
+    const descriptor = Number(opts['--password-fd']);
+    const human = opts['--human-fd'] === undefined ? null : Number(opts['--human-fd']);
+    const adoption = opts['--agent-adoption-fd'] === undefined ? null : Number(opts['--agent-adoption-fd']);
+    if (descriptor === human || descriptor === adoption) fail('CLI_PASSWORD_FD_INVALID');
+  }
   return opts;
 }
 
@@ -292,6 +299,20 @@ async function writeExport(session, destination, password, protectExportedContai
   fs.mkdirSync(target, { mode: 0o700 }); // exclusive reservation, never replace an existing bundle
   const created = [];
   let isolation = null;
+  // Create the file exclusively, then register it before writing a byte. A
+  // write that fails part-way (EFBIG, ENOSPC, EIO) therefore still leaves a
+  // registered path, so the rollback removes the incomplete file, the
+  // directory removal succeeds, and the original error reaches the caller
+  // instead of being masked by ENOTEMPTY. Registration happens only after
+  // this invocation really created the file, so rollback never unlinks a
+  // path somebody else made.
+  function trackedWrite(name, bytes) {
+    const file = path.join(target, name);
+    const descriptor = fs.openSync(file, 'wx', 0o400);
+    created.push(file);
+    try { fs.writeFileSync(descriptor, bytes); } finally { fs.closeSync(descriptor); }
+    return file;
+  }
   try {
     const result = session.exportAsset();
     let bytes = result.bytes;
@@ -318,23 +339,26 @@ async function writeExport(session, destination, password, protectExportedContai
     const files = [['asset.kdna', bytes], ['creation-evidence.json', Buffer.from(json(result.evidence))],
       ['binding.json', Buffer.from(json(result.binding))]];
     for (const [name, fileBytes] of files) {
-      const file = path.join(target, name);
-      fs.writeFileSync(file, fileBytes, { flag: 'wx', mode: 0o400 }); created.push(file);
+      trackedWrite(name, fileBytes);
     }
     if (!password) {
       const readback = capture(path.join(target, 'asset.kdna'), 16 * LIMIT);
       verification = session.completeSave(readback);
     }
-    const verificationFile = path.join(target, 'verification.json');
-    fs.writeFileSync(verificationFile, json(verification), {flag:'wx',mode:0o400});created.push(verificationFile);
-    const complete = path.join(target, 'complete.json');
-    fs.writeFileSync(complete, json({ kind: 'private-studio-export-bundle', version: 2, ...(protection ? { protection } : {}) }), { flag: 'wx', mode: 0o400 });
-    created.push(complete); fs.chmodSync(target, 0o500);
+    trackedWrite('verification.json', json(verification));
+    trackedWrite('complete.json', json({ kind: 'private-studio-export-bundle', version: 2, ...(protection ? { protection } : {}) }));
+    fs.chmodSync(target, 0o500);
     if (recoveryCode) displayRecoveryCode(recoveryCode);
     return { directory: target, binding: result.binding, verification };
   } catch (error) {
-    for (const file of created.reverse()) fs.unlinkSync(file);
-    fs.rmdirSync(target); throw error;
+    // Roll back only what this invocation created, and never replace the
+    // original failure with a cleanup failure.
+    let cleaned = true;
+    try { fs.chmodSync(target, 0o700); } catch { /* the reservation may already be gone */ }
+    for (const file of created.reverse()) { try { fs.unlinkSync(file); } catch (cleanupError) { if (cleanupError.code !== 'ENOENT') cleaned = false; } }
+    try { fs.rmdirSync(target); } catch (cleanupError) { if (cleanupError.code !== 'ENOENT') cleaned = false; }
+    if (!cleaned) process.stderr.write('Residual export path was not fully removed: ' + target + '\n');
+    throw error;
   } finally {
     if (isolation) fs.rmSync(isolation, { recursive: true, force: true });
   }

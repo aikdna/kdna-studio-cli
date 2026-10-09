@@ -21,9 +21,18 @@ const {
 } = require('./trusted-npm-release');
 
 const BINDING_PATH = 'fixtures/runtime-candidates/binding.json';
+const CURRENT_BINDING_PATH = 'fixtures/runtime-candidates/current-sources.json';
+const { isCanonicalCandidateVersion } = require('./release-policy');
 const AIKDNA_PACKAGE_RE = /^@aikdna\/[a-z0-9][a-z0-9._-]*$/;
 const COMMIT_RE = /^[0-9a-f]{40}$/;
 const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+// A direct coordinate may be an exact stable version or the repository's exact
+// canonical candidate coordinate. Both forms are exact: the accepted set gains
+// one precise shape, and every floating, wildcard, range or malformed form is
+// still rejected.
+function isExactDirectCoordinate(value) {
+  return typeof value === 'string' && (SEMVER_RE.test(value) || isCanonicalCandidateVersion(value));
+}
 const INTEGRITY_RE = /^sha512-[A-Za-z0-9+/]{86}==$/;
 const CANDIDATE_ARTIFACT_RE = /^fixtures\/runtime-candidates\/[a-z0-9][a-z0-9._-]*\.tgz$/;
 const CANDIDATE_PACK_STATUSES = Object.freeze([
@@ -691,7 +700,7 @@ function verifyCandidateBinding(root) {
 
   for (const name of directNames) {
     const declared = packageJson.dependencies[name];
-    assert(SEMVER_RE.test(declared || ''), `direct dependency must use exact SemVer: ${name}`);
+    assert(isExactDirectCoordinate(declared), `direct dependency must use exact SemVer: ${name}`);
     assert(
       packageLock.packages?.['']?.dependencies?.[name] === declared,
       `lock root dependency mismatch: ${name}`,
@@ -842,7 +851,7 @@ function verifyInstalledAikdnaGraph(root) {
   const directNames = aikdnaDependencyNames(packageJson.dependencies, 'direct dependencies');
   const directVersions = new Map(directNames.map((name) => [name, packageJson.dependencies[name]]));
   for (const [name, version] of directVersions) {
-    assert(SEMVER_RE.test(version || ''), `direct dependency must use exact SemVer: ${name}`);
+    assert(isExactDirectCoordinate(version), `direct dependency must use exact SemVer: ${name}`);
   }
   assertDependencyMaps(packageJson, 'package manifest', directVersions, true);
 
@@ -1007,8 +1016,131 @@ function verifyInstalledAikdnaGraph(root) {
   );
 }
 
+// The release gate must validate the graph the release actually publishes. The
+// historical binding fixture (fixtures/runtime-candidates/binding.json, the
+// 0.21.0-era candidate) belongs to verifyCandidateBinding and its standalone
+// verifier; this gate validates the current candidate authority and keeps every
+// structural assertion the historical path made about the manifest and lock.
+function verifyCurrentReleaseGraph(root) {
+  const rootReal = fs.realpathSync(root);
+  const bindingPath = path.join(root, ...pathSegments(CURRENT_BINDING_PATH));
+  assertAuthorityFile(
+    bindingPath,
+    path.join(rootReal, ...pathSegments(CURRENT_BINDING_PATH)),
+    'current candidate binding',
+  );
+  const packagePath = path.join(root, 'package.json');
+  const lockPath = path.join(root, 'package-lock.json');
+  assertAuthorityFile(packagePath, path.join(rootReal, 'package.json'), 'package manifest');
+  assertAuthorityFile(lockPath, path.join(rootReal, 'package-lock.json'), 'package lock');
+
+  const binding = readJson(bindingPath);
+  const packageJson = readJson(packagePath);
+  const packageLock = readJson(lockPath);
+
+  assert(packageLock.lockfileVersion === 3, 'package lock must use lockfileVersion 3');
+  assert(
+    packageLock.packages && typeof packageLock.packages === 'object',
+    'package lock packages graph is missing',
+  );
+  assert(
+    !Object.hasOwn(packageLock, 'dependencies'),
+    'legacy top-level package lock dependencies are not permitted',
+  );
+  assert(
+    packageLock.name === packageJson.name && packageLock.version === packageJson.version,
+    'package lock identity mismatch',
+  );
+  assert(
+    packageLock.packages['']?.name === packageJson.name &&
+      packageLock.packages['']?.version === packageJson.version,
+    'package lock root identity mismatch',
+  );
+
+  assert(binding.schema === 'kdna.current-candidate-sources', 'current binding schema mismatch');
+  assert(
+    Array.isArray(binding.packages) && binding.packages.length > 0,
+    'current candidate binding is empty',
+  );
+
+  const directNames = aikdnaDependencyNames(packageJson.dependencies, 'direct dependencies');
+  const directVersions = new Map(directNames.map((name) => [name, packageJson.dependencies[name]]));
+  const bindingNames = binding.packages.map((entry) => entry.name);
+  for (const name of bindingNames) {
+    assert(
+      typeof name === 'string' && AIKDNA_PACKAGE_RE.test(name),
+      'current candidate package name invalid',
+    );
+  }
+  assert(
+    new Set(bindingNames).size === bindingNames.length,
+    'current candidate binding contains duplicate packages',
+  );
+  assertExactPackageNames('current candidate binding', bindingNames, directNames);
+  assertDependencyMaps(packageJson, 'package manifest', directVersions, true);
+  assertExactPackageNames(
+    'lock root AIKDNA dependencies',
+    aikdnaDependencyNames(packageLock.packages?.['']?.dependencies, 'lock root dependencies'),
+    directNames,
+  );
+  assertDependencyMaps(packageLock.packages?.[''], 'lock root', directVersions, true);
+  assertExactAikdnaLockPackages(packageLock, directNames, new Set(bindingNames), directVersions);
+
+  for (const name of directNames) {
+    const declared = packageJson.dependencies[name];
+    assert(isExactDirectCoordinate(declared), `direct dependency must use exact SemVer: ${name}`);
+    assert(
+      packageLock.packages?.['']?.dependencies?.[name] === declared,
+      `lock root dependency mismatch: ${name}`,
+    );
+    const locked = packageLock.packages?.[`node_modules/${name}`];
+    assert(locked?.version === declared, `lock package version mismatch: ${name}`);
+    assert(
+      locked?.resolved === canonicalRegistryUrl(name, declared),
+      `locked dependency is not the exact public coordinate: ${name}`,
+    );
+  }
+
+  for (const entry of binding.packages) {
+    assert(COMMIT_RE.test(entry.commit || ''), `candidate source commit must be exact: ${entry.name}`);
+    assert(COMMIT_RE.test(entry.tree || ''), `candidate source tree must be exact: ${entry.name}`);
+    assert(/^[a-f0-9]{64}$/u.test(entry.sha256 || ''), `candidate sha256 invalid: ${entry.name}`);
+    const artifact = path.join(root, ...pathSegments(entry.artifact));
+    assertAuthorityFile(
+      artifact,
+      path.join(rootReal, ...pathSegments(entry.artifact)),
+      `candidate archive ${entry.name}`,
+    );
+    const bytes = fs.readFileSync(artifact);
+    assert(
+      entry.sha256 === digest(bytes, 'sha256', 'hex'),
+      `candidate sha256 mismatch: ${entry.name}`,
+    );
+    const locked = packageLock.packages?.[`node_modules/${entry.name}`];
+    assert(locked?.version === entry.version, `candidate lock version mismatch: ${entry.name}`);
+    assert(
+      locked?.integrity === `sha512-${digest(bytes, 'sha512', 'base64')}`,
+      `lock package integrity mismatch: ${entry.name}`,
+    );
+  }
+
+  // No `file:` coordinate may remain anywhere in the locked graph.
+  for (const [lockPath, locked] of Object.entries(packageLock.packages || {})) {
+    if (lockPath === '' || typeof locked?.resolved !== 'string') continue;
+    assert(!locked.resolved.startsWith('file:'), `unbound file lock package: ${lockPath}`);
+  }
+  return binding;
+}
+
 function assertRegistryReleaseReady(root, registryLookup = null) {
-  const binding = verifyCandidateBinding(root);
+  // Release gate coverage note: this gate validates the current graph from
+  // fixtures/runtime-candidates/current-sources.json. The historical 0.21.0-era
+  // fixture and its pinned commits, evidence files and pack equivalence stay
+  // with verifyCandidateBinding; the candidate pack reproducibility and install
+  // equivalence the release still depends on are enforced on the same commit by
+  // the required `candidate-sources` CI leg, which runs
+  // verify-current-candidate-sources.js.
+  const binding = verifyCurrentReleaseGraph(root);
   const packageLock = readJson(path.join(root, 'package-lock.json'));
   for (const entry of binding.packages) {
     const locked = packageLock.packages[`node_modules/${entry.name}`];
@@ -1021,12 +1153,33 @@ function assertRegistryReleaseReady(root, registryLookup = null) {
 
   const lookup = registryLookup || strictRegistryLookup;
   for (const entry of binding.packages) {
+    const locked = packageLock.packages[`node_modules/${entry.name}`];
     const metadata = lookup(entry.name, entry.version);
     assert(metadata.name === entry.name, `registry package name mismatch: ${entry.name}`);
     assert(metadata.version === entry.version, `registry package version mismatch: ${entry.name}`);
     assert(
-      metadata['dist.integrity'] === entry.integrity,
+      metadata['dist.integrity'] === locked.integrity,
       `registry integrity mismatch: ${entry.name}`,
+    );
+  }
+  // The whole non-optional graph must be resolvable from the public registry.
+  // The locked integrity is what the dependency receipt hashes against the
+  // vendored archives, so every locked entry must name the exact public
+  // coordinate and carry the integrity the registry serves for it.
+  for (const [key, locked] of Object.entries(packageLock.packages || {})) {
+    if (key === '' || !key.startsWith('node_modules/') || locked.optional) continue;
+    const name = key.slice('node_modules/'.length);
+    if (name.includes('node_modules/')) continue;
+    assert(
+      locked.resolved === canonicalRegistryUrl(name, locked.version),
+      `locked dependency is not the exact public coordinate: ${name}`,
+    );
+    const metadata = lookup(name, locked.version);
+    assert(metadata.name === name, `registry package name mismatch: ${name}`);
+    assert(metadata.version === locked.version, `registry package version mismatch: ${name}`);
+    assert(
+      metadata['dist.integrity'] === locked.integrity,
+      `registry integrity mismatch: ${name}`,
     );
   }
   return binding;
@@ -1038,6 +1191,7 @@ module.exports = {
   assertPackageTarInstallEquivalent,
   assertRegistryReleaseReady,
   canonicalRegistryUrl,
+  isExactDirectCoordinate,
   resolveTrustedNpmInvocation,
   readTarFileEntries,
   readTarFileEntriesFromBytes,

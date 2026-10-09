@@ -12,9 +12,14 @@ const { spawnSync } = require('node:child_process');
 const { generate } = require('./generate-current-bindings');
 const { checkRepository } = require('./dependency-coordinate-policy');
 const { authoritativeGit, assertNoReplacementRefs, materializeCommitTree } = require('./authoritative-git');
-const { assertPackageTarInstallEquivalent, resolveTrustedNpmInvocation } = require('./runtime-candidate-binding');
+const {
+  assertPackageTarInstallEquivalent,
+  canonicalRegistryUrl,
+  resolveTrustedNpmInvocation,
+} = require('./runtime-candidate-binding');
 const root = path.resolve(__dirname, '..');
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+const sha512Base64 = bytes => crypto.createHash('sha512').update(bytes).digest('base64');
 
 function verifyCurrentBinding() {
   assert.deepEqual(checkRepository(root), []);
@@ -29,11 +34,22 @@ function verifyCurrentBinding() {
     assert(/^[a-f0-9]{40}$/u.test(entry.commit), 'source commit must be exact');
     assert(/^[a-f0-9]{40}$/u.test(entry.tree), 'source package tree must be exact');
     assert(/^aikdna\/[a-z0-9-]+$/u.test(entry.repository), 'source repository must have an explicit public owner');
-    assert.equal(locked.packages['node_modules/' + entry.name].resolved, 'file:' + entry.artifact, 'source archive must be the exact installed coordinate');
+    // A candidate is installed either from the vendored archive or from the
+    // published registry coordinate. Both forms are accepted, and both are held
+    // to the same bytes: the archive on disk must hash to the recorded digest,
+    // and the lock must name that exact artifact with its full integrity.
+    const lockedEntry = locked.packages['node_modules/' + entry.name];
+    const vendoredBytes = fs.readFileSync(path.join(root, entry.artifact));
+    if (lockedEntry.resolved === 'file:' + entry.artifact) {
+      assert.equal(lockedEntry.integrity, 'sha512-' + sha512Base64(vendoredBytes), 'vendored archive integrity must match the locked coordinate');
+    } else {
+      assert.equal(lockedEntry.resolved, canonicalRegistryUrl(entry.name, entry.version), 'source archive must be the exact installed coordinate');
+      assert.equal(lockedEntry.integrity, 'sha512-' + sha512Base64(vendoredBytes), 'published coordinate integrity must match the vendored archive bytes');
+    }
     assert(/^[A-Z][A-Z0-9_]+$/u.test(entry.sourceEnvironment), 'source environment must be explicit');
     assert(/^vendor\/[a-z0-9.-]+\.tgz$/u.test(entry.artifact), 'candidate archive path is invalid');
-    assert.equal(digest(fs.readFileSync(path.join(root, entry.artifact))), entry.sha256);
-    assert.equal(locked.packages['node_modules/' + entry.name].version, entry.version);
+    assert.equal(digest(vendoredBytes), entry.sha256);
+    assert.equal(lockedEntry.version, entry.version);
   }
   return binding;
 }

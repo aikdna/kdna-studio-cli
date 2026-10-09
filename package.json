@@ -28,6 +28,7 @@
     "release:check": "node scripts/release-check.js",
     "release:generate-evidence": "node scripts/generate-release-evidence.js",
     "release:publish-verified": "node scripts/publish-verified-artifact.js",
+    "candidate:publish-verified": "node scripts/publish-candidate-artifact.js",
     "prepublishOnly": "node scripts/check-publish-coordinates.js && node scripts/run-test-all.js && node scripts/verify-current-candidate-chain.js && node scripts/release-check.js",
     "check:current-bindings": "node scripts/generate-current-bindings.js",
     "candidate:generate-evidence": "node scripts/generate-candidate-evidence.js"
@@ -51,9 +52,9 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@aikdna/kdna-core": "file:vendor/aikdna-kdna-core-0.37.1-rc.browser.1.tgz",
-    "@aikdna/kdna-read": "file:vendor/aikdna-kdna-read-0.11.2-rc.browser.1.tgz",
-    "@aikdna/kdna-studio-core": "file:vendor/aikdna-kdna-studio-core-4.0.0-rc.components.2.tgz"
+    "@aikdna/kdna-core": "0.37.1-rc.browser.1",
+    "@aikdna/kdna-read": "0.11.2-rc.browser.1",
+    "@aikdna/kdna-studio-core": "4.0.0-rc.components.2"
   },
   "directories": {
     "test": "tests"

@@ -34,8 +34,11 @@ function parseJson(text, label) {
   }
 }
 
-function evaluateRegistryResult(result, rawEvidence) {
-  const evidence = validateEvidence(rawEvidence);
+// The evidence validator is the only channel-specific step here. Stable callers
+// pass no options and keep the stable schema; the candidate channel passes
+// { candidate: true } and is otherwise held to exactly the same registry rules.
+function evaluateRegistryResult(result, rawEvidence, options) {
+  const evidence = validateEvidence(rawEvidence, options);
   assert(result && !result.error, `registry lookup failed: ${result?.error?.message || 'unknown error'}`);
   assert(Number.isInteger(result.status), 'registry lookup did not return an exit status');
   const stdout = result.stdout ?? '';

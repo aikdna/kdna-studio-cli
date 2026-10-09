@@ -36,8 +36,8 @@
         {
           "path": "README.md",
           "mode": 420,
-          "bytes": 17502,
-          "sha256": "c2b38c3bdb9e38f96a834e16e78e09e78e0c76a37aa0468233b40b3844e50fbf"
+          "bytes": 17763,
+          "sha256": "f9697830b0d30332d8026de0d04b85d7618ab0ba6b401791d5e3152cc6624d5a"
         },
         {
           "path": "package.json",
@@ -2758,7 +2758,7 @@
           "sha256": "e1583088d70724dab0548f336bfbea9ed2b532a8390330ff11fa548181b792c0"
         }
       ],
-      "sha256": "12a2d5f234ed3404aee1b394442251ad875c1531c01cd6a4f3c0366d55e5d773",
+      "sha256": "81639dd57dc3a56a2d9171ce3a6ce956847f4877461b8722897e4f598aa8a8ca",
       "publicEntry": "src/public-contract/index.js",
       "dependencies": {
         "ajv": "8.20.0",
@@ -3398,8 +3398,8 @@
         {
           "path": "package.json",
           "mode": 420,
-          "bytes": 3075,
-          "sha256": "da918b7430c2c7b57f6e8a72f169018cdf3f98bcd4596f59b9d3a9b4ddfbc442"
+          "bytes": 3070,
+          "sha256": "519c2867bccb97b015434cc7a2c7cacf671abb1c04e24323000dced7ecc3f04f"
         },
         {
           "path": "src/compile/component-compiler.js",
@@ -3410,8 +3410,8 @@
         {
           "path": "src/compile/component-encoding.js",
           "mode": 420,
-          "bytes": 2245,
-          "sha256": "5a0537dd73ffcc66c3805d516470afdf94b21fad940433ce805d9a6417085af1"
+          "bytes": 2475,
+          "sha256": "462e891ed3002fe2c55073e200dc7a2f5328e1298b1b5bc171056bfcce886b0f"
         },
         {
           "path": "src/compile/component-materialization.js",
@@ -3428,14 +3428,14 @@
         {
           "path": "src/creation-engine/component-runtime-binding.js",
           "mode": 420,
-          "bytes": 3701,
-          "sha256": "02957096f8bde499d9e2e538644d5d52ebcf712ef6bc83f10880fe7f580e4530"
+          "bytes": 4165,
+          "sha256": "e5970b5e1fbdcb02ce2be600e2684de47031eff09f904f12f3c48e1c0ee0232e"
         },
         {
           "path": "src/creation-engine/component-runtime-binding.json",
           "mode": 420,
           "bytes": 270345,
-          "sha256": "db4095f6ec9a4da4edb64f8ec3da7ce2a402d114babe403f69e8db2a2afd4ba0"
+          "sha256": "01382ce6361593ba889cf4f5665fe1efe60ccfc742f558991238245a7606e396"
         },
         {
           "path": "src/creation-engine/component-session.js",
@@ -3486,12 +3486,12 @@
           "sha256": "f32003db722d963a2a0fcbcc88954a4c73d75b6f82c46fd89e731f3db2b57f3f"
         }
       ],
-      "sha256": "026f40ad93b85c748e965f0256bf5ce3fec2499e3e29642b75029c9ecf212fb0",
+      "sha256": "3e32a59fa7ac6bee9c87d0ed413a1cb7c3d6cdc1980aebd6b85619ada6f2c4f2",
       "publicEntry": "src/index.js",
       "dependencies": {
         "cbor-x": "1.6.5",
-        "@aikdna/kdna-core": "file:vendor/aikdna-kdna-core-0.37.1-rc.browser.1.tgz",
-        "@aikdna/kdna-read": "file:vendor/aikdna-kdna-read-0.11.2-rc.browser.1.tgz"
+        "@aikdna/kdna-core": "0.37.1-rc.browser.1",
+        "@aikdna/kdna-read": "0.11.2-rc.browser.1"
       },
       "peerDependencies": {},
       "optionalDependencies": {}
@@ -4983,7 +4983,7 @@
           "sha256": "0c0b6d9245c6fefa1f064e53308abf097ce2515ee2a13f9907cc07db17ad3cc9"
         }
       ],
-      "sha256": "2f8ce985a97936715bab16a7b3025bd73cc317831ec4d7ccaa4d136a6b04bfb5",
+      "sha256": "e8a765d92c04faaccba8776411c5038cb195f812ee629fce07e1d2e6aec80ea0",
       "publicEntry": "index.js",
       "dependencies": {},
       "peerDependencies": {},
@@ -7790,7 +7790,7 @@
           "sha256": "1f9033ee5a6515e7d76938b7072941862d1ed228a6879cc7fe10cdeb75107989"
         }
       ],
-      "sha256": "fae4b66af86b883f888c03dee309592a69c863c843c4a5c3e8ae849249a0df99",
+      "sha256": "b2f0b3a893bbb8cc5efb6814f08b1499e19e31d5dd73683f5893382f48f6e7b3",
       "publicEntry": "dist/ajv.js",
       "dependencies": {
         "fast-deep-equal": "^3.1.3",
@@ -7896,7 +7896,7 @@
           "sha256": "62402e4fcb3bd9a0f4a22d2b228f1371897d47982e67ecd62950fdadb46261e6"
         }
       ],
-      "sha256": "a249bc89a9ba8b948774b9d34d01585d4fa5b702afff4f9f6c52d51f8019893d",
+      "sha256": "f4d6980fd367381fd29199066911e863db8d97496613b6c2c5b91563a150acc5",
       "publicEntry": "dist/index.js",
       "dependencies": {
         "ajv": "^8.0.0"
@@ -8097,7 +8097,7 @@
           "sha256": "2c9feaf0afe657342b1c6e854963065131f9bf3ed2e0df539183db1c189cfcfa"
         }
       ],
-      "sha256": "219be6b1732913143a86ccd79a44a9ea78dd2f34450845ce2109c979b918beeb",
+      "sha256": "df4aff92df3114e92876c55d1385582c5076aa978a3827cbfc335ed4ae5ad326",
       "publicEntry": "dist/node.cjs",
       "dependencies": {},
       "peerDependencies": {},
@@ -8176,7 +8176,7 @@
           "sha256": "37cbd168dbd42c73119ce7326556bddef40b3a5fbd2e215cf81a7c78fb73ff9a"
         }
       ],
-      "sha256": "6d4c2b9c0b3dd6e58e0c5a4d73709e06b3aa2fbf313fedcc0a2f49ee6eb5bf79",
+      "sha256": "b019a0980f27638dc3f85836b0e478f188e00d7a6e5852c0819fa86f56e47b8f",
       "publicEntry": "index.js",
       "dependencies": {},
       "peerDependencies": {},
@@ -8534,7 +8534,7 @@
           "sha256": "40e6986bda700387e2d397971087a3977d6801bf954591505229691a267c5f69"
         }
       ],
-      "sha256": "57be57126b2f47e0361a83cb54d812624ce6ed8bc939984c359cdeddaa5e029b",
+      "sha256": "023222622df29fc274bde5d3590e47aa1d4a8e3c1d6e2aba029948ed79799b21",
       "publicEntry": "index.js",
       "dependencies": {},
       "peerDependencies": {},
@@ -8778,7 +8778,7 @@
           "sha256": "969286b710026d911ed5e09e5bdca2dbf1c921662defa2ad3a1b3760a0bdb213"
         }
       ],
-      "sha256": "daf9e97bbcd592f3af8ae259359536d1b9d81a697253f22fe2aeb8fcbe1c33ba",
+      "sha256": "cb694a4965908f7775a0c757f00cf4e624d193cd71d77988fbcca0f597b88d82",
       "publicEntry": "index.js",
       "dependencies": {},
       "peerDependencies": {},

@@ -23,6 +23,8 @@ jobs:
       RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
       RELEASE_IS_DRAFT: ${{ github.event.release.draft }}
       RELEASE_IS_PRERELEASE: ${{ github.event.release.prerelease }}
+      KDNA_CORE_CANDIDATE_REPOSITORY: aikdna/kdna
+      KDNA_STUDIO_CORE_CANDIDATE_REPOSITORY: aikdna/kdna-studio-core
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -34,6 +36,54 @@ jobs:
           node-version: '22.23.1'
           check-latest: false
           registry-url: 'https://registry.npmjs.org'
+      # The candidate chain is verified against the exact Runtime sources, so
+      # the release workflow materializes them the same way CI does. Without
+      # this the chain check and the registered candidate legs have no source
+      # to verify and the release cannot proceed.
+      - name: Check out the exact Runtime candidates outside the Studio CLI workspace
+        run: |
+          set -euo pipefail
+          runner_temp="$(realpath "$RUNNER_TEMP")"
+          workspace="$(realpath "$GITHUB_WORKSPACE")"
+
+          checkout_candidate() {
+            repository="$1"
+            commit="$2"
+            directory="$3"
+            environment_name="$4"
+            candidate_source="$runner_temp/$directory"
+            test ! -e "$candidate_source"
+            git init --quiet "$candidate_source"
+            git -C "$candidate_source" remote add origin "https://github.com/$repository.git"
+            git -C "$candidate_source" fetch --quiet --no-tags --depth=1 origin "$commit"
+            git -C "$candidate_source" checkout --quiet --detach "$commit"
+            test "$(git -C "$candidate_source" rev-parse HEAD)" = "$commit"
+            candidate_source="$(realpath "$candidate_source")"
+            case "$candidate_source" in
+              "$runner_temp"/*) ;;
+              *) exit 1 ;;
+            esac
+            case "$candidate_source" in
+              "$workspace"/*) exit 1 ;;
+            esac
+            echo "$environment_name=$candidate_source" >> "$GITHUB_ENV"
+          }
+
+          # Both candidate commits are read from the committed authority, so a
+          # re-pin cannot leave the workflow checking out a different commit
+          # than the fixture describes.
+          KDNA_CORE_CANDIDATE_COMMIT="$(node -p 'require("./fixtures/runtime-candidates/current-sources.json").packages.find(p => p.name === "@aikdna/kdna-core").commit')"
+          checkout_candidate \
+            "$KDNA_CORE_CANDIDATE_REPOSITORY" \
+            "$KDNA_CORE_CANDIDATE_COMMIT" \
+            "kdna-core-candidate" \
+            "KDNA_CORE_CANDIDATE_SOURCE"
+          KDNA_STUDIO_CORE_CANDIDATE_COMMIT="$(node -p 'require("./fixtures/runtime-candidates/current-sources.json").packages.find(p => p.name === "@aikdna/kdna-studio-core").commit')"
+          checkout_candidate \
+            "$KDNA_STUDIO_CORE_CANDIDATE_REPOSITORY" \
+            "$KDNA_STUDIO_CORE_CANDIDATE_COMMIT" \
+            "kdna-studio-core-candidate" \
+            "KDNA_STUDIO_CORE_CANDIDATE_SOURCE"
       - name: Acquire and verify the audited npm release bytes
         run: |
           node scripts/acquire-trusted-npm-release.js --out "$RUNNER_TEMP/npm-11.17.0.tgz"

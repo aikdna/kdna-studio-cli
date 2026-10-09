@@ -15,7 +15,6 @@ jobs:
         node: ['22.23.1', '24.18.0']
     env:
       KDNA_CORE_CANDIDATE_REPOSITORY: aikdna/kdna
-      KDNA_CORE_CANDIDATE_COMMIT: 7f523fde7f7db218ae7e74fc1dd908abc48937e6
       KDNA_STUDIO_CORE_CANDIDATE_REPOSITORY: aikdna/kdna-studio-core
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -54,6 +53,10 @@ jobs:
             echo "$environment_name=$candidate_source" >> "$GITHUB_ENV"
           }
 
+          # Both candidate commits are read from the committed authority, so a
+          # re-pin cannot leave the workflow checking out a different commit
+          # than the fixture describes.
+          KDNA_CORE_CANDIDATE_COMMIT="$(node -p 'require("./fixtures/runtime-candidates/current-sources.json").packages.find(p => p.name === "@aikdna/kdna-core").commit')"
           checkout_candidate \
             "$KDNA_CORE_CANDIDATE_REPOSITORY" \
             "$KDNA_CORE_CANDIDATE_COMMIT" \

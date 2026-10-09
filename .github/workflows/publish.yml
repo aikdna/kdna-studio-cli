@@ -12,8 +12,7 @@ jobs:
   publish:
     if: >-
       github.event.action == 'published' &&
-      github.event.release.draft == false &&
-      github.event.release.prerelease == false
+      github.event.release.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -54,14 +53,16 @@ jobs:
         run: node scripts/run-trusted-npm.js run test:candidate-chain
       - name: Build independently verified pack evidence
         run: >-
-          node scripts/run-trusted-npm.js run release:generate-evidence --
+          node scripts/run-trusted-npm.js run
+          ${{ github.event.release.prerelease && 'candidate:generate-evidence' || 'release:generate-evidence' }} --
           --out "$RUNNER_TEMP/kdna-studio-cli-release-evidence.json"
           --artifact "$RUNNER_TEMP/kdna-studio-cli-release.tgz"
       - name: Publish or idempotently skip the verified package
         run: >-
-          node scripts/publish-verified-artifact.js
+          node ${{ github.event.release.prerelease && 'scripts/publish-candidate-artifact.js' || 'scripts/publish-verified-artifact.js' }}
           --evidence "$RUNNER_TEMP/kdna-studio-cli-release-evidence.json"
           --artifact "$RUNNER_TEMP/kdna-studio-cli-release.tgz"
+          --tag ${{ github.event.release.prerelease && 'components-preview' || 'latest' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Remove transient release artifacts

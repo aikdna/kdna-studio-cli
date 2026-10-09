@@ -7,29 +7,33 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { findingsFor } = require('../scripts/check-publish-coordinates');
 
-// A non-private package may not carry `file:` coordinates into a publish.
-// The committed kdna-studio-cli manifest is non-private and is still on the
-// vendored graph, so this gate is expected to be RED today and has to be green
-// before any push/publish batch: the finding is the record, not a suppression.
+// C01: a non-private package may not carry `file:` coordinates into a publish.
+// This repository is non-private and now declares the exact registry
+// coordinates of the published candidates, so the gate is green here; the
+// negatives below keep it from being green for the wrong reason.
 
 const root = path.resolve(__dirname, '..');
 const checker = path.join(root, 'scripts', 'check-publish-coordinates.js');
 
-test('the committed manifest is reported, not suppressed', () => {
+test('the committed publishable manifest carries no publish-coordinate finding', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-  assert.notEqual(manifest.private, true);
-  const findings = findingsFor(manifest);
-  assert.ok(findings.length > 0, 'the vendored file: graph of a non-private package must be reported');
-  for (const finding of findings) {
-    assert.equal(finding.rule, 'non_private_package_declares_file_coordinate');
-    assert.ok(finding.spec.startsWith('file:'));
-  }
+  assert.equal(manifest.private, undefined);
+  assert.deepEqual(findingsFor(manifest), []);
   const result = spawnSync(process.execPath, [checker], { encoding: 'utf8' });
-  assert.equal(result.status, 1, result.stdout + result.stderr);
-  assert.match(result.stdout, /KDNA-PUBLISH-COORDINATES: findings=/);
-  const reported = spawnSync(process.execPath, [checker, '--report-only'], { encoding: 'utf8' });
-  assert.equal(reported.status, 0, reported.stdout + reported.stderr);
-  assert.match(reported.stdout, /KDNA-PUBLISH-COORDINATES: findings=/);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /KDNA-PUBLISH-COORDINATES: ok .*private=false findings=0/);
+});
+
+test('a non-private package on a file: coordinate is a finding', () => {
+  const findings = findingsFor({
+    name: '@aikdna/probe',
+    dependencies: { '@aikdna/kdna-core': 'file:vendor/aikdna-kdna-core-0.37.1-rc.browser.1.tgz' },
+  });
+  assert.deepEqual(
+    findings.map((finding) => finding.rule),
+    ['non_private_package_declares_file_coordinate'],
+  );
+  assert.ok(findings[0].spec.startsWith('file:'));
 });
 
 test('a private package with the same graph is not a finding', () => {

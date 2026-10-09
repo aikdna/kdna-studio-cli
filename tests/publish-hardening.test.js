@@ -278,13 +278,21 @@ test('publish workflow is release-only, serialized, pinned, and publishes one ve
   assert.match(workflow, /run-trusted-npm\.js run test:candidate-chain/);
   assert.ok(
     workflow.indexOf('run test:all') < workflow.indexOf('run test:candidate-chain') &&
-      workflow.indexOf('run test:candidate-chain') < workflow.indexOf('run release:generate-evidence'),
+      workflow.indexOf('run test:candidate-chain') < workflow.indexOf('release:generate-evidence'),
     'complete tests and candidate-chain smoke must precede release evidence',
   );
-  assert.match(workflow, /run-trusted-npm\.js run release:generate-evidence --/);
+  // Each step names both channels and selects one from the release event, so a
+  // candidate release uses the candidate evidence generator and the candidate
+  // publisher while a stable release keeps the stable pair.
+  assert.match(
+    workflow,
+    /run-trusted-npm\.js run\s+\$\{\{ github\.event\.release\.prerelease && 'candidate:generate-evidence' \|\| 'release:generate-evidence' \}\} --/,
+  );
   const scripts = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).scripts;
   assert.equal(scripts['release:generate-evidence'], 'node scripts/generate-release-evidence.js');
   assert.equal(scripts['release:publish-verified'], 'node scripts/publish-verified-artifact.js');
+  assert.equal(scripts['candidate:generate-evidence'], 'node scripts/generate-candidate-evidence.js');
+  assert.equal(scripts['candidate:publish-verified'], 'node scripts/publish-candidate-artifact.js');
   assert.doesNotMatch(scripts['test:all'], /(?:^|\s)npm(?:\s|$)/);
   assert.doesNotMatch(scripts.prepublishOnly, /(?:^|\s)npm(?:\s|$)/);
   assert.equal(TRUSTED_NPM_VERSION, '11.17.0');
@@ -523,7 +531,10 @@ test('release auth chain isolates the publish credential from the lookup environ
   // the workflow must not nest the publisher through run-trusted-npm
   const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/publish.yml'), 'utf8');
   assert.doesNotMatch(workflow, /run-trusted-npm\.js run release:publish-verified/);
-  assert.match(workflow, /node scripts\/publish-verified-artifact\.js/);
+  assert.match(
+    workflow,
+    /node \$\{\{ github\.event\.release\.prerelease && 'scripts\/publish-candidate-artifact\.js' \|\| 'scripts\/publish-verified-artifact\.js' \}\}/,
+  );
 });
 
 test('release context binds package, changelog, event, tag ref, HEAD, and workflow SHA', () => {
@@ -788,13 +799,14 @@ test('registry lookup and publication use the official registry and the exact ta
     '--registry=https://registry.npmjs.org/',
     '--@aikdna:registry=https://registry.npmjs.org/',
   ]);
-  assert.deepEqual(publishArguments('/tmp/exact.tgz'), [
+  assert.deepEqual(publishArguments('/tmp/exact.tgz', 'latest'), [
     'publish',
     '/tmp/exact.tgz',
     '--ignore-scripts',
     '--provenance',
     '--access',
     'public',
+    '--tag=latest',
     '--registry=https://registry.npmjs.org/',
     '--@aikdna:registry=https://registry.npmjs.org/',
   ]);

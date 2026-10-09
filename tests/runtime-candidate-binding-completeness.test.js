@@ -210,6 +210,6 @@ test('candidate binding completeness rejects every unbound or non-unique runtime
 test('the working graph is not the preserved historical candidate graph', () => {
   assert.throws(
     () => verifyCandidateBinding(ROOT),
-    /dependency spec mismatch|unbound file lock package/u,
+    /dependency spec mismatch|unbound file lock package|package dependency mismatch/u,
   );
 });

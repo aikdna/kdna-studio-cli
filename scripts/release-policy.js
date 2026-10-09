@@ -1,6 +1,7 @@
 'use strict';
 
 const EXPECTED_PACKAGE_NAME = '@aikdna/kdna-studio-cli';
+const CANDIDATE_TAG_PREFIX = 'preview/studio-cli/';
 const COMMIT_RE = /^[0-9a-f]{40}$/;
 const STABLE_VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const CANDIDATE_CORE_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
@@ -76,9 +77,43 @@ function validateCandidateCoordinate({ pkg, changelog }) {
   return Object.freeze({ name: pkg.name, version: pkg.version, status: 'candidate_preflight_only' });
 }
 
+// The candidate release channel is a separate branch of the same gate. It adds
+// the release event, tag and commit binding the stable channel already enforces,
+// so a candidate can never be published from an arbitrary checkout, an
+// arbitrary tag or a draft release. The stable channel above is unchanged.
+function validateCandidateReleaseContext({ pkg, changelog, env, git }) {
+  validateCandidateCoordinate({ pkg, changelog });
+  const version = pkg.version;
+  const tag = CANDIDATE_TAG_PREFIX + version;
+  const ref = `refs/tags/${tag}`;
+
+  assert(env.GITHUB_EVENT_NAME === 'release', 'GITHUB_EVENT_NAME must be release');
+  assert(env.RELEASE_EVENT_ACTION === 'published', 'release action must be published');
+  assert(env.RELEASE_TAG_NAME === tag, `release tag must be exactly ${tag}`);
+  assert(env.RELEASE_IS_DRAFT === 'false', 'draft releases cannot publish');
+  assert(env.RELEASE_IS_PRERELEASE === 'true', 'candidate releases must be prereleases');
+  assert(env.GITHUB_REF === ref, `GITHUB_REF must be exactly ${ref}`);
+  assert(COMMIT_RE.test(env.GITHUB_SHA || ''), 'GITHUB_SHA must be a lowercase commit SHA');
+  assert(git.status === '', 'worktree must be clean');
+  assert(COMMIT_RE.test(git.head || ''), 'HEAD must be a lowercase commit SHA');
+  assert(COMMIT_RE.test(git.tagCommit || ''), 'release tag must resolve to a commit');
+  assert(git.tagCommit === git.head, `${tag} must resolve to HEAD`);
+  assert(env.GITHUB_SHA === git.head, 'GITHUB_SHA must equal HEAD and the release tag commit');
+  return Object.freeze({
+    channel: 'candidate',
+    name: pkg.name,
+    version,
+    tag,
+    ref,
+    commit: git.head,
+  });
+}
+
 module.exports = {
+  CANDIDATE_TAG_PREFIX,
   isCanonicalCandidateVersion,
   validateCandidateCoordinate,
+  validateCandidateReleaseContext,
   COMMIT_RE,
   EXPECTED_PACKAGE_NAME,
   STABLE_VERSION_RE,

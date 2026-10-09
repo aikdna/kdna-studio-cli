@@ -13,8 +13,12 @@ const {
 const root = path.resolve(__dirname, '../..');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
-const coordinate = manifest.dependencies['@aikdna/kdna-studio-core'];
 const integrity = lock.packages['node_modules/@aikdna/kdna-studio-core'].integrity;
+// The committed manifest now declares exact registry coordinates, so the
+// file:-pin rules are exercised through an explicit probe rather than borrowed
+// from the manifest. The vendored archive is still committed and is the target
+// the probe pins.
+const coordinate = 'file:vendor/aikdna-kdna-studio-core-4.0.0-rc.components.2.tgz';
 
 function findingsFor(spec, mutateLock) {
   const next = structuredClone(manifest);
@@ -86,14 +90,29 @@ test('a file: pin is only accepted with a matching lock coordinate and a full sh
 test('the standalone gate is red when a committed pin loses its integrity', () => {
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-range-policy-'));
   try {
-    for (const name of ['package.json', 'package-lock.json']) {
-      fs.copyFileSync(path.join(root, name), path.join(sandbox, name));
-    }
-    fs.mkdirSync(path.join(sandbox, 'vendor'), { recursive: true });
-    for (const [, spec] of Object.entries(manifest.dependencies ?? {})) {
-      if (!spec.startsWith('file:')) continue;
-      fs.copyFileSync(path.join(root, spec.slice('file:'.length)), path.join(sandbox, spec.slice('file:'.length)));
-    }
+    const target = coordinate.slice('file:'.length);
+    fs.mkdirSync(path.join(sandbox, path.dirname(target)), { recursive: true });
+    fs.copyFileSync(path.join(root, target), path.join(sandbox, target));
+    const probe = { name: '@aikdna/probe', version: '1.0.0' };
+    fs.writeFileSync(
+      path.join(sandbox, 'package.json'),
+      `${JSON.stringify({ ...probe, dependencies: { '@aikdna/kdna-studio-core': coordinate } }, null, 2)}\n`,
+    );
+    fs.writeFileSync(
+      path.join(sandbox, 'package-lock.json'),
+      `${JSON.stringify({
+        lockfileVersion: 3,
+        ...probe,
+        packages: {
+          '': { ...probe, dependencies: { '@aikdna/kdna-studio-core': coordinate } },
+          'node_modules/@aikdna/kdna-studio-core': {
+            version: '4.0.0-rc.components.2',
+            resolved: coordinate,
+            integrity,
+          },
+        },
+      }, null, 2)}\n`,
+    );
     const script = path.join(root, 'scripts', 'dependency-coordinate-policy.js');
     const green = spawnSync(process.execPath, [script, '--root', sandbox], { encoding: 'utf8' });
     assert.equal(green.status, 0, green.stdout + green.stderr);

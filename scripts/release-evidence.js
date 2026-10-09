@@ -3,7 +3,7 @@
 const crypto = require('node:crypto');
 const path = require('node:path');
 const zlib = require('node:zlib');
-const { CANDIDATE_VERSION_RE, COMMIT_RE, EXPECTED_PACKAGE_NAME, STABLE_VERSION_RE } = require('./release-policy');
+const { COMMIT_RE, EXPECTED_PACKAGE_NAME, STABLE_VERSION_RE, isCanonicalCandidateVersion } = require('./release-policy');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -206,7 +206,7 @@ function assertStudioCliPackMembers(files) {
 
 function validatePackReport({ reportText, tarball, pkg, source, candidate = false }) {
   assert(pkg.name === EXPECTED_PACKAGE_NAME, 'npm pack package name mismatch');
-  assert((candidate ? CANDIDATE_VERSION_RE : STABLE_VERSION_RE).test(pkg.version || ''), 'npm pack package version is invalid');
+  assert(candidate ? isCanonicalCandidateVersion(pkg.version || '') : STABLE_VERSION_RE.test(pkg.version || ''), 'npm pack package version is invalid');
   assert(source.ref === (candidate ? `candidate:${source.commit}` : `refs/tags/${pkg.version}`), 'npm pack source ref mismatch');
   assert(COMMIT_RE.test(source.commit || ''), 'npm pack source commit is invalid');
   const reports = parseJsonDocument(reportText, 'npm pack output');
@@ -252,7 +252,7 @@ function validateEvidence(evidence, { candidate = false } = {}) {
   assert(evidence?.schema === (candidate ? 'kdna.studio-cli.candidate-evidence' : 'kdna.studio-cli.release-evidence'), 'release evidence schema mismatch');
   assert(evidence.version === '1.0', 'release evidence version mismatch');
   assert(evidence.package?.name === EXPECTED_PACKAGE_NAME, 'release evidence package mismatch');
-  assert((candidate ? CANDIDATE_VERSION_RE : STABLE_VERSION_RE).test(evidence.package.version || ''), 'release evidence package version invalid');
+  assert(candidate ? isCanonicalCandidateVersion(evidence.package.version || '') : STABLE_VERSION_RE.test(evidence.package.version || ''), 'release evidence package version invalid');
   assert(evidence.source?.ref === (candidate ? `candidate:${evidence.source.commit}` : `refs/tags/${evidence.package.version}`), 'release evidence ref mismatch');
   assert(COMMIT_RE.test(evidence.source.commit || ''), 'release evidence commit invalid');
   assert(

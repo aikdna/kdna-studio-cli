@@ -2,8 +2,30 @@
 
 const EXPECTED_PACKAGE_NAME = '@aikdna/kdna-studio-cli';
 const COMMIT_RE = /^[0-9a-f]{40}$/;
-const CANDIDATE_VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*$/u;
 const STABLE_VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const CANDIDATE_CORE_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
+const PRERELEASE_IDENTIFIER_RE = /^[0-9A-Za-z-]+$/u;
+const NUMERIC_IDENTIFIER_RE = /^(?:0|[1-9]\d*)$/u;
+
+// A canonical candidate coordinate is a stable SemVer core plus one or more
+// dot-separated prerelease identifiers, where a numeric identifier carries no
+// leading zero and a non-numeric identifier is any non-empty run of
+// [0-9A-Za-z-]. The accepted set is identical to one regular expression over
+// the whole coordinate, but the shape is decided by splitting on the
+// separators first: a single regex with nested quantifiers over overlapping
+// character classes can be made to backtrack exponentially on inputs such as
+// `0.0.0-0.` followed by repeated `--.`. Every step below is linear in the
+// length of the coordinate.
+function isCanonicalCandidateVersion(value) {
+  if (typeof value !== 'string') return false;
+  const separator = value.indexOf('-');
+  if (separator < 0) return false;
+  if (!CANDIDATE_CORE_RE.test(value.slice(0, separator))) return false;
+  const identifiers = value.slice(separator + 1).split('.');
+  return identifiers.every((identifier) =>
+    PRERELEASE_IDENTIFIER_RE.test(identifier) &&
+    (!/^\d+$/u.test(identifier) || NUMERIC_IDENTIFIER_RE.test(identifier)));
+}
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -46,7 +68,7 @@ function validateReleaseContext({ pkg, changelog, env, git }) {
 // Stable publication still uses validateReleaseContext and rejects every RC.
 function validateCandidateCoordinate({ pkg, changelog }) {
   assert(pkg?.name === EXPECTED_PACKAGE_NAME, 'candidate package name mismatch');
-  assert(CANDIDATE_VERSION_RE.test(pkg.version || ''), 'candidate must have an exact canonical prerelease coordinate');
+  assert(isCanonicalCandidateVersion(pkg.version || ''), 'candidate must have an exact canonical prerelease coordinate');
   const heading = new RegExp(`^## ${escapeRegExp(pkg.version)}(?: \\(\\d{4}-\\d{2}-\\d{2}\\))?$`, 'gm');
   assert([...changelog.matchAll(heading)].length === 1, 'candidate CHANGELOG coordinate missing or duplicated');
   const first = changelog.match(/^## (.+)$/m)?.[0];
@@ -55,7 +77,7 @@ function validateCandidateCoordinate({ pkg, changelog }) {
 }
 
 module.exports = {
-  CANDIDATE_VERSION_RE,
+  isCanonicalCandidateVersion,
   validateCandidateCoordinate,
   COMMIT_RE,
   EXPECTED_PACKAGE_NAME,

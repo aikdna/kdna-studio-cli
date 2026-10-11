@@ -1,3 +1,9 @@
+## 0.13.0
+
+Bind the terminal session Host to Studio Core `4.0.0`, Core `0.37.2` and Read `0.11.3`, with exact archives, complete member verification and one shared dependency graph. Ordinary and component creation retain explicit adoption channels, exclusive save/readback, static verification and public Read.
+
+Password export retains separate password/recovery slots, one-time recovery display, a dedicated bounded password pipe and protected bytes at the delivery path. This remains the Studio container `0.5.0` / Read grammar `0.6.4` route; the package update does not establish interchange with NativeSections output.
+
 ## 0.13.0-rc.components.2
 
 Current candidate preflight binds Core `0.37.1-rc.browser.1`, Read

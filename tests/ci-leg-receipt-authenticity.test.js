@@ -27,6 +27,14 @@ function sandboxTree({ removeRegisteredCodes = false } = {}) {
     fs.copyFileSync(path.join(root, relative), path.join(sandbox, relative));
   }
   fs.copyFileSync(path.join(root, 'fixtures/runtime-candidates/history/leg-registry-before-current-graph.json'), path.join(sandbox, 'fixtures/runtime-candidates/leg-registry.json'));
+  // This sandbox exercises the frozen not_run policy. Give it explicit
+  // prerelease/file coordinates instead of inheriting the current release.
+  const historicalManifest = JSON.parse(fs.readFileSync(path.join(sandbox, 'package.json'), 'utf8'));
+  historicalManifest.version = '0.0.0-rc.receipt-fixture.1';
+  for (const name of Object.keys(historicalManifest.dependencies ?? {})) {
+    if (name.startsWith('@aikdna/')) historicalManifest.dependencies[name] = 'file:vendor/receipt-fixture.tgz';
+  }
+  fs.writeFileSync(path.join(sandbox, 'package.json'), `${JSON.stringify(historicalManifest, null, 2)}\n`);
   fs.mkdirSync(path.join(sandbox, 'scripts'), { recursive: true });
   for (const name of ['ci-leg-receipt.js', 'ci-leg-definitions.js', 'release-policy.js']) {
     fs.copyFileSync(path.join(root, 'scripts', name), path.join(sandbox, 'scripts', name));
@@ -90,6 +98,19 @@ test('the authentic generator satisfies the independent consumer', () => {
     const result = runConsumer(sandbox);
     assert.equal(result.status, 0, result.stdout + result.stderr);
     assert.match(result.stdout, /KDNA-CI-LEG-RECEIPTS: ok/);
+  });
+});
+
+test('a stable version makes the historical prerelease receipt invalid', () => {
+  withSandbox({}, (sandbox) => {
+    const file = path.join(sandbox, 'package.json');
+    const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+    manifest.version = '1.2.3';
+    fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+    const result = runConsumer(sandbox);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stdout, /registered_code_no_longer_true/);
+    assert.match(result.stdout, /committed_version_is_not_stable_semver/);
   });
 });
 

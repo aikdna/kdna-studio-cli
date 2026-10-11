@@ -1,6 +1,6 @@
 {
   "name": "@aikdna/kdna-studio-cli",
-  "version": "0.13.0-rc.components.2",
+  "version": "0.13.0",
   "description": "Terminal Host for current typed Studio creation and separate human or authorized Agent adoption channels.",
   "type": "commonjs",
   "bin": {
@@ -52,9 +52,9 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@aikdna/kdna-core": "0.37.1-rc.browser.1",
-    "@aikdna/kdna-read": "0.11.2-rc.browser.1",
-    "@aikdna/kdna-studio-core": "4.0.0-rc.components.2"
+    "@aikdna/kdna-core": "0.37.2",
+    "@aikdna/kdna-read": "0.11.3",
+    "@aikdna/kdna-studio-core": "4.0.0"
   },
   "directories": {
     "test": "tests"

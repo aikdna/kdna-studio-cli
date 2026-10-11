@@ -1,6 +1,6 @@
 # KDNA Studio CLI — typed current creation
 
-The terminal Host consumes Studio 4.0.0-rc.components.2, Core 0.37.1-rc.browser.1 and Read 0.11.2-rc.browser.1. Ordinary prose and supported mechanism structures share container `0.5.0` / Read grammar `0.6.4`. Core/Read package versions identify implementation bytes and do not establish interchange with NativeSections container `0.6.0` / Read `0.7.0`, or import/reuse of another CLI's output. Installation acceptance is a separate Host decision; exact content checks do not authenticate a provider process.
+Studio CLI `0.13.0` consumes Studio Core `4.0.0`, Core `0.37.2` and Read `0.11.3`. Ordinary prose and supported mechanism structures share container `0.5.0` / Read grammar `0.6.4`. Core/Read package versions identify implementation bytes and do not establish interchange with NativeSections container `0.6.0` / Read `0.7.0`, or import/reuse of another CLI's output. Installation acceptance is a separate Host decision; exact content checks do not authenticate a provider process.
 
 An external Agent records materials and proposes judgment groups with at least two meaningful alternatives. Selection and final adoption arrive through a separately owned live channel. Human-declared review and expressly delegated Agent editorial adoption are distinct modes:
 
@@ -24,7 +24,7 @@ kdna-studio read --bundle ./new-export --allow-read --judgment 1
 
 Static reopening keeps `creation_accepted:not_evaluated` and `live_context:unavailable`; JSON cannot restore a one-use capability. `read` requires explicit `--allow-read`, delegates request admission, scope, exact selection and byte budgets to public Read, and grants no action authority. Format1, format-absent legacy evidence and old completion sidecars are noncurrent. Preserve their original accepted releases; never relabel them to this graph.
 
-The full 12-package local `file:vendor` graph and SRI lock are supplied. Before loading upstream code or materials, the CLI checks complete installed member sets, bytes, versions and one shared Core resolution, and rejects unbound optional addons. The exact archive/member declarations are in `src/public-bindings.json`.
+The full 12-package dependency graph uses exact registry coordinates and an integrity lock; the committed vendor archives anchor its member receipt. Before loading upstream code or materials, the CLI checks complete installed member sets, bytes, versions and one shared Core resolution, and rejects unbound optional addons. The exact archive/member declarations are in `src/public-bindings.json`.
 
 ```text
 npm ci --offline --ignore-scripts --omit=optional --no-audit --no-fund
@@ -44,21 +44,22 @@ Before publishing a release from this repository every `file:` coordinate must b
 See [command contract](docs/CREATION_COMMAND_CONTRACT.md) and [Agent integration](docs/TERMINAL_AGENT_CREATION.md). Their JSONL is private transport, not a KDNA asset format. Historical project/card commands and runtime adapters stay outside the packed and default surface.
 
 
-## Current candidate preflight
+## Source and release verification
 
-The checked dependency graph binds Core `0.37.1-rc.browser.1`, Read
-`0.11.2-rc.browser.1` and `fast-uri` `3.1.8`. The current source ledger is
+The dependency graph binds Studio Core `4.0.0`, Core `0.37.2`, Read
+`0.11.3` and `fast-uri` `3.1.8`. The current source ledger is
 `fixtures/runtime-candidates/current-sources.json`; `npm run verify:candidate-sources`
 rebuilds its exact Git package trees and compares every installed tar member.
 `npm run check:current-bindings` independently recomputes the complete dependency
-member receipt. These checks execute for the current candidate; historical
+member receipt. These checks execute for the current graph; historical
 registry fixtures and their retired API remain separate test material.
 
-From a clean source checkpoint, `npm run candidate:generate-evidence -- --out
+In the stable release context, `npm run release:generate-evidence -- --out
 <outside-repository-evidence.json> --artifact <outside-repository-package.tgz>`
 creates two byte-identical packs from exact committed blobs and validates their
-independently parsed contents. Its candidate evidence schema cannot enter the
-stable publisher. Candidate preflight does not establish registry availability,
-verified editorial identity, real human acceptance or permission to publish.
-The stable release event/tag policy and exact registry-coordinate gate remain
-required before publication.
+independently parsed contents. It requires a clean checkout, the exact version
+tag and the matching release commit. The stable publisher also requires a
+published, non-draft, non-prerelease event and exact registry dependency
+integrities. Prerelease evidence cannot enter that publisher. Local checks do
+not establish registry availability, verified editorial identity, real human
+acceptance or permission to publish.

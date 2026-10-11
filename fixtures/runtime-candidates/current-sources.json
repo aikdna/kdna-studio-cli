@@ -5,10 +5,10 @@
       "name": "@aikdna/kdna-core",
       "version": "0.37.2",
       "artifact": "vendor/aikdna-kdna-core-0.37.2.tgz",
-      "sha256": "6365329576ade98ca9cda78e39124b39cfe7da6bd56371a025bf6ed352fcc562",
+      "sha256": "16234f84440252b0c449c529de71435630cc79816f88ff0d0a8a2b4d852c1274",
       "repository": "aikdna/kdna",
-      "commit": "40aa4d8d70f2f0735069063f0b609bdef88e29b4",
-      "tree": "2f7d0a0f521f08f216a2ae38110391b0f1879520",
+      "commit": "6f3b114f070dfc9ee675c09f3454593730987bf8",
+      "tree": "900f051ddcb02504793cff54c07057e7459f7fe1",
       "packageDirectory": "packages/kdna-core",
       "sourceEnvironment": "KDNA_CORE_CANDIDATE_SOURCE"
     },
@@ -18,7 +18,7 @@
       "artifact": "vendor/aikdna-kdna-read-0.11.3.tgz",
       "sha256": "5fd1efc5bfd28ce8c9724fefb09c1abed35dde2c16f8498b572da5c640679f4c",
       "repository": "aikdna/kdna",
-      "commit": "40aa4d8d70f2f0735069063f0b609bdef88e29b4",
+      "commit": "6f3b114f070dfc9ee675c09f3454593730987bf8",
       "tree": "4b3e3e72918b5c17a9b4782efe912839cdefca63",
       "packageDirectory": "packages/kdna-read",
       "sourceEnvironment": "KDNA_CORE_CANDIDATE_SOURCE"
@@ -27,10 +27,10 @@
       "name": "@aikdna/kdna-studio-core",
       "version": "4.0.0",
       "artifact": "vendor/aikdna-kdna-studio-core-4.0.0.tgz",
-      "sha256": "9ba143fa8b5426d02a3b4669cb258aac2cc5833c2e5f9e4ba63289d72de8b8af",
+      "sha256": "062c35970e4c7e3ba49f8d9420f1e221a3ec007fac145d67c04fe5ee2e88be62",
       "repository": "aikdna/kdna-studio-core",
-      "commit": "49ec2ed3f8b3000cc2974d149a63ab7f20d99f45",
-      "tree": "cc28aa5bc1ffe17517cd43b8d0b1589e5c696f4b",
+      "commit": "45b966f4fe36fac414e6af377c37fda775bac2b6",
+      "tree": "b20e22843fe2c7c9a65203a0f79f7a0b724354ad",
       "packageDirectory": "",
       "sourceEnvironment": "KDNA_STUDIO_CORE_CANDIDATE_SOURCE"
     }

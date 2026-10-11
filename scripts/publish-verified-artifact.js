@@ -9,6 +9,7 @@ const { readCurrentBinding } = require('./current-release-binding');
 const { validateArtifact } = require('./release-evidence');
 const { evaluateRegistryResult } = require('./registry-policy');
 const { resolveTrustedNpmInvocation } = require('./runtime-candidate-binding');
+const { publishSourceBoundArtifact } = require('./source-bound-publisher');
 
 const REGISTRY = 'https://registry.npmjs.org/';
 const PREVIEW_TAG = 'components-preview';
@@ -119,12 +120,13 @@ function main() {
       artifactPath,
       bindCurrent,
       tag,
-      publish: (args) =>
-        spawnSync(npmInvocation.command, [...npmInvocation.prefixArgs, ...args], {
-          encoding: 'utf8',
-          maxBuffer: 16 * 1024 * 1024,
-          shell: false,
-          stdio: 'inherit',
+      publish: () =>
+        publishSourceBoundArtifact({
+          evidence,
+          tarball: fs.readFileSync(artifactPath),
+          bindCurrent,
+          tag,
+          npmInvocation,
         }),
     });
   } finally {

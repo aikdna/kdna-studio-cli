@@ -36,8 +36,8 @@
         {
           "path": "README.md",
           "mode": 420,
-          "bytes": 17778,
-          "sha256": "db53e8ae85ff467b066ff995001ad550a0ee70f8422ce8996a7f8ec78404bd23"
+          "bytes": 17855,
+          "sha256": "a21d594030e1d903b7a313ce3194ea800f67c2be1f6a80b7f991de6b41cee1cd"
         },
         {
           "path": "package.json",
@@ -2776,7 +2776,7 @@
           "sha256": "e1583088d70724dab0548f336bfbea9ed2b532a8390330ff11fa548181b792c0"
         }
       ],
-      "sha256": "6365329576ade98ca9cda78e39124b39cfe7da6bd56371a025bf6ed352fcc562",
+      "sha256": "16234f84440252b0c449c529de71435630cc79816f88ff0d0a8a2b4d852c1274",
       "publicEntry": "src/public-contract/index.js",
       "dependencies": {
         "ajv": "8.20.0",
@@ -3453,7 +3453,7 @@
           "path": "src/creation-engine/component-runtime-binding.json",
           "mode": 420,
           "bytes": 270875,
-          "sha256": "f3109abe7d93ce08d935313ccaa7117fa3171dccbf150195c71e4d3c43d64e8d"
+          "sha256": "d97b54803f804cb6f9796a04ae68e2005f8b78d89deccd12ccdb86cfff91ebf8"
         },
         {
           "path": "src/creation-engine/component-session.js",
@@ -3504,7 +3504,7 @@
           "sha256": "f32003db722d963a2a0fcbcc88954a4c73d75b6f82c46fd89e731f3db2b57f3f"
         }
       ],
-      "sha256": "9ba143fa8b5426d02a3b4669cb258aac2cc5833c2e5f9e4ba63289d72de8b8af",
+      "sha256": "062c35970e4c7e3ba49f8d9420f1e221a3ec007fac145d67c04fe5ee2e88be62",
       "publicEntry": "src/index.js",
       "dependencies": {
         "cbor-x": "1.6.5",

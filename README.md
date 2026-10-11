@@ -26,20 +26,24 @@ Static reopening keeps `creation_accepted:not_evaluated` and `live_context:unava
 
 The full 12-package dependency graph uses exact registry coordinates and an integrity lock; the committed vendor archives anchor its member receipt. Before loading upstream code or materials, the CLI checks complete installed member sets, bytes, versions and one shared Core resolution, and rejects unbound optional addons. The exact archive/member declarations are in `src/public-bindings.json`.
 
+Install with registry access using the locked coordinates:
+
 ```text
-npm ci --offline --ignore-scripts --omit=optional --no-audit --no-fund
+npm ci --ignore-scripts --omit=optional --no-audit --no-fund
 npm test
 npm run lint
 npm pack --offline --ignore-scripts
 ```
 
+For an offline install, add `--offline` to `npm ci` only after the npm cache contains every required locked artifact with its matching integrity. The committed `vendor/` archives alone neither populate that cache nor redirect the registry URLs in the lock.
+
 An embedding that requires offline processing must independently deny network access; npm `--offline` alone is not a network boundary. No package lifecycle scripts or native optional packages are needed for this graph.
 
 ## Dependency coordinates and publication
 
-A direct declaration is either an exact SemVer or an integrity-locked `file:` coordinate. Placement follows what the documented entry needs: these `file:` coordinates belong in `dependencies`, because `npm ci --omit=dev --omit=optional` followed by `npm test` still works with the development graph omitted, whereas a `devDependencies` placement would not survive `--omit=dev`. Peers declared by vendored members are bound to this repository's own coordinates through `overrides`, so an unreadable vendor archive fails locally instead of sending npm to the registry.
+The current package and lock use exact registry versions. Runtime packages belong in `dependencies`, and `overrides` bind their required peers to the same root coordinates. Integrity-locked `file:` coordinates used by local candidate/test fixtures are separate from this registry installation graph.
 
-Before publishing a release from this repository every `file:` coordinate must be replaced by the **exact registry version**, because a consumer that installs the packed artifact from a registry has no `vendor/` directory next to it. `npm run check:publish-coordinates` reports the coordinates that are still local; the publish workflow runs that gate before a package can be pushed.
+`npm run check:publish-coordinates` rejects local dependency declarations in a publishable package, because a registry consumer has no repository `vendor/` directory next to the packed artifact. The publish workflow runs that gate and requires the registry to serve the exact locked dependency integrities.
 
 See [command contract](docs/CREATION_COMMAND_CONTRACT.md) and [Agent integration](docs/TERMINAL_AGENT_CREATION.md). Their JSONL is private transport, not a KDNA asset format. Historical project/card commands and runtime adapters stay outside the packed and default surface.
 

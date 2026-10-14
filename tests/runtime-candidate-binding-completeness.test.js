@@ -204,12 +204,15 @@ test('candidate binding completeness rejects every unbound or non-unique runtime
 });
 
 // The repository's own graph is not a bound candidate graph, and this suite's
-// baseline comes from the fixture because of it. Pin the fact so that a silent
+// baseline comes from the fixture because of it. The working graph deliberately
+// carries the unreleased Studio Core successor as a `file:` candidate, and the
+// manifest and the lock agree on that coordinate, so the binding's exact-SemVer
+// leg is the guard that rejects it by name. Pin the fact so that a silent
 // re-pin of the working graph cannot pass unnoticed - a deliberate re-pin has to
 // update this expectation and the retired registry entry at the same time.
 test('the working graph is not the preserved historical candidate graph', () => {
   assert.throws(
     () => verifyCandidateBinding(ROOT),
-    /dependency spec mismatch|unbound file lock package|package dependency mismatch/u,
+    /dependency spec mismatch|unbound file lock package|package dependency mismatch|direct dependency must use exact SemVer/u,
   );
 });

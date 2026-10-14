@@ -3504,7 +3504,7 @@
           "sha256": "f32003db722d963a2a0fcbcc88954a4c73d75b6f82c46fd89e731f3db2b57f3f"
         }
       ],
-      "sha256": "5afd2012cb8d5c373fa8e033050e04e7888e16c26488f9bbe013a94ab1f5e107",
+      "sha256": "d6728b7fd454b4f4d6ef6f33b21205226fc8de93a02a14b01847e61379631f79",
       "publicEntry": "src/index.js",
       "dependencies": {
         "cbor-x": "1.6.5",

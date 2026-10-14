@@ -8,20 +8,31 @@ const { spawnSync } = require('node:child_process');
 const { findingsFor } = require('../scripts/check-publish-coordinates');
 
 // C01: a non-private package may not carry `file:` coordinates into a publish.
-// This repository is non-private and now declares the exact registry
-// coordinates of the published candidates, so the gate is green here; the
-// negatives below keep it from being green for the wrong reason.
+// `file:` coordinates are the offline-installable form inside this workspace
+// (the gate's own header), and this repository is deliberately between
+// releases right now: the working graph carries exactly one `file:` candidate
+// coordinate — @aikdna/kdna-studio-core, whose successor source is merged but
+// not yet published. The expectation below is pinned to that exact finding set
+// so a silent re-pin cannot pass unnoticed, and the real protection is
+// unchanged: publish.yml still runs the gate and refuses this tree. The
+// negatives after it keep this test from passing for the wrong reason.
 
 const root = path.resolve(__dirname, '..');
 const checker = path.join(root, 'scripts', 'check-publish-coordinates.js');
 
-test('the committed publishable manifest carries no publish-coordinate finding', () => {
+test('the committed manifest carries exactly the deliberate unreleased-candidate finding', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.equal(manifest.private, undefined);
-  assert.deepEqual(findingsFor(manifest), []);
+  assert.deepEqual(findingsFor(manifest), [{
+    rule: 'non_private_package_declares_file_coordinate',
+    package: '@aikdna/kdna-studio-cli',
+    field: 'dependencies',
+    name: '@aikdna/kdna-studio-core',
+    spec: 'file:vendor/aikdna-kdna-studio-core-4.0.0.tgz',
+  }]);
   const result = spawnSync(process.execPath, [checker], { encoding: 'utf8' });
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, /KDNA-PUBLISH-COORDINATES: ok .*private=false findings=0/);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stdout, /non_private_package_declares_file_coordinate/);
 });
 
 test('a non-private package on a file: coordinate is a finding', () => {

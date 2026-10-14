@@ -12,6 +12,7 @@ Each newline-terminated Agent frame has unique `id`, `op`, and `data`. Wait for 
 | interview | `{title,question}` |
 | propose | `{localKey,alternatives:[alternative,alternative,...]}` |
 | revise | `{localKey,baseRevision,alternatives,explanation}` |
+| system | `{worldview?,value_order?,relations?,boundaries?}`; declares the system layer. `worldview`/`value_order` are `{statement,items:[text,...]}`; a relation is `{localKey,kind,from,to,statement}` with kind `support|qualify|conflict|complement` and the ordered role pair (support supporter→claim, qualify qualifier→qualified, complement supplement→base; conflict side_a→side_b). Keys resolve against the selected judgments at preview; unknown keys are `CREATION_SYSTEM_JUDGMENT_UNKNOWN`. `boundaries` is refused with `CREATION_BOUNDARIES_ACTOR_REQUIRED` until the actor face opens; nothing is silently dropped |
 | review | `{}`; request actual selection or final adoption |
 | preview | `{}`; show complete current mapping before final adoption |
 | status | `{}` |

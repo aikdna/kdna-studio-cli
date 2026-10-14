@@ -424,6 +424,7 @@ async function session(opts) {
         case 'brief': result = workspace.agent.setBrief(value.data); break;
         case 'propose': result = operations.propose(value.data); break;
         case 'revise': result = operations.revise(value.data); break;
+        case 'system': result = workspace.agent.declareSystem(value.data); break;
         case 'interview': {
           record(value.data, ['title', 'question']); const question = text(value.data.question);
           phase = 'human';

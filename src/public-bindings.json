@@ -3410,14 +3410,14 @@
         {
           "path": "docs/CURRENT-CREATION-CONTRACT.md",
           "mode": 420,
-          "bytes": 17072,
-          "sha256": "ae98e176ce3131baddf498ef81593799c3b50945cbc056bc104480e6717326a5"
+          "bytes": 19407,
+          "sha256": "d8cbb0564e09a0f742a74039f71dfd63b97471bff62c1d7b530eedeaffe0dce7"
         },
         {
           "path": "package.json",
           "mode": 420,
-          "bytes": 3028,
-          "sha256": "8840cd60ec17e0fd9e99aeffb72f3ec01b065c6e339603cf00c40a079278cdc6"
+          "bytes": 3058,
+          "sha256": "1edebbdb9d23675aa3da91bbed8093d76072d9ddd5eff4048aa3aec3b08021b8"
         },
         {
           "path": "src/compile/component-compiler.js",
@@ -3434,14 +3434,14 @@
         {
           "path": "src/compile/component-materialization.js",
           "mode": 420,
-          "bytes": 9616,
-          "sha256": "6ec948d78bf3a3f76d1a8c101703172f5e80181b4f986b8bac7a50c175395a92"
+          "bytes": 12082,
+          "sha256": "1279ef69ff9a02bb3ec3a6fd65ff37a9f7cb8e5c482f65612400ff9c9f4296a5"
         },
         {
           "path": "src/creation-engine/component-input.js",
           "mode": 420,
-          "bytes": 7630,
-          "sha256": "24310f87292a69b993870d93d51db9ccb14e57b56e581cc64d7a4b6092a9356b"
+          "bytes": 9498,
+          "sha256": "fc013a968f7242da85308d4f396d6cc2526207dfdded37cbb53a7087fde6dcc7"
         },
         {
           "path": "src/creation-engine/component-runtime-binding.js",
@@ -3458,8 +3458,8 @@
         {
           "path": "src/creation-engine/component-session.js",
           "mode": 420,
-          "bytes": 11729,
-          "sha256": "8a293e3661a2591061c8ddf15a7287890482bbeb34d8200d734c3b561c5f340a"
+          "bytes": 12341,
+          "sha256": "07e0ea153cca4bd20718ad526a1a57d260b5399bf769ce90768cd89c380e6116"
         },
         {
           "path": "src/creation-engine/creation-context.js",
@@ -3470,8 +3470,8 @@
         {
           "path": "src/evidence/component-audit.js",
           "mode": 420,
-          "bytes": 7516,
-          "sha256": "2eabf9957c1588c7d68159df8291839669358613d8587c9b03ebeff770706d18"
+          "bytes": 8089,
+          "sha256": "ea8f60a9f83848e5ea8482c9714a9c235db0d8f204ae7f533743d9d52f2918f1"
         },
         {
           "path": "src/evidence/component-evidence.js",
@@ -3504,7 +3504,7 @@
           "sha256": "f32003db722d963a2a0fcbcc88954a4c73d75b6f82c46fd89e731f3db2b57f3f"
         }
       ],
-      "sha256": "062c35970e4c7e3ba49f8d9420f1e221a3ec007fac145d67c04fe5ee2e88be62",
+      "sha256": "5afd2012cb8d5c373fa8e033050e04e7888e16c26488f9bbe013a94ab1f5e107",
       "publicEntry": "src/index.js",
       "dependencies": {
         "cbor-x": "1.6.5",

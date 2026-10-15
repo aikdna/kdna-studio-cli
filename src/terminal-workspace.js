@@ -8,6 +8,7 @@ const net = require('node:net');
 const os = require('node:os');
 const tty = require('node:tty');
 const { TextDecoder } = require('node:util');
+const { spawnSync } = require('node:child_process');
 const { createRequire } = require('node:module');
 const bindings = require('./public-bindings.json');
 const LIMIT = 1024 * 1024;
@@ -190,9 +191,10 @@ function dependencies() {
 
 function options(argv) {
   const command = argv[0] || 'help';
-  if (!['help', '--help', '--version', 'session', 'verify', 'read'].includes(command)) fail('CLI_COMMAND_UNSUPPORTED');
+  if (!['help', '--help', '--version', 'session', 'verify', 'read', 'export06'].includes(command)) fail('CLI_COMMAND_UNSUPPORTED');
   const opts = { command, materials: [] };
   const allowed = command === 'session' ? ['--out', '--human-fd', '--agent-adoption-fd', '--delegation-record', '--text', '--interview', '--synthetic-fixture', '--password-fd'] :
+    command === 'export06' ? ['--bundle', '--output', '--kdna'] :
     ['verify', 'read'].includes(command) ? ['--bundle', ...(command === 'read' ? ['--allow-read', '--budget', '--judgment'] : [])] : [];
   const seen = new Set();
   for (let i = 1; i < argv.length; i++) {
@@ -208,7 +210,7 @@ function options(argv) {
     else opts[flag] = value;
   }
   if (command === 'session' && !opts['--out']) fail('CLI_OUTPUT_REQUIRED');
-  if (['verify', 'read'].includes(command) && !opts['--bundle']) fail('CLI_BUNDLE_REQUIRED');
+  if (['verify', 'read', 'export06'].includes(command) && !opts['--bundle']) fail('CLI_BUNDLE_REQUIRED');
   if (opts['--human-fd'] && (!/^\d+$/.test(opts['--human-fd']) || Number(opts['--human-fd']) < 3)) fail('CLI_HUMAN_CHANNEL_INVALID');
   if (opts['--agent-adoption-fd'] && (!/^\d+$/.test(opts['--agent-adoption-fd']) || Number(opts['--agent-adoption-fd']) < 3)) fail('CLI_AGENT_ADOPTION_CHANNEL_INVALID');
   if (Boolean(opts['--agent-adoption-fd']) !== Boolean(opts['--delegation-record']) || (opts['--agent-adoption-fd'] && opts['--human-fd'])) fail('CLI_ADOPTION_OPTIONS_INVALID');
@@ -493,6 +495,51 @@ async function consume(opts) {
   if (result.channel !== 'read_envelope' || result.envelope.status !== 'ready') process.exitCode = 3;
 }
 
+const KDNA_CLI_GUIDANCE =
+  'kdna CLI not found: obtain it per the public instructions (the Git channel or the published exact coordinate) and pass --kdna EXECUTABLE or set KDNA_CLI_BIN. This step never falls back to a private conversion path.';
+
+function resolveKdnaCli(opts) {
+  const candidates = [];
+  if (opts['--kdna'] !== undefined) candidates.push(opts['--kdna']);
+  else if (process.env.KDNA_CLI_BIN) candidates.push(process.env.KDNA_CLI_BIN);
+  else for (const dir of (process.env.PATH || '').split(path.delimiter)) if (dir) candidates.push(path.join(dir, 'kdna'));
+  for (const candidate of candidates) {
+    try {
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch { /* keep looking */ }
+  }
+  process.stderr.write(KDNA_CLI_GUIDANCE + '\n');
+  fail('CLI_KDNA_CONVERT_MISSING');
+}
+
+// Explicit export to the 0.6 container: the bundle is read-only here; the
+// conversion is the published kdna CLI's convert step, never a private path.
+function export06(opts) {
+  const bundle = path.resolve(opts['--bundle']);
+  const asset = path.join(bundle, 'asset.kdna');
+  let entry;
+  try { entry = fs.statSync(asset); } catch { fail('CLI_BUNDLE_ASSET_MISSING'); }
+  if (!entry.isFile()) fail('CLI_BUNDLE_ASSET_MISSING');
+  // The delivered bundle is a sealed read-only unit (directory and files);
+  // the converted file goes beside it, never inside.
+  const output = opts['--output'] === undefined ? bundle + '.0.6.kdna' : path.resolve(opts['--output']);
+  if (output === asset) fail('CLI_EXPORT06_OUTPUT_INVALID');
+  const kdna = resolveKdnaCli(opts);
+  const bytes = fs.readFileSync(asset);
+  const expected = 'sha256:' + crypto.createHash('sha256').update(bytes).digest('hex');
+  const result = spawnSync(kdna, ['convert', asset, '--expected-a', expected, '--output', output, '--allow-source', '--json'], {
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (result.error) {
+    if (result.error.code === 'ENOENT') { process.stderr.write(KDNA_CLI_GUIDANCE + '\n'); fail('CLI_KDNA_CONVERT_MISSING'); }
+    fail('CLI_EXPORT06_EXECUTION_FAILED');
+  }
+  if (typeof result.stdout === 'string' && result.stdout) process.stdout.write(result.stdout);
+  if (typeof result.stderr === 'string' && result.stderr) process.stderr.write(result.stderr);
+  process.exitCode = Number.isInteger(result.status) ? result.status : 1;
+}
+
 async function main(argv) {
   const opts = options(argv);
   if (opts.command === '--version') { process.stdout.write(require('../package.json').version + '\n'); return; }
@@ -500,9 +547,11 @@ async function main(argv) {
     process.stdout.write('kdna-studio session --out NEW_DIRECTORY [--text FILE] [--interview FILE] [--human-fd 3 | --agent-adoption-fd 3 --delegation-record FILE] [--password-fd N]\n' +
       '--password-fd N exports the bundle as a password-protected container; the password is read once from pipe fd N (never argv or the agent stream), and the recovery code is displayed exactly once on stderr.\n' +
       'kdna-studio verify --bundle DIRECTORY\nkdna-studio read --bundle DIRECTORY [--allow-read] [--judgment 1] [--budget BYTES]\n' +
+      'kdna-studio export06 --bundle DIRECTORY [--output FILE] [--kdna EXECUTABLE]\n' +
+      '  exports the bundle to the 0.6 container by explicitly invoking the kdna CLI convert step; the default output is the new sibling file DIRECTORY.0.6.kdna, and the sealed bundle contents are never written.\n' +
       'Agent operation JSONL uses stdin/stdout. Adoption replies use the terminal or a separate human/authorized-Agent fd, with explicit channel kind.\n' +
       'Ordinary and component-rich alternatives use the same current live creation graph. See docs/TERMINAL_AGENT_CREATION.md.\n'); return;
   }
-  if (opts.command === 'session') await session(opts); else await consume(opts);
+  if (opts.command === 'session') await session(opts); else if (opts.command === 'export06') export06(opts); else await consume(opts);
 }
 module.exports = { main };

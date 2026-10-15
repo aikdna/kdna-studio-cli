@@ -20,9 +20,12 @@ Export exclusively creates a new private directory. It writes exact Studio bytes
 ```text
 kdna-studio verify --bundle ./new-export
 kdna-studio read --bundle ./new-export --allow-read --judgment 1
+kdna-studio export06 --bundle ./new-export --kdna /path/to/kdna
 ```
 
 Static reopening keeps `creation_accepted:not_evaluated` and `live_context:unavailable`; JSON cannot restore a one-use capability. `read` requires explicit `--allow-read`, delegates request admission, scope, exact selection and byte budgets to public Read, and grants no action authority. Format1, format-absent legacy evidence and old completion sidecars are noncurrent. Preserve their original accepted releases; never relabel them to this graph.
+
+`export06` is the explicit bridge to container `0.6.0`: it invokes the published `kdna` CLI's `convert` on the bundle's `asset.kdna` and writes a new file — the sibling `./new-export.0.6.kdna` unless `--output` names another. `--kdna EXECUTABLE` or `KDNA_CLI_BIN` selects the CLI; when none is found the step is a named refusal with public acquisition guidance, never a fallback conversion path. The sealed bundle — the asset and all detached evidence — is never written, and the converted file belongs to the `0.6.0` read stack, not to this CLI's `read`.
 
 The full 12-package dependency graph uses exact registry coordinates and an integrity lock; the committed vendor archives anchor its member receipt. Before loading upstream code or materials, the CLI checks complete installed member sets, bytes, versions and one shared Core resolution, and rejects unbound optional addons. The exact archive/member declarations are in `src/public-bindings.json`.
 

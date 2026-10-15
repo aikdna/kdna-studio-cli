@@ -113,9 +113,11 @@ jobs:
       - run: node scripts/run-trusted-npm.js ci --ignore-scripts --omit=optional --no-audit --no-fund --registry=https://registry.npmjs.org/ --@aikdna:registry=https://registry.npmjs.org/
       # The export06 conversion cases run for real here: the exact published
       # kdna CLI coordinate is provisioned into an isolated prefix and named
-      # through KDNA_CLI_TEST_BIN. The registry integrity must equal the pinned
-      # coordinate's SRI. The test file's skip remains only for environments
-      # without any kdna CLI at all.
+      # through STUDIO_TEST_KDNA_CLI. The registry integrity must equal the
+      # pinned coordinate's SRI. The test file's skip remains only for
+      # environments without any kdna CLI at all. KDNA_CLI_TEST_BIN stays
+      # unset: dependency-binding.test.js reads it as a package source-root
+      # selector, not a conversion-executable path.
       - name: Provide the published kdna CLI for the export06 conversion tests
         run: |
           export CLI_PROVISION="$RUNNER_TEMP/kdna-cli-provision"
@@ -123,6 +125,6 @@ jobs:
           node -e "const p=require(process.env.CLI_PROVISION+'/node_modules/@aikdna/kdna-cli/package.json'); if (p.version!=='0.43.0') throw new Error('unexpected kdna CLI version '+p.version)"
           INTEGRITY="$(node scripts/run-trusted-npm.js view @aikdna/kdna-cli@0.43.0 dist.integrity --json)"
           node -e "const expected='sha512-8LN8WALSwQbjIvaGV6R/iAq5quOFlPTGgqwqou+VY/bEeG5/1qn0ZAv2qrB8TWjiYvjXw9vowcGVabc5iMIrdQ=='; if (JSON.parse(process.argv[1]) !== expected) throw new Error('registry integrity differs from the pinned coordinate');" "$INTEGRITY"
-          echo "KDNA_CLI_TEST_BIN=$CLI_PROVISION/node_modules/@aikdna/kdna-cli/src/cli.js" >> "$GITHUB_ENV"
+          echo "STUDIO_TEST_KDNA_CLI=$CLI_PROVISION/node_modules/@aikdna/kdna-cli/src/cli.js" >> "$GITHUB_ENV"
       - name: Run the session and current suites on the audited npm runtime
         run: node --test tests/current-components/*.test.cjs tests/current/*.test.js

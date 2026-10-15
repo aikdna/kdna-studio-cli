@@ -13,10 +13,13 @@
 // so byte-exact assertions anchor on the recorded samples while the live case
 // asserts structure and digest linkage.
 //
-// Conversion-dependent cases take the kdna CLI from KDNA_CLI_TEST_BIN
+// Conversion-dependent cases take the kdna CLI from STUDIO_TEST_KDNA_CLI
 // (default: a local kdna-cli checkout); when none is available they skip,
 // while the command-face and absence cases always run. The wrapper is test
-// scaffolding only and is never committed.
+// scaffolding only and is never committed. KDNA_CLI_TEST_BIN is deliberately
+// not used: tests/current/dependency-binding.test.js reads it as a package
+// source-root selector, and a conversion-CLI path there names a root without
+// the studio-style src/public-bindings.json it requires.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { spawn, spawnSync } = require('node:child_process');
@@ -33,8 +36,8 @@ const SYSTEM_0_5 = '93c3ca0ce0488aae8172405dacda290d6971a88fb4f104fb5568acbac547
 const PLAIN_0_6 = 'ff446e6fe23a7a0ae035ca08d11b2fb6f737aa7cf809156f047d46983cdc7b19';
 const SYSTEM_0_6 = 'bcc53b18a095062348f249e51095c1ea8b5a4b4f6e69880549cff778609a2fe5';
 const LOCAL_CHECKOUT = path.resolve(base, '../kdna-cli/src/cli.js');
-const KDNA_CLI = process.env.KDNA_CLI_TEST_BIN || (fs.existsSync(LOCAL_CHECKOUT) ? LOCAL_CHECKOUT : null);
-const conversion = { skip: KDNA_CLI ? false : 'no kdna CLI available (set KDNA_CLI_TEST_BIN)' };
+const KDNA_CLI = process.env.STUDIO_TEST_KDNA_CLI || (fs.existsSync(LOCAL_CHECKOUT) ? LOCAL_CHECKOUT : null);
+const conversion = { skip: KDNA_CLI ? false : 'no kdna CLI available (set STUDIO_TEST_KDNA_CLI)' };
 
 const root = path.resolve(process.env.STUDIO_TEST_ARTIFACT_ROOT || path.join(__dirname, '.artifacts', String(process.pid)));
 const scratch = path.join(root, 'export06');

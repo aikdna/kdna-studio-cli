@@ -9,30 +9,27 @@ const { findingsFor } = require('../scripts/check-publish-coordinates');
 
 // C01: a non-private package may not carry `file:` coordinates into a publish.
 // `file:` coordinates are the offline-installable form inside this workspace
-// (the gate's own header), and this repository is deliberately between
-// releases right now: the working graph carries exactly one `file:` candidate
-// coordinate — @aikdna/kdna-studio-core, whose successor source is merged but
-// not yet published. The expectation below is pinned to that exact finding set
-// so a silent re-pin cannot pass unnoticed, and the real protection is
-// unchanged: publish.yml still runs the gate and refuses this tree. The
-// negatives after it keep this test from passing for the wrong reason.
+// (the gate's own header), and the published graph now resolves every
+// dependency from the registry: the @aikdna/kdna-studio-core successor is
+// released, so its coordinate is an exact registry version like the others.
+// The expectation below is pinned to the empty finding set, so a silent
+// re-introduction of a local coordinate fails here; publish.yml still runs the
+// gate and refuses such a tree. The negatives after it keep this test from
+// passing for the wrong reason.
 
 const root = path.resolve(__dirname, '..');
 const checker = path.join(root, 'scripts', 'check-publish-coordinates.js');
 
-test('the committed manifest carries exactly the deliberate unreleased-candidate finding', () => {
+test('the committed manifest carries no local coordinate and the gate is green', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.equal(manifest.private, undefined);
-  assert.deepEqual(findingsFor(manifest), [{
-    rule: 'non_private_package_declares_file_coordinate',
-    package: '@aikdna/kdna-studio-cli',
-    field: 'dependencies',
-    name: '@aikdna/kdna-studio-core',
-    spec: 'file:vendor/aikdna-kdna-studio-core-4.0.0.tgz',
-  }]);
+  assert.deepEqual(findingsFor(manifest), []);
+  for (const [name, spec] of Object.entries(manifest.dependencies ?? {})) {
+    assert.ok(!spec.startsWith('file:'), `${name} must not carry a file: coordinate`);
+  }
   const result = spawnSync(process.execPath, [checker], { encoding: 'utf8' });
-  assert.equal(result.status, 1, result.stdout + result.stderr);
-  assert.match(result.stdout, /non_private_package_declares_file_coordinate/);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /findings=0/);
 });
 
 test('a non-private package on a file: coordinate is a finding', () => {

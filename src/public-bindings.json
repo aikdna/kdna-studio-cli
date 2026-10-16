@@ -14,7 +14,7 @@
   "packages": {
     "@aikdna/kdna-core": "0.37.2",
     "@aikdna/kdna-read": "0.11.3",
-    "@aikdna/kdna-studio-core": "4.0.0"
+    "@aikdna/kdna-studio-core": "4.1.0"
   },
   "archives": [
     {
@@ -3387,7 +3387,7 @@
     },
     {
       "name": "@aikdna/kdna-studio-core",
-      "version": "4.0.0",
+      "version": "4.1.0",
       "files": [
         {
           "path": "LICENSE",
@@ -3405,19 +3405,19 @@
           "path": "README.md",
           "mode": 420,
           "bytes": 3191,
-          "sha256": "da1a21461c973a88a76b6ca4e312c13f2ae93b0afd118a515c9f78b80cbf4e82"
+          "sha256": "9ae07a3212a876d7b3442d07d799b9e634c7eb42a62d63aa3d3fc42667cb83eb"
         },
         {
           "path": "docs/CURRENT-CREATION-CONTRACT.md",
           "mode": 420,
-          "bytes": 19407,
-          "sha256": "d8cbb0564e09a0f742a74039f71dfd63b97471bff62c1d7b530eedeaffe0dce7"
+          "bytes": 19874,
+          "sha256": "ca3fe7ace0410242bd20aac91d45fbd901f0b6863225fe9c3f6b63ac70492d7b"
         },
         {
           "path": "package.json",
           "mode": 420,
           "bytes": 3058,
-          "sha256": "1edebbdb9d23675aa3da91bbed8093d76072d9ddd5eff4048aa3aec3b08021b8"
+          "sha256": "3f79d834c4b25ffaa48f6a33d47efc30ad4150a6bdb6e203d83f57c293666f00"
         },
         {
           "path": "src/compile/component-compiler.js",
@@ -3476,8 +3476,8 @@
         {
           "path": "src/evidence/component-evidence.js",
           "mode": 420,
-          "bytes": 6621,
-          "sha256": "c45199e0abc39c8ecf0d99829b2a1a8e5bf116939431a61b91865e78f13fa6ef"
+          "bytes": 7352,
+          "sha256": "93cf907c1d50b1ba978e7675b8bc0f82578ec22dcb06a164574f32121305930a"
         },
         {
           "path": "src/evidence/component-json.js",
@@ -3504,7 +3504,7 @@
           "sha256": "f32003db722d963a2a0fcbcc88954a4c73d75b6f82c46fd89e731f3db2b57f3f"
         }
       ],
-      "sha256": "d6728b7fd454b4f4d6ef6f33b21205226fc8de93a02a14b01847e61379631f79",
+      "sha256": "c9b3b23ab3e0d69ee38c13af84fd2db01af2d70de9c1b07bff4c5fbac23f2ff7",
       "publicEntry": "src/index.js",
       "dependencies": {
         "cbor-x": "1.6.5",

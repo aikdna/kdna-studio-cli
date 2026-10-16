@@ -1,3 +1,9 @@
+## 0.14.0 (2026-10-16)
+
+Add `export06 --bundle NEW_DIRECTORY [--output FILE] [--kdna EXECUTABLE]`: the explicit step that turns a session bundle's `asset.kdna` into a container `0.6.0` file by invoking the published `kdna` CLI's `convert`, with the bundle's own byte hash supplied as the expected-A binding. The output is a new sibling file (`<bundle>.0.6.kdna` unless `--output` names another) and never replaces an existing file. The sealed bundle — the asset and every detached sidecar — is never written. When no `kdna` executable is found, the step is the named refusal `CLI_KDNA_CONVERT_MISSING` with public acquisition guidance rather than a silent fallback conversion, and conversion rejections (`MIGRATION_SOURCE_*`, save failures) pass through with their original code and exit status.
+
+Bind the released Studio Core from the registry: the temporary local candidate coordinate for `@aikdna/kdna-studio-core` becomes the exact registry version `4.1.0`, so the committed manifest and lock carry no `file:` coordinate, `check:publish-coordinates` reports no finding, and a registry consumer installs the released bytes. The vendored archive remains the byte anchor of the dependency receipt and `fixtures/runtime-candidates/current-sources.json` records the released commit, tree and archive digest. The Core `0.37.2` / Read `0.11.3` companions, the shared dependency graph and the container `0.5.0` / Read grammar `0.6.4` route are unchanged.
+
 ## 0.13.0
 
 Bind the terminal session Host to Studio Core `4.0.0`, Core `0.37.2` and Read `0.11.3`, with exact archives, complete member verification and one shared dependency graph. Ordinary and component creation retain explicit adoption channels, exclusive save/readback, static verification and public Read.

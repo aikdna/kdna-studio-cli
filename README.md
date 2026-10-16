@@ -1,6 +1,6 @@
 # KDNA Studio CLI — typed current creation
 
-Studio CLI `0.13.0` consumes Studio Core `4.0.0`, Core `0.37.2` and Read `0.11.3`. Ordinary prose and supported mechanism structures share container `0.5.0` / Read grammar `0.6.4`. Core/Read package versions identify implementation bytes and do not establish interchange with NativeSections container `0.6.0` / Read `0.7.0`, or import/reuse of another CLI's output. Installation acceptance is a separate Host decision; exact content checks do not authenticate a provider process.
+Studio CLI `0.14.0` consumes Studio Core `4.1.0`, Core `0.37.2` and Read `0.11.3`. Ordinary prose and supported mechanism structures share container `0.5.0` / Read grammar `0.6.4`. Core/Read package versions identify implementation bytes and do not establish interchange with NativeSections container `0.6.0` / Read `0.7.0`, or import/reuse of another CLI's output. Installation acceptance is a separate Host decision; exact content checks do not authenticate a provider process.
 
 An external Agent records materials and proposes judgment groups with at least two meaningful alternatives. Selection and final adoption arrive through a separately owned live channel. Human-declared review and expressly delegated Agent editorial adoption are distinct modes:
 
@@ -53,7 +53,7 @@ See [command contract](docs/CREATION_COMMAND_CONTRACT.md) and [Agent integration
 
 ## Source and release verification
 
-The dependency graph binds Studio Core `4.0.0`, Core `0.37.2`, Read
+The dependency graph binds Studio Core `4.1.0`, Core `0.37.2`, Read
 `0.11.3` and `fast-uri` `3.1.8`. The current source ledger is
 `fixtures/runtime-candidates/current-sources.json`; `npm run verify:candidate-sources`
 rebuilds its exact Git package trees and compares every installed tar member.

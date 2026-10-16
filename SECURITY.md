@@ -28,14 +28,15 @@ Older versions may receive critical security patches on a case-by-case basis.
 
 ## About This Package
 
-The current source candidate, `@aikdna/kdna-studio-cli@0.13.0-rc.components.2`,
-is a terminal Host for typed Studio creation, bundle verification and explicit
-Read. Its current commands are `session`, `verify` and `read`, with `help`,
+The current release, `@aikdna/kdna-studio-cli@0.14.0`,
+is a terminal Host for typed Studio creation, bundle verification, explicit
+Read and the explicit `0.6.0` export step. Its current commands are `session`,
+`verify`, `read` and `export06`, with `help`,
 `--help` and `--version`. The [command contract](docs/CREATION_COMMAND_CONTRACT.md)
 defines their inputs and rejection boundaries.
 
-The current graph binds Studio `4.0.0-rc.components.2`, Core
-`0.36.0` and Read `0.11.0`:
+The current graph binds Studio `4.1.0`, Core
+`0.37.2` and Read `0.11.3`:
 
 - Core admits captured asset bytes; Studio owns creation, saved-byte completion
   and evidence checks; Read owns request admission, scope, exact selection and

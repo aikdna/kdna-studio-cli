@@ -27,7 +27,7 @@
       "name": "@aikdna/kdna-studio-core",
       "version": "4.1.0",
       "artifact": "vendor/aikdna-kdna-studio-core-4.1.0.tgz",
-      "sha256": "fe8b71e0cb8383d8f213c7ca86fedf98b65e0d5cb2eda1ca9bcb89ac67e54578",
+      "sha256": "76a5e7dcca71b28259e5058d241304912713d72e9defba98ce8a03f7e4d1e22a",
       "repository": "aikdna/kdna-studio-core",
       "commit": "ea2840ad4e7fb96c3225c7d1f6b1e9305debfa4c",
       "tree": "3cc435a1b17d2a43c7750663bd70997ed183078d",

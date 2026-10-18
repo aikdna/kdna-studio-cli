@@ -29,7 +29,13 @@ Static reopening keeps `creation_accepted:not_evaluated` and `live_context:unava
 
 The full 12-package dependency graph uses exact registry coordinates and an integrity lock; the committed vendor archives anchor its member receipt. Before loading upstream code or materials, the CLI checks complete installed member sets, bytes, versions and one shared Core resolution, and rejects unbound optional addons. The exact archive/member declarations are in `src/public-bindings.json`.
 
-Install with registry access using the locked coordinates:
+Install the published package:
+
+```text
+npm install --save-exact @aikdna/kdna-studio-cli@0.14.0
+```
+
+This resolves Studio Core `4.1.0` and the pinned Core `0.37.2` / Read `0.11.3` graph. From a complete source checkout, install with the locked coordinates:
 
 ```text
 npm ci --ignore-scripts --omit=optional --no-audit --no-fund
@@ -38,7 +44,7 @@ npm run lint
 npm pack --offline --ignore-scripts
 ```
 
-For an offline install, add `--offline` to `npm ci` only after the npm cache contains every required locked artifact with its matching integrity. The committed `vendor/` archives alone neither populate that cache nor redirect the registry URLs in the lock.
+For an offline install from the source checkout, add `--offline` to `npm ci` only after the npm cache contains every required locked artifact with its matching integrity. The committed `vendor/` archives alone neither populate that cache nor redirect the registry URLs in the lock.
 
 An embedding that requires offline processing must independently deny network access; npm `--offline` alone is not a network boundary. No package lifecycle scripts or native optional packages are needed for this graph.
 

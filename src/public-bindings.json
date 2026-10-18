@@ -3404,8 +3404,8 @@
         {
           "path": "README.md",
           "mode": 420,
-          "bytes": 3191,
-          "sha256": "9ae07a3212a876d7b3442d07d799b9e634c7eb42a62d63aa3d3fc42667cb83eb"
+          "bytes": 3831,
+          "sha256": "bfe5882f17675d6f9d46bc3fa8c8821462ebb5e0bf3dcd1cc7bdef772fd0e785"
         },
         {
           "path": "docs/CURRENT-CREATION-CONTRACT.md",
@@ -3504,7 +3504,7 @@
           "sha256": "f32003db722d963a2a0fcbcc88954a4c73d75b6f82c46fd89e731f3db2b57f3f"
         }
       ],
-      "sha256": "c9b3b23ab3e0d69ee38c13af84fd2db01af2d70de9c1b07bff4c5fbac23f2ff7",
+      "sha256": "fe8b71e0cb8383d8f213c7ca86fedf98b65e0d5cb2eda1ca9bcb89ac67e54578",
       "publicEntry": "src/index.js",
       "dependencies": {
         "cbor-x": "1.6.5",

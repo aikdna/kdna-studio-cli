@@ -70,3 +70,13 @@ published, non-draft, non-prerelease event and exact registry dependency
 integrities. Prerelease evidence cannot enter that publisher. Local checks do
 not establish registry availability, verified editorial identity, real human
 acceptance or permission to publish.
+
+A stable release commit must already be accepted on `main`: the release gate
+runs `git merge-base --is-ancestor <release-commit> origin/main` and refuses by
+name when `origin/main` is unreadable (`RELEASE_MAIN_REF_UNREADABLE`) or the
+commit is not an ancestor (`RELEASE_COMMIT_NOT_ON_MAIN`). An earlier main commit
+remains acceptable; the current main tip is not required, and the reverse
+relation is never used. The publish workflow fetches `origin/main` explicitly
+before the gate and fails closed if that fetch fails. The candidate/preview
+channel keeps its existing release rule; this main-line requirement is stable
+publication only.

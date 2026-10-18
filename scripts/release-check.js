@@ -3,7 +3,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { readAuthoritativeGitState } = require('./authoritative-git');
+const { assertReleaseAncestorOfMain, readAuthoritativeGitState } = require('./authoritative-git');
 const {
   CANDIDATE_TAG_PREFIX,
   STABLE_VERSION_RE,
@@ -24,8 +24,13 @@ try {
   const stable = STABLE_VERSION_RE.test(pkg.version || '');
   const tag = stable ? pkg.version : CANDIDATE_TAG_PREFIX + pkg.version;
   const git = readAuthoritativeGitState(root, tag, { environment: process.env });
+  // Stable publication requires an accepted main-line commit. The candidate
+  // channel keeps its existing rule and is not changed by this gate.
+  const ancestry = stable
+    ? assertReleaseAncestorOfMain(root, git.head, { environment: process.env })
+    : undefined;
   const context = stable
-    ? validateReleaseContext({ pkg, changelog, env: process.env, git })
+    ? validateReleaseContext({ pkg, changelog, env: process.env, git, ancestry })
     : validateCandidateReleaseContext({ pkg, changelog, env: process.env, git });
   console.log(`Release context verified: ${context.name}@${context.version} ${context.commit}`);
 } catch (error) {

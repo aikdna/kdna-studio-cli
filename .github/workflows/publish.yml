@@ -95,6 +95,10 @@ jobs:
       # coordinates are switched to exact registry versions.
       - name: "Refuse to publish a file: coordinate from a non-private package"
         run: node scripts/check-publish-coordinates.js
+      # The tag checkout may not carry origin/main. Fetch it explicitly; the
+      # release gate refuses by name if the ref is missing or unreadable.
+      - name: Fetch origin/main for the release ancestry gate
+        run: node scripts/fetch-release-main.js
       - name: Verify release event, tag, commit, package, and changelog
         run: node scripts/run-trusted-npm.js run release:check
       - name: Run the complete release test suite

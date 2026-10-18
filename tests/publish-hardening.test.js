@@ -178,6 +178,12 @@ function releaseInput(overrides = {}) {
       ...overrides.env,
     },
     git: { status: '', head: HASH, tagCommit: HASH, ...overrides.git },
+    ancestry: {
+      commit: HASH,
+      mainCommit: HASH,
+      ancestor: true,
+      ...overrides.ancestry,
+    },
   };
 }
 
@@ -213,6 +219,9 @@ function createReleaseRepository(t, marker) {
   git(repository, ['commit', '--quiet', '-m', marker]);
   const commit = git(repository, ['rev-parse', 'HEAD']);
   git(repository, ['tag', '0.10.2', commit]);
+  // The stable gate reads origin/main; the fixture release commit is an
+  // accepted main-line commit.
+  git(repository, ['update-ref', 'refs/remotes/origin/main', commit]);
   return { repository, commit };
 }
 
@@ -303,6 +312,13 @@ test('publish workflow is release-only, serialized, pinned, and publishes one ve
   );
   assert.match(workflow, /kdna-studio-cli-release\.tgz/g);
   assert.match(workflow, /if: always\(\)/);
+  // The release tag checkout may not carry origin/main; the explicit fetch
+  // step must run before the gate, and no raw git command is added to YAML.
+  assert.match(workflow, /node scripts\/fetch-release-main\.js/);
+  assert.ok(
+    workflow.indexOf('fetch-release-main.js') < workflow.indexOf('run release:check'),
+    'origin/main must be fetched before the release gate runs',
+  );
   assert.doesNotMatch(workflow, /run:\s*git\b/);
 });
 
@@ -472,6 +488,7 @@ test('release evidence requires byte-identical isolated npm packs', () => {
 test('every release Git consumer uses the centralized authority helper', () => {
   for (const file of [
     'scripts/current-release-binding.js',
+    'scripts/fetch-release-main.js',
     'scripts/generate-release-evidence.js',
     'scripts/release-check.js',
     'scripts/verify-runtime-candidate-sources.js',
@@ -552,6 +569,14 @@ test('release context binds package, changelog, event, tag ref, HEAD, and workfl
     releaseInput({ env: { GITHUB_SHA: 'b'.repeat(40) } }),
     releaseInput({ git: { status: ' M package.json' } }),
     releaseInput({ git: { tagCommit: 'b'.repeat(40) } }),
+    releaseInput({ ancestry: { ancestor: false } }),
+    releaseInput({ ancestry: { commit: 'b'.repeat(40) } }),
+    releaseInput({ ancestry: { mainCommit: '' } }),
+    (() => {
+      const withoutAncestry = releaseInput();
+      delete withoutAncestry.ancestry;
+      return withoutAncestry;
+    })(),
     releaseInput({ changelog: '# Changelog\n\n## 1.9.0\n' }),
   ]) {
     assert.throws(() => validateReleaseContext(input));

@@ -263,13 +263,119 @@ function readAuthoritativeGitState(repository, tag, options = {}) {
   });
 }
 
+// Stable release gate: the release commit must already be accepted on main.
+// The direction is fixed - `merge-base --is-ancestor <release-commit>
+// origin/main` - so a commit that main descends from (a side branch, or main
+// plus unmerged descendants) fails. The release commit does not have to be the
+// current main tip: any earlier main commit remains an accepted ancestor.
+const RELEASE_MAIN_REF = 'refs/remotes/origin/main';
+const COMMIT_SHA_RE = /^[0-9a-f]{40}$/u;
+
+function assertReleaseAncestorOfMain(repository, commit, options = {}) {
+  assert.match(String(commit), COMMIT_SHA_RE, 'release commit must be a lowercase commit SHA');
+  let mainCommit;
+  try {
+    mainCommit = authoritativeGit(
+      repository,
+      ['rev-parse', '--verify', `${RELEASE_MAIN_REF}^{commit}`],
+      options,
+    );
+  } catch (error) {
+    throw new Error(
+      `RELEASE_MAIN_REF_UNREADABLE: ${RELEASE_MAIN_REF} is not readable (${error.message})`,
+    );
+  }
+  assert.match(mainCommit, COMMIT_SHA_RE, `${RELEASE_MAIN_REF} must resolve to a commit`);
+  const canonical = canonicalRepository(repository);
+  const result = spawnSync(resolveTrustedSystemGit(), [
+    '--no-replace-objects',
+    '--literal-pathspecs',
+    '-c',
+    'core.useReplaceRefs=false',
+    '-C',
+    canonical,
+    'merge-base',
+    '--is-ancestor',
+    commit,
+    mainCommit,
+  ], {
+    cwd: path.parse(canonical).root,
+    encoding: 'utf8',
+    env: authoritativeGitEnvironment(options.environment),
+    maxBuffer: options.maxBuffer || 64 * 1024 * 1024,
+    shell: false,
+  });
+  if (result.error) {
+    throw new Error(`RELEASE_ANCESTRY_CHECK_FAILED: ${result.error.message}`);
+  }
+  if (result.signal) {
+    throw new Error('RELEASE_ANCESTRY_CHECK_FAILED: ancestry check was interrupted');
+  }
+  if (result.status === 0) return Object.freeze({ commit, mainCommit, ancestor: true });
+  if (result.status === 1) {
+    throw new Error(
+      `RELEASE_COMMIT_NOT_ON_MAIN: ${commit} is not an ancestor of origin/main (${mainCommit})`,
+    );
+  }
+  const detail = String(result.stderr || '').trim();
+  throw new Error(
+    `RELEASE_ANCESTRY_CHECK_FAILED: merge-base exited ${String(result.status)}${detail ? ` (${detail})` : ''}`,
+  );
+}
+
+// The publish workflow checks out the release tag, so origin/main may not be a
+// usable local ref. Fetch it explicitly; an unreachable remote or a missing
+// main branch is a named refusal, never a silent skip.
+function fetchReleaseMain(repository, options = {}) {
+  const canonical = canonicalRepository(repository);
+  const result = spawnSync(resolveTrustedSystemGit(), [
+    '--no-replace-objects',
+    '--literal-pathspecs',
+    '-c',
+    'core.useReplaceRefs=false',
+    '-C',
+    canonical,
+    'fetch',
+    '--no-tags',
+    'origin',
+    `+refs/heads/main:${RELEASE_MAIN_REF}`,
+  ], {
+    cwd: path.parse(canonical).root,
+    encoding: 'utf8',
+    env: authoritativeGitEnvironment(options.environment),
+    maxBuffer: options.maxBuffer || 64 * 1024 * 1024,
+    shell: false,
+  });
+  if (result.error) {
+    throw new Error(`RELEASE_MAIN_REF_UNREADABLE: could not fetch origin/main (${result.error.message})`);
+  }
+  if (result.signal) {
+    throw new Error('RELEASE_MAIN_REF_UNREADABLE: origin/main fetch was interrupted');
+  }
+  if (result.status !== 0) {
+    const detail = String(result.stderr || '').trim();
+    throw new Error(
+      `RELEASE_MAIN_REF_UNREADABLE: could not fetch origin/main (${detail || `exit ${String(result.status)}`})`,
+    );
+  }
+  const mainCommit = authoritativeGit(
+    repository,
+    ['rev-parse', '--verify', `${RELEASE_MAIN_REF}^{commit}`],
+    options,
+  );
+  return Object.freeze({ mainCommit });
+}
+
 module.exports = {
+  RELEASE_MAIN_REF,
   assertNoHiddenIndexFlags,
   assertNoReplacementRefs,
+  assertReleaseAncestorOfMain,
   authoritativeGit,
   authoritativeGitEnvironment,
   authoritativeGitNullDevice,
   canonicalRepository,
+  fetchReleaseMain,
   materializeCommitTree,
   readAuthoritativeGitState,
   resolveTrustedSystemGit,

@@ -36,7 +36,7 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function validateReleaseContext({ pkg, changelog, env, git }) {
+function validateReleaseContext({ pkg, changelog, env, git, ancestry }) {
   assert(pkg && typeof pkg === 'object' && !Array.isArray(pkg), 'package.json must be an object');
   assert(pkg.name === EXPECTED_PACKAGE_NAME, `package name must be ${EXPECTED_PACKAGE_NAME}`);
   assert(STABLE_VERSION_RE.test(pkg.version || ''), 'package version must be stable canonical SemVer');
@@ -56,6 +56,21 @@ function validateReleaseContext({ pkg, changelog, env, git }) {
   assert(COMMIT_RE.test(git.tagCommit || ''), 'release tag must resolve to a commit');
   assert(git.tagCommit === git.head, `${tag} must resolve to HEAD`);
   assert(env.GITHUB_SHA === git.head, 'GITHUB_SHA must equal HEAD and the release tag commit');
+  // Stable publication only: the commit must already be on the accepted main
+  // line. The candidate/preview channel keeps its existing rule; this gate is
+  // not extended to it by implication.
+  assert(
+    ancestry && ancestry.ancestor === true,
+    'RELEASE_MAIN_ANCESTRY_REQUIRED: release commit must be an ancestor of origin/main',
+  );
+  assert(
+    ancestry.commit === git.head,
+    'RELEASE_MAIN_ANCESTRY_REQUIRED: ancestry commit must equal HEAD',
+  );
+  assert(
+    COMMIT_RE.test(ancestry.mainCommit || ''),
+    'RELEASE_MAIN_ANCESTRY_REQUIRED: origin/main must resolve to a commit',
+  );
 
   const heading = new RegExp(`^## ${escapeRegExp(version)}(?: \\(\\d{4}-\\d{2}-\\d{2}\\))?$`, 'gm');
   assert([...changelog.matchAll(heading)].length === 1, `CHANGELOG must contain one ## ${version}`);

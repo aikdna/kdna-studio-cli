@@ -53,7 +53,7 @@
   },
   "dependencies": {
     "@aikdna/kdna-core": "0.37.2",
-    "@aikdna/kdna-read": "0.11.3",
+    "@aikdna/kdna-read": "0.13.1",
     "@aikdna/kdna-studio-core": "4.1.0"
   },
   "directories": {

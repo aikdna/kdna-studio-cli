@@ -1,0 +1,6 @@
+# CodeQL scan scope: exclude one test fixture that intentionally
+# constructs dangerous environment inputs to verify failure handling.
+# tests/ is not part of the published npm package. Owner-approved
+# 2026-10-22 (O201/D452).
+paths-ignore:
+  - tests/current-components/export-write-failure.test.cjs

@@ -1,5 +1,7 @@
 # KDNA Studio CLI — typed current creation
 
+> **Status Notice (Legacy Pre-0.6.0 Line):** This repository is preserved as a historical compatibility package and is not the active entrypoint for current KDNA Container `0.6.0` judgment works. For current specifications, offline CLI authoring/reading/encryption, Agent Skills, Desktop KDNA Reader, and *KDNA Whitepaper* (1.0.1), visit [`aikdna/kdna`](https://github.com/aikdna/kdna), [`aikdna/kdna-cli`](https://github.com/aikdna/kdna-cli), [`aikdna/kdna-skills`](https://github.com/aikdna/kdna-skills), and [`aikdna/kdna-assets`](https://github.com/aikdna/kdna-assets).
+
 Studio CLI `0.14.0` consumes Studio Core `4.1.0`, Core `0.37.2` and Read `0.11.3`. Ordinary prose and supported mechanism structures share container `0.5.0` / Read grammar `0.6.4`. Core/Read package versions identify implementation bytes and do not establish interchange with NativeSections container `0.6.0` / Read `0.7.0`, or import/reuse of another CLI's output. Installation acceptance is a separate Host decision; exact content checks do not authenticate a provider process.
 
 An external Agent records materials and proposes judgment groups with at least two meaningful alternatives. Selection and final adoption arrive through a separately owned live channel. Human-declared review and expressly delegated Agent editorial adoption are distinct modes:

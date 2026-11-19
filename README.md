@@ -1,3 +1,8 @@
+> **归档说明 / Archive Notice**: 本仓库为早期 `pre-0.6.0` 历史归档项目，已停止维护。
+> 现行开放格式规范、CLI 工具与桌面阅读器请访问：[aikdna/kdna](https://github.com/aikdna/kdna)、[`@aikdna/kdna-cli`](https://www.npmjs.com/package/@aikdna/kdna-cli) 与 [aikdna.com](https://aikdna.com)。
+
+---
+
 # KDNA Studio CLI — typed current creation
 
 > **Status Notice (Legacy Pre-0.6.0 Line):** This repository is preserved as a historical compatibility package and is not the active entrypoint for current KDNA Container `0.6.0` judgment works. For current specifications, offline CLI authoring/reading/encryption, Agent Skills, Desktop KDNA Reader, and *KDNA Whitepaper* (1.0.1), visit [`aikdna/kdna`](https://github.com/aikdna/kdna), [`aikdna/kdna-cli`](https://github.com/aikdna/kdna-cli), [`aikdna/kdna-skills`](https://github.com/aikdna/kdna-skills), and [`aikdna/kdna-assets`](https://github.com/aikdna/kdna-assets).

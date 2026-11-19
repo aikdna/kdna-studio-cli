@@ -62,7 +62,7 @@ execution.
 
 This package does NOT implement cryptographic primitives directly. For the
 canonical security model, see
-[GOVERNANCE.md](https://github.com/aikdna/kdna/blob/main/docs/GOVERNANCE.md)
+[GOVERNANCE.md](https://github.com/aikdna/kdna/blob/main/SECURITY.md)
 in the main protocol repository.
 
 ### Credential Handling for Published 0.11.0
